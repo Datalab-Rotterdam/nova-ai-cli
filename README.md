@@ -2,19 +2,19 @@
 
 <img src="./assets/logo.png" width="96" height="96" alt="Nova logo" />
 
-# @datalab-rotterdam/nova-ai-cli
+# @datalabrotterdam/nova-ai-cli
 
 **CLI for DataLab Rotterdam's Nova AI — also speaks Agent Client Protocol**
 
-[![npm version](https://img.shields.io/npm/v/@datalab-rotterdam/nova-ai-cli?style=flat-square&color=f96743)](https://www.npmjs.com/package/@datalab-rotterdam/nova-ai-cli)
-[![npm downloads](https://img.shields.io/npm/dm/@datalab-rotterdam/nova-ai-cli?style=flat-square)](https://www.npmjs.com/package/@datalab-rotterdam/nova-ai-cli)
-[![license](https://img.shields.io/npm/l/@datalab-rotterdam/nova-ai-cli?style=flat-square)](./LICENSE)
+[![npm version](https://img.shields.io/npm/v/@datalabrotterdam/nova-ai-cli?style=flat-square&color=f96743)](https://www.npmjs.com/package/@datalabrotterdam/nova-ai-cli)
+[![npm downloads](https://img.shields.io/npm/dm/@datalabrotterdam/nova-ai-cli?style=flat-square)](https://www.npmjs.com/package/@datalabrotterdam/nova-ai-cli)
+[![license](https://img.shields.io/npm/l/@datalabrotterdam/nova-ai-cli?style=flat-square)](./LICENSE)
 [![ACP](https://img.shields.io/badge/ACP-agent-blue?style=flat-square)](https://agentclientprotocol.com)
 [![issues](https://img.shields.io/github/issues/Datalab-Rotterdam/nova-ai-cli?style=flat-square)](https://github.com/Datalab-Rotterdam/nova-ai-cli/issues)
 
 Talk to DataLab Rotterdam's Nova AI from your terminal, or point your editor/IDE at it via [Agent Client Protocol](https://agentclientprotocol.com) — both modes share the same auth and run on [`@datalabrotterdam/nova-sdk`](https://www.npmjs.com/package/@datalabrotterdam/nova-sdk).
 
-[npm](https://www.npmjs.com/package/@datalab-rotterdam/nova-ai-cli) · [Issues](https://github.com/Datalab-Rotterdam/nova-ai-cli/issues) · [ACP docs](https://agentclientprotocol.com)
+[npm](https://www.npmjs.com/package/@datalabrotterdam/nova-ai-cli) · [Issues](https://github.com/Datalab-Rotterdam/nova-ai-cli/issues) · [ACP docs](https://agentclientprotocol.com)
 
 </div>
 
@@ -27,16 +27,16 @@ Talk to DataLab Rotterdam's Nova AI from your terminal, or point your editor/IDE
 No install needed — run directly with `npx`:
 
 ```sh
-npx @datalab-rotterdam/nova-ai-cli --setup   # store your Nova API key
-npx @datalab-rotterdam/nova-ai-cli           # interactive chat (WIP, stub)
-npx @datalab-rotterdam/nova-ai-cli --acp     # speak ACP over stdio (editors/IDEs) — fully working
-npx @datalab-rotterdam/nova-ai-cli --web     # standalone browser UI (WIP, stub)
+npx @datalabrotterdam/nova-ai-cli --setup   # store your Nova API key
+npx @datalabrotterdam/nova-ai-cli           # interactive chat (WIP, stub)
+npx @datalabrotterdam/nova-ai-cli --acp     # speak ACP over stdio (editors/IDEs) — fully working
+npx @datalabrotterdam/nova-ai-cli --web     # standalone browser UI (WIP, stub)
 ```
 
 Or install globally / as a project dependency:
 
 ```sh
-npm install -g @datalab-rotterdam/nova-ai-cli
+npm install -g @datalabrotterdam/nova-ai-cli
 ```
 
 **Requires:** Node.js >= 18, a [Nova AI](https://api.nova.datalabrotterdam.nl) API key.
@@ -49,10 +49,10 @@ npm install -g @datalab-rotterdam/nova-ai-cli
 
 ```sh
 # 1. one-time setup — opens a browser page to verify the key against Nova AI and store it locally
-npx @datalab-rotterdam/nova-ai-cli --setup
+npx @datalabrotterdam/nova-ai-cli --setup
 
 # 2. point your ACP client at this binary
-npx @datalab-rotterdam/nova-ai-cli --acp
+npx @datalabrotterdam/nova-ai-cli --acp
 ```
 
 Most editors invoke `--acp` for you once configured as an agent — `--setup` is the one command you run by hand first.
@@ -80,7 +80,7 @@ Today the page served at that local URL is a small Svelte form that:
 You can also trigger this manually:
 
 ```sh
-npx @datalab-rotterdam/nova-ai-cli --setup
+npx @datalabrotterdam/nova-ai-cli --setup
 ```
 
 Overrides, no browser flow required:
