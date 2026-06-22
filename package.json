@@ -1,0 +1,78 @@
+{
+  "name": "@datalab-rotterdam/nova-ai-cli",
+  "version": "0.1.0",
+  "description": "CLI for DataLab Rotterdam's Nova AI, with an Agent Client Protocol mode for editors/IDEs, backed by @datalabrotterdam/nova-sdk",
+  "license": "Apache-2.0",
+  "author": "DataLab Rotterdam",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "nova-ai-cli": "dist/index.js",
+    "nova-ai": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "src/acp/web/dist",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Datalab-Rotterdam/nova-ai-cli.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Datalab-Rotterdam/nova-ai-cli/issues"
+  },
+  "homepage": "https://github.com/Datalab-Rotterdam/nova-ai-cli#readme",
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "npm install --prefix src/acp/web && npm run build --prefix src/acp/web && tsc -p tsconfig.json",
+    "dev": "tsc -p tsconfig.json --watch",
+    "test": "tsc -p tsconfig.json --noEmit && npm run test:unit",
+    "test:unit": "node -e \"require('fs').rmSync('dist-test',{recursive:true,force:true})\" && tsc -p tsconfig.test.json && node --test \"dist-test/tests/**/*.test.js\""
+  },
+  "dependencies": {
+    "@agentclientprotocol/sdk": "^0.29.0",
+    "@datalabrotterdam/nova-sdk": "^1.3.2",
+    "@sourceregistry/node-webserver": "^1.8.0"
+  },
+  "devDependencies": {
+    "@semantic-release/changelog": "^6.0.3",
+    "@semantic-release/commit-analyzer": "^13.0.1",
+    "@semantic-release/git": "^10.0.1",
+    "@semantic-release/npm": "^13.1.5",
+    "@semantic-release/release-notes-generator": "^14.1.0",
+    "@types/node": "^22.20.0",
+    "typescript": "^5.6.0"
+  },
+  "release": {
+    "branches": [
+      "main",
+      {
+        "name": "alpha",
+        "prerelease": true
+      }
+    ],
+    "plugins": [
+      "@semantic-release/commit-analyzer",
+      "@semantic-release/release-notes-generator",
+      "@semantic-release/changelog",
+      "@semantic-release/npm",
+      [
+        "@semantic-release/git",
+        {
+          "assets": [
+            "package.json",
+            "CHANGELOG.md"
+          ],
+          "message": "nova-ai-cli(release): 🚀 v${nextRelease.version}\n\n${nextRelease.notes}"
+        }
+      ]
+    ]
+  }
+}
