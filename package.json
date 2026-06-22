@@ -1,6 +1,6 @@
 {
   "name": "@datalab-rotterdam/nova-ai-cli",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "CLI for DataLab Rotterdam's Nova AI, with an Agent Client Protocol mode for editors/IDEs, backed by @datalabrotterdam/nova-sdk",
   "license": "Apache-2.0",
   "author": "DataLab Rotterdam",
