@@ -2,17 +2,18 @@ import * as acp from "@agentclientprotocol/sdk";
 import { NovaAI, NovaAIError, type ChatMessage } from "@datalabrotterdam/nova-sdk";
 import { runBrowserAuth } from "./auth-server.js";
 import { readCredentials } from "./credentials.js";
+import { closeMcpConnections, connectMcpServers, listMcpTools, type McpConnection } from "./mcp.js";
 import { appendSessionTurn, deriveTitle, listStoredSessions, loadStoredSession } from "./sessions.js";
 import {
   availableTools,
   buildToolsSystemPrompt,
   extractToolCall,
-  findTool,
   hasPendingFence,
   requestPermissionIfNeeded,
   sendToolCallPending,
   sendToolCallUpdate,
 } from "./tools/index.js";
+import type { ToolDefinition } from "./tools/types.js";
 
 const AUTH_METHOD_ID = "nova-api-key";
 const MAX_TOOL_ROUNDS = 10;
@@ -22,6 +23,8 @@ type Session = {
   cwd: string;
   history: ChatMessage[];
   title: string | null;
+  mcpConnections: McpConnection[];
+  mcpTools: ToolDefinition[];
 };
 
 export class NovaAgent {
@@ -34,8 +37,18 @@ export class NovaAgent {
       protocolVersion: acp.PROTOCOL_VERSION,
       agentCapabilities: {
         loadSession: true,
+        promptCapabilities: {
+          // Image/audio content isn't forwarded to the model; only text and
+          // embedded text resources are supported.
+          embeddedContext: true,
+        },
+        mcpCapabilities: {
+          http: true,
+          sse: true,
+        },
         sessionCapabilities: {
           list: {},
+          close: {},
         },
       },
       authMethods: [
@@ -48,9 +61,18 @@ export class NovaAgent {
     };
   }
 
-  newSession(params: acp.NewSessionRequest): acp.NewSessionResponse {
+  async newSession(params: acp.NewSessionRequest): Promise<acp.NewSessionResponse> {
     const sessionId = crypto.randomUUID();
-    this.sessions.set(sessionId, { pendingPrompt: null, cwd: params.cwd, history: [], title: null });
+    const mcpConnections = await connectMcpServers(params.mcpServers);
+    const mcpTools = await listMcpTools(mcpConnections);
+    this.sessions.set(sessionId, {
+      pendingPrompt: null,
+      cwd: params.cwd,
+      history: [],
+      title: null,
+      mcpConnections,
+      mcpTools,
+    });
     return { sessionId };
   }
 
@@ -60,11 +82,15 @@ export class NovaAgent {
       throw acp.RequestError.internalError(undefined, `Session ${params.sessionId} not found`);
     }
 
+    const mcpConnections = await connectMcpServers(params.mcpServers);
+    const mcpTools = await listMcpTools(mcpConnections);
     this.sessions.set(params.sessionId, {
       pendingPrompt: null,
       cwd: params.cwd,
       history: stored.messages,
       title: stored.title,
+      mcpConnections,
+      mcpTools,
     });
 
     for (const message of stored.messages) {
@@ -126,7 +152,8 @@ export class NovaAgent {
       );
     }
 
-    const tools = availableTools(this.clientCapabilities);
+    const tools = [...availableTools(this.clientCapabilities), ...session.mcpTools];
+    const findSessionTool = (name: string) => tools.find((tool) => tool.name === name);
     const systemPrompt = buildToolsSystemPrompt(tools, session.cwd);
 
     const userMessage: ChatMessage = { role: "user", content: contentBlocksToText(params.prompt) };
@@ -188,7 +215,7 @@ export class NovaAgent {
           return { stopReason: "end_turn" };
         }
 
-        const tool = findTool(toolCall.name);
+        const tool = findSessionTool(toolCall.name);
         const toolCallId = crypto.randomUUID();
         const toolCtx = { client, sessionId: params.sessionId, signal: abortController.signal };
 
@@ -237,6 +264,16 @@ export class NovaAgent {
   cancel(params: acp.CancelNotification): void {
     this.sessions.get(params.sessionId)?.pendingPrompt?.abort();
   }
+
+  async closeSession(params: acp.CloseSessionRequest): Promise<acp.CloseSessionResponse> {
+    const session = this.sessions.get(params.sessionId);
+    if (session) {
+      session.pendingPrompt?.abort();
+      await closeMcpConnections(session.mcpConnections);
+      this.sessions.delete(params.sessionId);
+    }
+    return {};
+  }
 }
 
 function contentBlocksToText(prompt: acp.PromptRequest["prompt"]): string {
@@ -244,6 +281,7 @@ function contentBlocksToText(prompt: acp.PromptRequest["prompt"]): string {
     .map((block) => {
       if (block.type === "text") return block.text;
       if (block.type === "resource_link") return block.uri;
+      if (block.type === "resource" && "text" in block.resource) return block.resource.text;
       return "";
     })
     .filter(Boolean)

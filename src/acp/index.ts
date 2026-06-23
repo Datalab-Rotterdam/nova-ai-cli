@@ -15,6 +15,7 @@ async function runAcp(...args: string[]): Promise<void> {
     .onRequest("session/new", (ctx) => agentImpl.newSession(ctx.params))
     .onRequest("session/load", (ctx) => agentImpl.loadSession(ctx.params, ctx.client))
     .onRequest("session/list", (ctx) => agentImpl.listSessions(ctx.params))
+    .onRequest("session/close", (ctx) => agentImpl.closeSession(ctx.params))
     .onRequest("authenticate", (ctx) => agentImpl.authenticate(ctx.params))
     .onRequest("session/prompt", (ctx) => agentImpl.prompt(ctx.params, ctx.client))
     .onNotification("session/cancel", (ctx) => agentImpl.cancel(ctx.params))

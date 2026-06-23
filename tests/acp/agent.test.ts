@@ -18,10 +18,10 @@ describe("NovaAgent.initialize", () => {
 });
 
 describe("NovaAgent.newSession", () => {
-  it("creates a session with a fresh id each time", () => {
+  it("creates a session with a fresh id each time", async () => {
     const agent = new NovaAgent();
-    const a = agent.newSession({ cwd: "/repo", mcpServers: [] });
-    const b = agent.newSession({ cwd: "/repo", mcpServers: [] });
+    const a = await agent.newSession({ cwd: "/repo", mcpServers: [] });
+    const b = await agent.newSession({ cwd: "/repo", mcpServers: [] });
     assert.notEqual(a.sessionId, b.sessionId);
   });
 });
@@ -34,7 +34,7 @@ describe("NovaAgent.cancel", () => {
 
   it("aborts the pending prompt for a known session id", async () => {
     const agent = new NovaAgent();
-    const { sessionId } = agent.newSession({ cwd: "/repo", mcpServers: [] });
+    const { sessionId } = await agent.newSession({ cwd: "/repo", mcpServers: [] });
 
     // Reach into prompt()'s session state via authenticate's failure path is
     // overkill here; instead drive a prompt that fails fast (no credentials)
