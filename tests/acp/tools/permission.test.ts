@@ -1,17 +1,13 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import type * as acp from "@agentclientprotocol/sdk";
 import { requestPermissionIfNeeded } from "../../../src/acp/tools/permission.js";
 import { readFileTool } from "../../../src/acp/tools/read-file.js";
 import { writeFileTool } from "../../../src/acp/tools/write-file.js";
 import type { ToolContext } from "../../../src/acp/tools/types.js";
+import { makeToolContext } from "./test-helpers.js";
 
-function makeContext(request: (method: string, params: unknown) => Promise<unknown>): ToolContext {
-  return {
-    client: { request } as unknown as acp.AgentContext,
-    sessionId: "session-1",
-    signal: new AbortController().signal,
-  };
+function makeContext(requestPermission: ToolContext["requestPermission"]): ToolContext {
+  return { ...makeToolContext(), requestPermission };
 }
 
 describe("requestPermissionIfNeeded", () => {
@@ -28,24 +24,16 @@ describe("requestPermissionIfNeeded", () => {
     assert.equal(called, false);
   });
 
-  it("allows a mutating tool when the user selects the allow option", async () => {
-    const ctx = makeContext(async () => ({ outcome: { outcome: "selected", optionId: "allow" } }));
+  it("allows a mutating tool when the host grants permission", async () => {
+    const ctx = makeContext(async () => true);
 
     const allowed = await requestPermissionIfNeeded(ctx, "call-1", writeFileTool, { path: "/tmp/x", content: "hi" });
 
     assert.equal(allowed, true);
   });
 
-  it("rejects a mutating tool when the user selects the reject option", async () => {
-    const ctx = makeContext(async () => ({ outcome: { outcome: "selected", optionId: "reject" } }));
-
-    const allowed = await requestPermissionIfNeeded(ctx, "call-1", writeFileTool, { path: "/tmp/x", content: "hi" });
-
-    assert.equal(allowed, false);
-  });
-
-  it("rejects a mutating tool when the permission request is cancelled", async () => {
-    const ctx = makeContext(async () => ({ outcome: { outcome: "cancelled" } }));
+  it("rejects a mutating tool when the host denies permission", async () => {
+    const ctx = makeContext(async () => false);
 
     const allowed = await requestPermissionIfNeeded(ctx, "call-1", writeFileTool, { path: "/tmp/x", content: "hi" });
 

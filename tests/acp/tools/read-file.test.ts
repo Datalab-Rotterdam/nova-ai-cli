@@ -1,23 +1,19 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import type * as acp from "@agentclientprotocol/sdk";
 import { readFileTool } from "../../../src/acp/tools/read-file.js";
-import type { ToolContext } from "../../../src/acp/tools/types.js";
+import type { ToolHost } from "../../../src/core/tool-host.js";
+import { makeToolContext } from "./test-helpers.js";
 
-function makeContext(request: (method: string, params: unknown) => Promise<unknown>): ToolContext {
-  return {
-    client: { request } as unknown as acp.AgentContext,
-    sessionId: "session-1",
-    signal: new AbortController().signal,
-  };
+function makeContext(readTextFile: ToolHost["readTextFile"]) {
+  return makeToolContext({ host: { readTextFile } });
 }
 
 describe("readFileTool", () => {
-  it("errors without calling the client when path is missing", async () => {
+  it("errors without calling the host when path is missing", async () => {
     let called = false;
     const ctx = makeContext(async () => {
       called = true;
-      return {};
+      return "";
     });
 
     const result = await readFileTool.execute(ctx, {});
@@ -26,11 +22,10 @@ describe("readFileTool", () => {
     assert.equal(called, false);
   });
 
-  it("requests fs/read_text_file and returns the content", async () => {
-    const ctx = makeContext(async (method, params) => {
-      assert.equal(method, "fs/read_text_file");
-      assert.deepEqual(params, { sessionId: "session-1", path: "/tmp/x" });
-      return { content: "hello" };
+  it("reads the file and returns the content", async () => {
+    const ctx = makeContext(async (path) => {
+      assert.equal(path, "/tmp/x");
+      return "hello";
     });
 
     const result = await readFileTool.execute(ctx, { path: "/tmp/x" });
@@ -38,7 +33,7 @@ describe("readFileTool", () => {
     assert.deepEqual(result, { output: "hello" });
   });
 
-  it("returns an error when the client request rejects", async () => {
+  it("returns an error when the host read rejects", async () => {
     const ctx = makeContext(async () => {
       throw new Error("file not found");
     });

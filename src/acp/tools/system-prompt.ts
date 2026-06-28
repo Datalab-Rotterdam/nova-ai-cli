@@ -15,7 +15,7 @@ export function buildToolsSystemPrompt(tools: ToolDefinition[], cwd: string): st
     "```",
     "STRICT rules for this JSON:",
     "- All tool arguments go INSIDE the \"args\" object. Never put them at the top level next to \"name\".",
-    "- Include every argument the tool needs, exactly as named below. Do not omit \"path\", \"content\", or \"command\".",
+    "- Include every argument the selected tool needs, exactly as named below.",
     "- Example for write_file: ```tool_call",
     '{"name": "write_file", "args": {"path": "' + cwd.replace(/\\/g, "\\\\") + '/example.txt", "content": "file contents here"}}',
     "```",

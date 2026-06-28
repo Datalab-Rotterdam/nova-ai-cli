@@ -1,23 +1,18 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import type * as acp from "@agentclientprotocol/sdk";
 import { writeFileTool } from "../../../src/acp/tools/write-file.js";
-import type { ToolContext } from "../../../src/acp/tools/types.js";
+import type { ToolHost } from "../../../src/core/tool-host.js";
+import { makeToolContext } from "./test-helpers.js";
 
-function makeContext(request: (method: string, params: unknown) => Promise<unknown>): ToolContext {
-  return {
-    client: { request } as unknown as acp.AgentContext,
-    sessionId: "session-1",
-    signal: new AbortController().signal,
-  };
+function makeContext(writeTextFile: ToolHost["writeTextFile"]) {
+  return makeToolContext({ host: { writeTextFile } });
 }
 
 describe("writeFileTool", () => {
-  it("errors without calling the client when path is missing", async () => {
+  it("errors without calling the host when path is missing", async () => {
     let called = false;
     const ctx = makeContext(async () => {
       called = true;
-      return {};
     });
 
     const result = await writeFileTool.execute(ctx, { content: "hi" });
@@ -26,11 +21,10 @@ describe("writeFileTool", () => {
     assert.equal(called, false);
   });
 
-  it("requests fs/write_text_file with path and content", async () => {
-    const ctx = makeContext(async (method, params) => {
-      assert.equal(method, "fs/write_text_file");
-      assert.deepEqual(params, { sessionId: "session-1", path: "/tmp/x", content: "hello" });
-      return {};
+  it("writes the file with path and content", async () => {
+    const ctx = makeContext(async (path, content) => {
+      assert.equal(path, "/tmp/x");
+      assert.equal(content, "hello");
     });
 
     const result = await writeFileTool.execute(ctx, { path: "/tmp/x", content: "hello" });
@@ -38,7 +32,7 @@ describe("writeFileTool", () => {
     assert.deepEqual(result, { output: "Wrote 5 characters to /tmp/x." });
   });
 
-  it("returns an error when the client request rejects", async () => {
+  it("returns an error when the host write rejects", async () => {
     const ctx = makeContext(async () => {
       throw new Error("permission denied");
     });

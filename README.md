@@ -41,6 +41,10 @@ npm install -g @datalabrotterdam/nova-ai-cli
 
 **Requires:** Node.js >= 18, a [Nova AI](https://api.nova.datalabrotterdam.nl) API key.
 
+### Terminal logo
+
+The TUI uses a plain Unicode star for the assistant marker, so it can be colored by the terminal theme without installing or configuring custom fonts.
+
 ---
 
 ## Overview
@@ -105,6 +109,7 @@ A future version will swap this for real OAuth once DataLab Rotterdam ships an O
 | `authenticate` | Runs the local browser auth flow (`src/acp/auth-server.ts`) and resolves once a valid key is stored |
 | `session/prompt` | Streams a `chat.completions.stream()` call, forwarding `agent_message_chunk` updates as text arrives; drives the tool-calling loop below |
 | `session/cancel` | Aborts the in-flight Nova AI request via `AbortController` |
+| `background/*` | Custom extension methods for background prompt and terminal jobs; see below |
 
 Only `text` and `resource_link` content blocks are read from prompts today — images/audio/embeddings supported by `nova-sdk` aren't wired up yet.
 
@@ -123,11 +128,36 @@ Built-in tools (`src/acp/tools/registry.ts`):
 
 | Tool | Mutating | Behavior |
 |---|---|---|
+| `inspect_environment` | No | Reports platform, ACP client capabilities, detected commands, package manager, and package scripts |
+| `list_directory` | No | Lists workspace files/directories with path bounds and result limits, gated by client `fs.readTextFile` capability |
+| `search_text` | No | Searches workspace text files with literal/regex modes and excludes common generated directories, gated by client `fs.readTextFile` capability |
 | `read_file` | No | Reads a file's contents, gated by client `fs.readTextFile` capability |
+| `run_package_script` | Yes | Runs a detected `package.json` script with npm/pnpm/yarn when a package manager and ACP terminal support are available - requires permission |
 | `write_file` | Yes | Writes/overwrites a file, gated by client `fs.writeTextFile` capability — requires permission |
 | `run_command` | Yes | Runs a shell command in the session's `cwd` — requires permission |
+| `start_background_command` | Yes | Starts a long-running ACP terminal job, such as a dev server, and returns its job id - requires permission |
+| `start_background_agent` | Yes | Starts another Nova agent turn in the background and returns its job id - requires permission |
+| `list_background_jobs` | No | Lists background jobs for the current session |
+| `read_background_output` | No | Reads stored agent output or current terminal output for a background job |
+| `kill_background_job` | Yes | Stops a running background command or agent job - requires permission |
+| `release_background_job` | Yes | Releases background job resources; terminal jobs are released through ACP - requires permission |
 
-Tools are filtered per-session by the client's advertised `clientCapabilities`, so a client without filesystem support never sees `read_file`/`write_file` offered.
+Tools are filtered per-session by the client's advertised `clientCapabilities`, the detected workspace environment, and available host services. Background tools are offered only when the agent has a background job service for the session.
+
+### Background jobs
+
+ACP does not yet standardize durable background agent jobs, so `nova-ai-cli` exposes a small custom extension API. These methods are ordinary JSON-RPC requests with method names outside the core ACP namespace:
+
+| Extension method | Params | Behavior |
+|---|---|---|
+| `background/start_prompt` | `{ "sessionId": "...", "prompt": [{ "type": "text", "text": "..." }], "title": "optional" }` | Starts a Nova agent turn in the background and returns `{ job }` immediately |
+| `background/start_terminal` | `{ "sessionId": "...", "command": "npm run dev", "title": "optional" }` | Creates an ACP terminal, keeps it registered as a background job, and returns `{ job }` immediately |
+| `background/list` | `{ "sessionId": "optional" }` | Lists tracked background jobs |
+| `background/output` | `{ "jobId": "..." }` | Returns stored prompt output or current ACP terminal output, plus `outputPath` |
+| `background/kill` | `{ "jobId": "..." }` | Aborts a prompt job or sends `terminal/kill` for a terminal job |
+| `background/release` | `{ "jobId": "..." }` | Releases a terminal job and removes its live process resources; running prompt jobs are aborted |
+
+The agent also emits custom `background/update` notifications with `{ event, job }`, where `event` is one of `started`, `event`, `completed`, `failed`, `killed`, or `released`. Prompt jobs include streamed internal events in the notification payload; terminal jobs stay attached to the ACP terminal id until killed or released. Each job summary includes an `outputPath` under `~/.nova-ai/background-jobs/`; prompt output is appended as it streams, and terminal output is snapshotted when `background/output` is called or when the terminal exits.
 
 ---
 

@@ -1,23 +1,19 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import type * as acp from "@agentclientprotocol/sdk";
 import { runCommandTool } from "../../../src/acp/tools/run-command.js";
-import type { ToolContext } from "../../../src/acp/tools/types.js";
+import type { ToolHost } from "../../../src/core/tool-host.js";
+import { makeToolContext } from "./test-helpers.js";
 
-function makeContext(request: (method: string, params: any) => Promise<any>): ToolContext {
-  return {
-    client: { request } as unknown as acp.AgentContext,
-    sessionId: "session-1",
-    signal: new AbortController().signal,
-  };
+function makeContext(runCommand: ToolHost["runCommand"]) {
+  return makeToolContext({ host: { runCommand } });
 }
 
 describe("runCommandTool", () => {
-  it("errors without calling the client when command is missing", async () => {
+  it("errors without calling the host when command is missing", async () => {
     let called = false;
     const ctx = makeContext(async () => {
       called = true;
-      return {};
+      return { output: "", truncated: false, exitCode: 0 };
     });
 
     const result = await runCommandTool.execute(ctx, {});
@@ -26,53 +22,28 @@ describe("runCommandTool", () => {
     assert.equal(called, false);
   });
 
-  it("drives terminal create -> waitForExit -> output -> release and returns combined output", async () => {
-    const calls: string[] = [];
-    const ctx = makeContext(async (method) => {
-      calls.push(method);
-      switch (method) {
-        case "terminal/create":
-          return { terminalId: "term-1" };
-        case "terminal/wait_for_exit":
-          return { exitCode: 0 };
-        case "terminal/output":
-          return { output: "hello\n", truncated: false };
-        case "terminal/release":
-          return {};
-        default:
-          throw new Error(`unexpected method ${method}`);
-      }
+  it("runs the command and returns combined output with exit code", async () => {
+    const ctx = makeContext(async (command) => {
+      assert.equal(command, "echo hello");
+      return { output: "hello\n", truncated: false, exitCode: 0 };
     });
 
     const result = await runCommandTool.execute(ctx, { command: "echo hello" });
 
     assert.deepEqual(result, { output: "hello\n (exit code 0)" });
-    assert.deepEqual(calls, ["terminal/create", "terminal/wait_for_exit", "terminal/output", "terminal/release"]);
   });
 
   it("notes truncated output", async () => {
-    const ctx = makeContext(async (method) => {
-      switch (method) {
-        case "terminal/create":
-          return { terminalId: "term-1" };
-        case "terminal/wait_for_exit":
-          return { exitCode: 1 };
-        case "terminal/output":
-          return { output: "lots of output", truncated: true };
-        default:
-          return {};
-      }
-    });
+    const ctx = makeContext(async () => ({ output: "lots of output", truncated: true, exitCode: 1 }));
 
     const result = await runCommandTool.execute(ctx, { command: "yes" });
 
     assert.deepEqual(result, { output: "lots of output\n[output truncated] (exit code 1)" });
   });
 
-  it("returns an error when terminal/create rejects, and still attempts no release", async () => {
-    const ctx = makeContext(async (method) => {
-      if (method === "terminal/create") throw new Error("spawn failed");
-      throw new Error(`unexpected method ${method}`);
+  it("returns an error when the host run rejects", async () => {
+    const ctx = makeContext(async () => {
+      throw new Error("spawn failed");
     });
 
     const result = await runCommandTool.execute(ctx, { command: "bad" });

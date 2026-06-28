@@ -22,7 +22,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  await chat(...args.slice(1));
+  await chat(...args);
 }
 
 

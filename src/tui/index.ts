@@ -1,12 +1,29 @@
-/**
- * Placeholder for the interactive terminal chat mode (nova-ai-cli's primary
- * entrypoint, mirroring `claude`/`codex`). ACP mode in index.ts is the
- * machine-facing counterpart of this same auth/credentials plumbing.
- */
+import { render } from "ink";
+import React from "react";
+import { readCredentials } from "../acp/credentials.js";
+import { App } from "./app.js";
+
 export async function runChat(...args: string[]): Promise<void> {
-  console.log("nova-ai-cli is a work in progress — interactive chat isn't built yet.");
-  console.log("Right now it only works in ACP mode: run `nova-ai-cli --acp` (or point your ACP client at this binary).");
-  console.log("Run `nova-ai-cli --setup` first to connect your Nova API key.");
+  const credentials = readCredentials();
+  if (!credentials) {
+    console.log("nova-ai-cli isn't connected to a Nova AI account yet.");
+    console.log("Run `nova-ai-cli --setup` first to connect your Nova API key.");
+    return;
+  }
+
+  if (!process.stdin.isTTY) {
+    console.log("nova-ai-cli's interactive chat needs a real terminal (stdin is not a TTY).");
+    console.log("Run it directly in a terminal, or use `nova-ai-cli --acp` for non-interactive/editor integration.");
+    return;
+  }
+
+  const resumeIndex = args.indexOf("--resume");
+  const resumeSessionId = resumeIndex !== -1 ? args[resumeIndex + 1] : undefined;
+
+  const { waitUntilExit } = render(React.createElement(App, { credentials, cwd: process.cwd(), resumeSessionId }), {
+    exitOnCtrlC: false,
+  });
+  await waitUntilExit();
 }
 
 export default runChat;
