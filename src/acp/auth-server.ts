@@ -1,4 +1,5 @@
 import { exec } from "node:child_process";
+import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { NovaAI, NovaAIError } from "@datalabrotterdam/nova-sdk";
@@ -6,7 +7,25 @@ import { dir, json, WebServer } from "@sourceregistry/node-webserver";
 import { credentialsPath, writeCredentials } from "./credentials.js";
 
 const AUTH_TIMEOUT_MS = 5 * 60 * 1000;
-const UI_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "src", "acp", "web", "dist");
+
+function resolveUiDir(): string {
+  const moduleDir = dirname(fileURLToPath(import.meta.url));
+  const candidates = [
+    // Running from src/acp/auth-server.ts via tsx.
+    join(moduleDir, "web", "dist"),
+    // Running from the bundled package entry in dist/index.js.
+    join(moduleDir, "..", "src", "acp", "web", "dist"),
+  ];
+
+  const uiDir = candidates.find((candidate) => existsSync(candidate));
+  if (!uiDir) {
+    throw new Error(
+      `Nova AI setup UI is missing. Expected it at one of: ${candidates.join(", ")}. Run npm run build before using --setup from a source checkout.`,
+    );
+  }
+
+  return uiDir;
+}
 
 function openBrowser(url: string): void {
   const cmd =
@@ -30,6 +49,7 @@ function openBrowser(url: string): void {
 export function runBrowserAuth(): Promise<void> {
   return new Promise((resolve, reject) => {
     const app = new WebServer();
+    const uiDir = resolveUiDir();
 
     app.POST("/api/authenticate", async (event) => {
       const body = await event.request.json().catch(() => null);
@@ -59,8 +79,8 @@ export function runBrowserAuth(): Promise<void> {
       }
     });
 
-    app.GET("/", dir(UI_DIR, { spa: true }));
-    app.GET("/[...path]", dir(UI_DIR, { spa: true }));
+    app.GET("/", dir(uiDir, { spa: true }));
+    app.GET("/[...path]", dir(uiDir, { spa: true }));
 
     const timeout = setTimeout(() => {
       void app.shutdown();

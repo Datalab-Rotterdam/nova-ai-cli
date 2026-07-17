@@ -6,6 +6,7 @@ export const inspectEnvironmentTool: ToolDefinition = {
     "inspect_environment: {} - report OS/platform, ACP client capabilities, available commands, detected package manager, package scripts, and tool availability notes.",
   isAvailable: ({ caps, environment }) => !!caps?.fs?.readTextFile && !!environment?.workspaceReadable,
   mutating: false,
+  kind: "read",
   async execute({ environment }) {
     const availableCommands = Object.entries(environment.commands)
       .filter(([, available]) => available)

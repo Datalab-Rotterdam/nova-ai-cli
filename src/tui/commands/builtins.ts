@@ -1,7 +1,10 @@
 import type { SlashCommand } from "./types.js";
-import type { BackgroundJobKind, BackgroundJobSummary } from "../../acp/background.js";
+import type {
+  BackgroundJobKind,
+  BackgroundJobSummary,
+} from "../../acp/background.js";
+import { isInteractionMode } from "../../core/interaction-modes.js";
 
-const interactionModes = ["agent", "ask", "plan"] as const;
 const permissionModes = ["ask", "acceptEdits", "bypassAll"] as const;
 
 export const builtinCommands: SlashCommand[] = [
@@ -15,9 +18,22 @@ export const builtinCommands: SlashCommand[] = [
   },
   {
     name: "clear",
-    description: "Start a new session (clears transcript and conversation history)",
+    description:
+      "Start a new session (clears transcript and conversation history)",
     run(ctx) {
-      void ctx.newSession();
+      return ctx.newSession();
+    },
+  },
+  {
+    name: "compact",
+    description: "Summarize older messages to reduce the model context",
+    async run(ctx) {
+      const result = await ctx.compactContext();
+      ctx.print(
+        result.compacted
+          ? `Compacted context: summarized ${result.removedMessages} older messages and kept ${result.keptMessages} recent messages.`
+          : "Context is already compact; there are not enough older messages to summarize.",
+      );
     },
   },
   {
@@ -26,13 +42,24 @@ export const builtinCommands: SlashCommand[] = [
     run(ctx, args) {
       const sessionId = args.trim() || undefined;
       if (!ctx.resumeSession(sessionId)) {
-        ctx.print(sessionId ? `Session not found: ${sessionId}` : "No saved sessions for this workspace.");
+        ctx.print(
+          sessionId
+            ? `Session not found: ${sessionId}`
+            : "No saved sessions for this workspace.",
+        );
       }
     },
   },
   {
-    name: "sessions",
+    name: "session",
     description: "Browse and switch sessions",
+    run(ctx) {
+      ctx.openSessionSwitcher();
+    },
+  },
+  {
+    name: "sessions",
+    description: "Alias for /session",
     run(ctx) {
       ctx.openSessionSwitcher();
     },
@@ -53,16 +80,17 @@ export const builtinCommands: SlashCommand[] = [
         ctx.print(`Current mode: ${ctx.getInteractionMode()}`);
         return;
       }
-      if (!interactionModes.includes(mode as (typeof interactionModes)[number])) {
+      if (!isInteractionMode(mode)) {
         ctx.print("Usage: /mode agent|ask|plan");
         return;
       }
-      ctx.setInteractionMode(mode as (typeof interactionModes)[number]);
+      ctx.setInteractionMode(mode);
     },
   },
   {
     name: "permission",
-    description: "Switch permission mode (/permission ask|acceptEdits|bypassAll)",
+    description:
+      "Switch permission mode (/permission ask|acceptEdits|bypassAll)",
     run(ctx, args) {
       const mode = args.trim();
       if (!mode) {
@@ -78,7 +106,8 @@ export const builtinCommands: SlashCommand[] = [
   },
   {
     name: "model",
-    description: "Switch the active model (/model <id>, or no args to pick interactively)",
+    description:
+      "Switch the active model (/model <id>, or no args to pick interactively)",
     run(ctx, args) {
       const id = args.trim();
       if (id) {
@@ -90,21 +119,90 @@ export const builtinCommands: SlashCommand[] = [
     },
   },
   {
-    name: "shell",
-    description: "Manage background shell jobs (/shell run|ps|output|kill|release)",
+    name: "tools",
+    description: "Inspect tool calls from this session",
+    run(ctx) {
+      ctx.openToolInspector();
+    },
+  },
+  {
+    name: "mcp",
+    description: "Inspect configured MCP servers",
+    run(ctx) {
+      ctx.openMcpInspector();
+    },
+  },
+  {
+    name: "skills",
+    description: "Inspect discovered user and workspace skills",
+    run(ctx) {
+      ctx.openSkillInspector();
+    },
+  },
+  {
+    name: "usage",
+    description: "Inspect estimated context usage by category",
+    run(ctx) {
+      return ctx.openUsageInspector();
+    },
+  },
+  {
+    name: "queue",
+    description:
+      "Inspect, add to, or clear the message queue (/queue [clear|message])",
     run(ctx, args) {
-      void runBackgroundCommand(ctx, "terminal", args, {
-        usage: "Usage: /shell run <command> | /shell ps | /shell output <jobId> | /shell kill <jobId|all> | /shell release <jobId|all>",
+      const value = args.trim();
+      if (value === "clear") {
+        ctx.clearQueuedMessages();
+        return;
+      }
+      if (value) {
+        ctx.queueMessage(value);
+        return;
+      }
+      const queued = ctx.queuedMessages();
+      ctx.print(
+        queued.length
+          ? queued
+              .map((message, index) => `${index + 1}. ${message}`)
+              .join("\n")
+          : "Message queue is empty. Submit text while the model is working to queue it.",
+      );
+    },
+  },
+  {
+    name: "steer",
+    description:
+      "Cancel the streaming response and run this instruction next (/steer <message>)",
+    run(ctx, args) {
+      const value = args.trim();
+      if (!value) {
+        ctx.print("Usage: /steer <message>");
+        return;
+      }
+      ctx.steerMessage(value);
+    },
+  },
+  {
+    name: "shell",
+    description:
+      "Manage background shell jobs (/shell run|ps|output|kill|release)",
+    run(ctx, args) {
+      return runBackgroundCommand(ctx, "terminal", args, {
+        usage:
+          "Usage: /shell run <command> | /shell ps | /shell output <jobId> | /shell kill <jobId|all> | /shell release <jobId|all>",
         start: (command) => ctx.startBackgroundShell(command),
       });
     },
   },
   {
     name: "agent",
-    description: "Manage background agent jobs (/agent run|ps|output|kill|release)",
+    description:
+      "Manage background agent jobs (/agent run|ps|output|kill|release)",
     run(ctx, args) {
-      void runBackgroundCommand(ctx, "prompt", args, {
-        usage: "Usage: /agent run <prompt> | /agent ps | /agent output <jobId> | /agent kill <jobId|all> | /agent release <jobId|all>",
+      return runBackgroundCommand(ctx, "prompt", args, {
+        usage:
+          "Usage: /agent run <prompt> | /agent ps | /agent output <jobId> | /agent kill <jobId|all> | /agent release <jobId|all>",
         start: (prompt) => ctx.startBackgroundAgent(prompt),
       });
     },
@@ -132,14 +230,20 @@ async function runBackgroundCommand(
           return;
         }
         const job = await options.start(value);
-        ctx.print(`Started background ${kind === "terminal" ? "shell" : "agent"} job.\n${formatJob(job)}`);
+        ctx.print(
+          `Started background ${kind === "terminal" ? "shell" : "agent"} job.\n${formatJob(job)}`,
+        );
         return;
       }
       case "":
       case "ps":
       case "list": {
         const jobs = await ctx.listBackgroundJobs(kind);
-        ctx.print(jobs.length ? jobs.map(formatJob).join("\n\n") : `No background ${kind === "terminal" ? "shell" : "agent"} jobs.`);
+        ctx.print(
+          jobs.length
+            ? jobs.map(formatJob).join("\n\n")
+            : `No background ${kind === "terminal" ? "shell" : "agent"} jobs.`,
+        );
         return;
       }
       case "output":
@@ -149,7 +253,9 @@ async function runBackgroundCommand(
           return;
         }
         const result = await ctx.backgroundOutput(value);
-        ctx.print(`${formatJob(result.job)}\n\n${result.output}${result.truncated ? "\n[output truncated]" : ""}`);
+        ctx.print(
+          `${formatJob(result.job)}\n\n${result.output}${result.truncated ? "\n[output truncated]" : ""}`,
+        );
         return;
       }
       case "kill":
@@ -165,7 +271,9 @@ async function runBackgroundCommand(
         ctx.print(options.usage);
     }
   } catch (err) {
-    ctx.print(err instanceof Error ? err.message : "Background command failed.");
+    ctx.print(
+      err instanceof Error ? err.message : "Background command failed.",
+    );
   }
 }
 
@@ -176,19 +284,34 @@ async function mutateJobs(
   action: "kill" | "release",
 ): Promise<void> {
   if (!target) {
-    ctx.print(`${action === "kill" ? "Kill" : "Release"} requires a job id or 'all'.`);
+    ctx.print(
+      `${action === "kill" ? "Kill" : "Release"} requires a job id or 'all'.`,
+    );
     return;
   }
 
-  const jobs = target === "all" ? await ctx.listBackgroundJobs(kind) : (await ctx.listBackgroundJobs(kind)).filter((job) => job.jobId === target);
+  const jobs =
+    target === "all"
+      ? await ctx.listBackgroundJobs(kind)
+      : (await ctx.listBackgroundJobs(kind)).filter(
+          (job) => job.jobId === target,
+        );
   if (jobs.length === 0) {
-    ctx.print(target === "all" ? `No background ${kind === "terminal" ? "shell" : "agent"} jobs.` : `Background job not found: ${target}`);
+    ctx.print(
+      target === "all"
+        ? `No background ${kind === "terminal" ? "shell" : "agent"} jobs.`
+        : `Background job not found: ${target}`,
+    );
     return;
   }
 
   const changed: BackgroundJobSummary[] = [];
   for (const job of jobs) {
-    changed.push(action === "kill" ? await ctx.killBackgroundJob(job.jobId) : await ctx.releaseBackgroundJob(job.jobId));
+    changed.push(
+      action === "kill"
+        ? await ctx.killBackgroundJob(job.jobId)
+        : await ctx.releaseBackgroundJob(job.jobId),
+    );
   }
   ctx.print(changed.map(formatJob).join("\n\n"));
 }

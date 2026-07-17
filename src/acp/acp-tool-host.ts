@@ -1,5 +1,13 @@
 import * as acp from "@agentclientprotocol/sdk";
 import type { RunCommandResult, ToolHost } from "../core/tool-host.js";
+import type {
+  UserInputRequest,
+  UserInputResponse,
+} from "../core/user-questions.js";
+import {
+  fromElicitationResponse,
+  toElicitationRequest,
+} from "./user-questions.js";
 
 export class AcpToolHost implements ToolHost {
   constructor(
@@ -16,7 +24,11 @@ export class AcpToolHost implements ToolHost {
     return result.content;
   }
 
-  async writeTextFile(path: string, content: string, signal: AbortSignal): Promise<void> {
+  async writeTextFile(
+    path: string,
+    content: string,
+    signal: AbortSignal,
+  ): Promise<void> {
     await this.client.request(
       acp.methods.client.fs.writeTextFile,
       { sessionId: this.sessionId, path, content },
@@ -24,7 +36,10 @@ export class AcpToolHost implements ToolHost {
     );
   }
 
-  async runCommand(command: string, signal: AbortSignal): Promise<RunCommandResult> {
+  async runCommand(
+    command: string,
+    signal: AbortSignal,
+  ): Promise<RunCommandResult> {
     const sessionId = this.sessionId;
     let terminalId: string | undefined;
     try {
@@ -49,8 +64,26 @@ export class AcpToolHost implements ToolHost {
       return { output, truncated, exitCode: exit.exitCode ?? null };
     } finally {
       if (terminalId) {
-        void this.client.request(acp.methods.client.terminal.release, { sessionId, terminalId }).catch(() => {});
+        void this.client
+          .request(acp.methods.client.terminal.release, {
+            sessionId,
+            terminalId,
+          })
+          .catch(() => {});
       }
     }
+  }
+
+  async requestUserInput(
+    request: UserInputRequest,
+    toolCallId: string,
+    signal: AbortSignal,
+  ): Promise<UserInputResponse> {
+    const response = await this.client.request(
+      acp.methods.client.elicitation.create,
+      toElicitationRequest(request, this.sessionId, toolCallId),
+      { cancellationSignal: signal },
+    );
+    return fromElicitationResponse(request, response);
   }
 }

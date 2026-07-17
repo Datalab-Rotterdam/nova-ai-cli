@@ -10,13 +10,34 @@ describe("availableTools", () => {
 
   it("includes read_file only when fs.readTextFile is supported", () => {
     const caps = { fs: { readTextFile: true } };
-    const names = availableTools(caps, makeEnvironment({ clientCapabilities: caps, packageManager: null, packageScripts: [] })).map((t) => t.name);
-    assert.deepEqual(names.sort(), ["inspect_environment", "list_directory", "read_file", "search_text"]);
+    const names = availableTools(
+      caps,
+      makeEnvironment({
+        clientCapabilities: caps,
+        packageManager: null,
+        packageScripts: [],
+      }),
+    ).map((t) => t.name);
+    assert.deepEqual(names.sort(), [
+      "inspect_environment",
+      "list_directory",
+      "read_file",
+      "search_text",
+    ]);
   });
 
   it("includes write_file only when fs.writeTextFile is supported", () => {
-    const names = availableTools({ fs: { writeTextFile: true } }).map((t) => t.name);
+    const names = availableTools({ fs: { writeTextFile: true } }).map(
+      (t) => t.name,
+    );
     assert.deepEqual(names, ["write_file"]);
+  });
+
+  it("includes edit_file only when fs read+write are supported", () => {
+    const names = availableTools({
+      fs: { readTextFile: true, writeTextFile: true },
+    }).map((t) => t.name);
+    assert.deepEqual(names.sort(), ["edit_file", "read_file", "write_file"]);
   });
 
   it("includes run_command only when terminal is supported", () => {
@@ -25,8 +46,12 @@ describe("availableTools", () => {
   });
 
   it("includes all tools when all capabilities are present", () => {
-    const names = availableTools(FULL_CAPABILITIES, makeEnvironment()).map((t) => t.name);
+    const names = availableTools(FULL_CAPABILITIES, makeEnvironment()).map(
+      (t) => t.name,
+    );
     assert.deepEqual(names.sort(), [
+      "ask_user",
+      "edit_file",
       "inspect_environment",
       "list_directory",
       "read_file",
@@ -38,8 +63,15 @@ describe("availableTools", () => {
   });
 
   it("includes background tools only when a background service is available", () => {
-    const withoutBackground = availableTools(FULL_CAPABILITIES, makeEnvironment()).map((t) => t.name);
-    const withBackground = availableTools(FULL_CAPABILITIES, makeEnvironment(), { background: true }).map((t) => t.name);
+    const withoutBackground = availableTools(
+      FULL_CAPABILITIES,
+      makeEnvironment(),
+    ).map((t) => t.name);
+    const withBackground = availableTools(
+      FULL_CAPABILITIES,
+      makeEnvironment(),
+      { background: true },
+    ).map((t) => t.name);
 
     assert.equal(withoutBackground.includes("start_background_command"), false);
     assert.equal(withBackground.includes("start_background_command"), true);
@@ -52,7 +84,10 @@ describe("availableTools", () => {
 
   it("does not include package scripts without terminal support", () => {
     const caps = { fs: { readTextFile: true, writeTextFile: true } };
-    const names = availableTools(caps, makeEnvironment({ clientCapabilities: caps })).map((t) => t.name);
+    const names = availableTools(
+      caps,
+      makeEnvironment({ clientCapabilities: caps }),
+    ).map((t) => t.name);
     assert.equal(names.includes("run_package_script"), false);
   });
 

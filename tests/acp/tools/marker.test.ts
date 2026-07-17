@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { extractToolCall, hasPendingFence } from "../../../src/acp/tools/marker.js";
+import { extractToolCall, hasMalformedToolCall, hasPendingFence } from "../../../src/acp/tools/marker.js";
 
 describe("hasPendingFence", () => {
   it("is false for plain text", () => {
@@ -14,6 +14,11 @@ describe("hasPendingFence", () => {
   it("is true while only a prefix of the fence marker has arrived", () => {
     assert.equal(hasPendingFence("here ``"), true);
     assert.equal(hasPendingFence("here ```tool"), true);
+  });
+
+  it("holds a split sentinel marker before it can leak into assistant text", () => {
+    assert.equal(hasPendingFence("before <|tool_"), true);
+    assert.equal(hasPendingFence("before <|tool_call>call:read_file:"), true);
   });
 
   it("is false when the tail doesn't match any fence prefix", () => {
@@ -59,5 +64,24 @@ describe("extractToolCall", () => {
     assert.ok(result);
     assert.equal(result.name, "write_file");
     assert.equal(result.args.content, rawContent);
+  });
+
+  it("parses sentinel calls with safe JavaScript-style object keys", () => {
+    const buffer = '✦ <|tool_call>call:list_directory: {path: ".", options: {max_entries: 20}, include_hidden: false}<tool_call|>';
+    const result = extractToolCall(buffer);
+    assert.ok(result);
+    assert.equal(result.name, "list_directory");
+    assert.deepEqual(result.args, {
+      path: ".",
+      options: { max_entries: 20 },
+      include_hidden: false,
+    });
+    assert.equal(buffer.slice(result.matchStart, result.matchEnd), '<|tool_call>call:list_directory: {path: ".", options: {max_entries: 20}, include_hidden: false}<tool_call|>');
+  });
+
+  it("recognizes a complete malformed sentinel call", () => {
+    const buffer = '<|tool_call>call:list_directory: {path: }<tool_call|>';
+    assert.equal(extractToolCall(buffer), null);
+    assert.equal(hasMalformedToolCall(buffer), true);
   });
 });

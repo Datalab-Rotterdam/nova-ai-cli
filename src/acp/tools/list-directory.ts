@@ -12,6 +12,7 @@ export const listDirectoryTool: ToolDefinition = {
     'list_directory: {"path": "<optional workspace path>", "max_entries": 200, "include_hidden": false} - list files and directories under the workspace without shell dependencies.',
   isAvailable: ({ caps, environment }) => !!caps?.fs?.readTextFile && !!environment?.workspaceReadable,
   mutating: false,
+  kind: "search",
   async execute({ cwd }, args) {
     const resolved = resolveWorkspacePath(cwd, args.path);
     if ("error" in resolved) return { error: resolved.error };

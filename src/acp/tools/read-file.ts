@@ -5,6 +5,7 @@ export const readFileTool: ToolDefinition = {
   description: 'read_file: {"path": "<absolute path>"} — read a text file in the workspace.',
   requiredCapability: (caps) => !!caps?.fs?.readTextFile,
   mutating: false,
+  kind: "read",
   async execute({ host, signal }, args) {
     const path = typeof args.path === "string" ? args.path : "";
     if (!path) return { error: "read_file requires a 'path' argument." };

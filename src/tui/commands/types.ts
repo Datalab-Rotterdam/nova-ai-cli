@@ -1,4 +1,9 @@
-import type { BackgroundJobKind, BackgroundJobSummary, OutputResponse } from "../../acp/background.js";
+import type {
+  BackgroundJobKind,
+  BackgroundJobSummary,
+  OutputResponse,
+} from "../../acp/background.js";
+import type { ContextCompactionResult } from "../../core/context-compaction.js";
 import type { InteractionMode, PermissionMode } from "../state/types.js";
 
 export type SlashCommandContext = {
@@ -16,6 +21,15 @@ export type SlashCommandContext = {
   getPermissionMode(): PermissionMode;
   setPermissionMode(mode: PermissionMode): void;
   openPermissionPicker(): void;
+  openToolInspector(): void;
+  openMcpInspector(): void;
+  openSkillInspector(): void;
+  openUsageInspector(): void | Promise<void>;
+  queueMessage(message: string): void;
+  steerMessage(message: string): boolean;
+  queuedMessages(): string[];
+  clearQueuedMessages(): number;
+  compactContext(): Promise<ContextCompactionResult>;
   listModels(): Promise<Array<{ id: string; name?: string | null }>>;
   startBackgroundShell(command: string): Promise<BackgroundJobSummary>;
   startBackgroundAgent(prompt: string): Promise<BackgroundJobSummary>;
@@ -28,5 +42,5 @@ export type SlashCommandContext = {
 export type SlashCommand = {
   name: string;
   description: string;
-  run(ctx: SlashCommandContext, args: string): void;
+  run(ctx: SlashCommandContext, args: string): void | Promise<void>;
 };

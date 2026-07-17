@@ -1,7 +1,5 @@
-import { render } from "ink";
-import React from "react";
 import { readCredentials } from "../acp/credentials.js";
-import { App } from "./app.js";
+import { runPiTui } from "./pi-app/app.js";
 
 export async function runChat(...args: string[]): Promise<void> {
   const credentials = readCredentials();
@@ -17,13 +15,7 @@ export async function runChat(...args: string[]): Promise<void> {
     return;
   }
 
-  const resumeIndex = args.indexOf("--resume");
-  const resumeSessionId = resumeIndex !== -1 ? args[resumeIndex + 1] : undefined;
-
-  const { waitUntilExit } = render(React.createElement(App, { credentials, cwd: process.cwd(), resumeSessionId }), {
-    exitOnCtrlC: false,
-  });
-  await waitUntilExit();
+  await runPiTui(credentials, process.cwd(), args);
 }
 
 export default runChat;

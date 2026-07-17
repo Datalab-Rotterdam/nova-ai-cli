@@ -8,6 +8,7 @@ export const runPackageScriptTool: ToolDefinition = {
   isAvailable: ({ caps, environment }) =>
     !!caps?.terminal && !!environment?.packageManager && environment.packageScripts.length > 0,
   mutating: true,
+  kind: "execute",
   async execute({ host, signal, environment }, args) {
     const script = typeof args.script === "string" ? args.script : "";
     if (!script) return { error: "run_package_script requires a 'script' argument." };

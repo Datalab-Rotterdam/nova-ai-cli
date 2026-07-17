@@ -6,6 +6,7 @@ export const runCommandTool: ToolDefinition = {
     'run_command: {"command": "<shell command>"} — run a shell command in the workspace and return its output.',
   requiredCapability: (caps) => !!caps?.terminal,
   mutating: true,
+  kind: "execute",
   async execute({ host, signal }, args) {
     const command = typeof args.command === "string" ? args.command : "";
     if (!command) return { error: "run_command requires a 'command' argument." };

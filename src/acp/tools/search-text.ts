@@ -14,6 +14,7 @@ export const searchTextTool: ToolDefinition = {
     'search_text: {"query": "<text or regex>", "path": "<optional workspace path>", "regex": false, "case_sensitive": false, "include_extensions": [".ts"], "exclude_dirs": ["node_modules"], "max_matches": 100} - search text files under the workspace without grep/rg.',
   isAvailable: ({ caps, environment }) => !!caps?.fs?.readTextFile && !!environment?.workspaceReadable,
   mutating: false,
+  kind: "search",
   async execute({ cwd }, args) {
     const query = typeof args.query === "string" ? args.query : "";
     if (!query) return { error: "search_text requires a 'query' argument." };

@@ -1,10 +1,14 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import type { McpServer } from "@agentclientprotocol/sdk";
 import type { PermissionMode } from "../state/types.js";
+import type { PermissionRuleSet } from "./permission-rules.js";
 
 export type WorkspaceSettings = {
   permissionMode?: PermissionMode;
-  allowedTools?: string[];
+  permissions?: PermissionRuleSet;
+  /** MCP servers forwarded unchanged to ACP when a TUI session starts. */
+  mcpServers?: McpServer[];
 };
 
 function settingsPath(cwd: string): string {
@@ -26,11 +30,14 @@ export function writeWorkspaceSettings(cwd: string, settings: WorkspaceSettings)
   writeFileSync(path, `${JSON.stringify(settings, null, 2)}\n`);
 }
 
-export function addAlwaysAllowedTool(cwd: string, toolName: string): void {
+export function addAllowedPermissionRule(cwd: string, rule: string): void {
   const current = readWorkspaceSettings(cwd);
-  const allowedTools = new Set(current.allowedTools ?? []);
-  allowedTools.add(toolName);
-  writeWorkspaceSettings(cwd, { ...current, allowedTools: [...allowedTools] });
+  const allow = new Set(current.permissions?.allow ?? []);
+  allow.add(rule);
+  writeWorkspaceSettings(cwd, {
+    ...current,
+    permissions: { ...current.permissions, allow: [...allow] },
+  });
 }
 
 export function setPermissionMode(cwd: string, permissionMode: PermissionMode): void {

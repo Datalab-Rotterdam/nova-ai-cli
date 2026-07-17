@@ -4,7 +4,7 @@ export default defineConfig({
   entry: ["src/index.ts"],
   format: ["esm"],
   platform: "node",
-  target: "node18",
+  target: "node22",
   outDir: "dist",
   dts: true,
   splitting: false,
@@ -13,6 +13,7 @@ export default defineConfig({
   shims: false,
   external: [
     "@agentclientprotocol/sdk",
+    "@earendil-works/pi-tui",
     "@datalabrotterdam/nova-sdk",
     "@modelcontextprotocol/sdk",
     "@sourceregistry/node-webserver",

@@ -28,11 +28,18 @@ function buildTransport(server: acp.McpServer): Transport {
     });
   }
   const stdio = server as acp.McpServerStdio;
-  return new StdioClientTransport({
+  const transport = new StdioClientTransport({
     command: stdio.command,
     args: stdio.args,
     env: Object.fromEntries(stdio.env.map((e) => [e.name, e.value])),
+    // MCP processes are part of the interactive agent runtime. Inheriting
+    // stderr would write through the TUI's synchronized renderer and leave
+    // corrupt rows behind. Connection failures are returned through ACP
+    // status metadata instead.
+    stderr: "pipe",
   });
+  transport.stderr?.on("data", () => {});
+  return transport;
 }
 
 export type McpConnection = {
@@ -41,21 +48,35 @@ export type McpConnection = {
   close(): Promise<void>;
 };
 
-export async function connectMcpServers(servers: acp.McpServer[]): Promise<McpConnection[]> {
+export type McpConnectionFailure = {
+  serverName: string;
+  message: string;
+};
+
+export type McpConnectionResult = {
+  connections: McpConnection[];
+  failures: McpConnectionFailure[];
+};
+
+export async function connectMcpServers(servers: acp.McpServer[]): Promise<McpConnectionResult> {
   const connections: McpConnection[] = [];
+  const failures: McpConnectionFailure[] = [];
   for (const server of servers) {
     if ("type" in server && server.type === "acp") continue; // experimental ACP-transport MCP, not yet supported
 
     const client = new Client({ name: "nova-ai-cli", version: "1.0.0" });
-    const transport = buildTransport(server);
     try {
+      const transport = buildTransport(server);
       await client.connect(transport);
       connections.push({ serverName: server.name, client, close: () => client.close() });
     } catch (err) {
-      console.error(`Failed to connect MCP server "${server.name}": ${(err as Error).message}`);
+      failures.push({
+        serverName: server.name,
+        message: err instanceof Error ? err.message : "Connection failed.",
+      });
     }
   }
-  return connections;
+  return { connections, failures };
 }
 
 export async function closeMcpConnections(connections: McpConnection[]): Promise<void> {
@@ -79,11 +100,28 @@ function toToolResult(result: { content?: unknown; isError?: boolean }): ToolRes
   return { output: text };
 }
 
-export async function listMcpTools(connections: McpConnection[]): Promise<ToolDefinition[]> {
+export async function listMcpTools(connections: McpConnection[]): Promise<{
+  tools: ToolDefinition[];
+  connections: McpConnection[];
+  failures: McpConnectionFailure[];
+}> {
   const tools: ToolDefinition[] = [];
+  const readyConnections: McpConnection[] = [];
+  const failures: McpConnectionFailure[] = [];
 
   for (const connection of connections) {
-    const { tools: serverTools } = await connection.client.listTools();
+    let serverTools;
+    try {
+      ({ tools: serverTools } = await connection.client.listTools());
+      readyConnections.push(connection);
+    } catch (error) {
+      failures.push({
+        serverName: connection.serverName,
+        message: error instanceof Error ? `Could not list tools: ${error.message}` : "Could not list tools.",
+      });
+      await connection.close().catch(() => {});
+      continue;
+    }
     for (const tool of serverTools) {
       const qualifiedName = `${TOOL_NAME_PREFIX}${sanitize(connection.serverName)}__${sanitize(tool.name)}`;
       tools.push({
@@ -91,6 +129,7 @@ export async function listMcpTools(connections: McpConnection[]): Promise<ToolDe
         description: `${qualifiedName}: ${tool.description ?? tool.name} (from MCP server "${connection.serverName}")`,
         requiredCapability: () => true,
         mutating: true,
+        kind: "execute",
         async execute(_ctx, args) {
           try {
             const result = await connection.client.callTool({ name: tool.name, arguments: args });
@@ -103,5 +142,5 @@ export async function listMcpTools(connections: McpConnection[]): Promise<ToolDe
     }
   }
 
-  return tools;
+  return { tools, connections: readyConnections, failures };
 }

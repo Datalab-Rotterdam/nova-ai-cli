@@ -29,7 +29,10 @@ describe("writeFileTool", () => {
 
     const result = await writeFileTool.execute(ctx, { path: "/tmp/x", content: "hello" });
 
-    assert.deepEqual(result, { output: "Wrote 5 characters to /tmp/x." });
+    assert.deepEqual(result, {
+      output: "Wrote 5 characters to /tmp/x.",
+      diff: { path: "/tmp/x", oldText: "", newText: "hello" },
+    });
   });
 
   it("returns an error when the host write rejects", async () => {

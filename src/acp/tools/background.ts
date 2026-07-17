@@ -6,6 +6,7 @@ export const startBackgroundCommandTool: ToolDefinition = {
     'start_background_command: {"command": "<shell command>", "title": "<optional label>"} - start a long-running shell command, such as a dev server, in the background and return its job id.',
   isAvailable: ({ background }) => !!background,
   mutating: true,
+  kind: "execute",
   async execute({ background }, args) {
     if (!background) return { error: "Background jobs are not available in this session." };
     const command = typeof args.command === "string" ? args.command : "";
@@ -22,6 +23,7 @@ export const startBackgroundAgentTool: ToolDefinition = {
     'start_background_agent: {"prompt": "<task prompt>", "title": "<optional label>"} - start another Nova agent turn in the background and return its job id.',
   isAvailable: ({ background }) => !!background,
   mutating: true,
+  kind: "think",
   async execute({ background }, args) {
     if (!background) return { error: "Background jobs are not available in this session." };
     const prompt = typeof args.prompt === "string" ? args.prompt : "";
@@ -37,6 +39,7 @@ export const listBackgroundJobsTool: ToolDefinition = {
   description: "list_background_jobs: {} - list running and completed background command/agent jobs for this session.",
   isAvailable: ({ background }) => !!background,
   mutating: false,
+  kind: "read",
   async execute({ background }) {
     if (!background) return { error: "Background jobs are not available in this session." };
     const jobs = background.list();
@@ -50,6 +53,7 @@ export const readBackgroundOutputTool: ToolDefinition = {
   description: 'read_background_output: {"jobId": "<background job id>"} - read stored agent output or current terminal output for a background job.',
   isAvailable: ({ background }) => !!background,
   mutating: false,
+  kind: "read",
   async execute({ background }, args) {
     if (!background) return { error: "Background jobs are not available in this session." };
     const jobId = typeof args.jobId === "string" ? args.jobId : "";
@@ -65,6 +69,7 @@ export const killBackgroundJobTool: ToolDefinition = {
   description: 'kill_background_job: {"jobId": "<background job id>"} - stop a running background command or agent job.',
   isAvailable: ({ background }) => !!background,
   mutating: true,
+  kind: "execute",
   async execute({ background }, args) {
     if (!background) return { error: "Background jobs are not available in this session." };
     const jobId = typeof args.jobId === "string" ? args.jobId : "";
@@ -80,6 +85,7 @@ export const releaseBackgroundJobTool: ToolDefinition = {
     'release_background_job: {"jobId": "<background job id>"} - release background job resources; terminal jobs are killed by ACP release if still running.',
   isAvailable: ({ background }) => !!background,
   mutating: true,
+  kind: "execute",
   async execute({ background }, args) {
     if (!background) return { error: "Background jobs are not available in this session." };
     const jobId = typeof args.jobId === "string" ? args.jobId : "";

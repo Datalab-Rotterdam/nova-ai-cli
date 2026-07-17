@@ -4,6 +4,8 @@ import type * as acp from "@agentclientprotocol/sdk";
 import type {
   CreateTerminalRequest,
   CreateTerminalResponse,
+  CreateElicitationRequest,
+  CreateElicitationResponse,
   KillTerminalRequest,
   ReadTextFileRequest,
   ReadTextFileResponse,
@@ -17,12 +19,35 @@ import type {
   WaitForTerminalExitResponse,
   WriteTextFileRequest,
 } from "@agentclientprotocol/sdk";
-import { addAlwaysAllowedTool, readWorkspaceSettings } from "../settings/workspace-settings.js";
+import type { UserInputResponse } from "../../core/user-questions.js";
+import {
+  isInteractionMode,
+  type InteractionMode,
+} from "../../core/interaction-modes.js";
+import {
+  fromElicitationRequest,
+  toElicitationResponse,
+} from "../../acp/user-questions.js";
+import {
+  evaluatePermissionRules,
+  exactPermissionRule,
+  type PermissionRuleSet,
+} from "../settings/permission-rules.js";
+import {
+  addAllowedPermissionRule,
+  readWorkspaceSettings,
+} from "../settings/workspace-settings.js";
 import type { Store } from "../state/store.js";
-import type { BackgroundJobView, ToolCallView, UIMessage, UIState } from "../state/types.js";
+import type {
+  BackgroundJobView,
+  ToolCallView,
+  ToolDiffView,
+  UIMessage,
+  UIState,
+} from "../state/types.js";
 
 const DEFAULT_OUTPUT_LIMIT = 100_000;
-const AUTO_EDIT_TOOL_NAMES = new Set(["write_file"]);
+const AUTO_EDIT_TOOL_NAMES = new Set(["write_file", "edit_file"]);
 
 let nextMessageId = 0;
 function uid(): string {
@@ -33,9 +58,11 @@ function uid(): string {
 type TerminalRecord = {
   child: ChildProcessWithoutNullStreams;
   command: string;
+  toolCallId: string | null;
   output: string;
   truncated: boolean;
   outputByteLimit: number;
+  previewTimer: ReturnType<typeof setTimeout> | null;
   exitStatus: { exitCode: number | null; signal: string | null } | null;
   exitPromise: Promise<WaitForTerminalExitResponse>;
 };
@@ -44,27 +71,40 @@ export class TuiAcpClient {
   readonly capabilities = {
     fs: { readTextFile: true, writeTextFile: true },
     terminal: true,
+    elicitation: { form: {} },
   } satisfies acp.ClientCapabilities;
 
   private readonly terminals = new Map<string, TerminalRecord>();
   private readonly allowedForSession = new Set<string>();
-  private readonly alwaysAllowedTools: Set<string>;
+  private readonly permissionRules: PermissionRuleSet;
   private streamingMessageId: string | null = null;
   private nextTerminalId = 0;
 
   constructor(
     private readonly store: Store<UIState>,
     private readonly cwd: string,
-    private readonly onBackgroundLifecycle?: (event: string, job: BackgroundJobView) => void | Promise<void>,
+    private readonly onBackgroundLifecycle?: (
+      event: string,
+      job: BackgroundJobView,
+    ) => void | Promise<void>,
+    private readonly onInteractionModeChange?: (mode: InteractionMode) => void,
   ) {
-    this.alwaysAllowedTools = new Set(readWorkspaceSettings(cwd).allowedTools ?? []);
+    const configured = readWorkspaceSettings(cwd).permissions;
+    this.permissionRules = {
+      allow: [...(configured?.allow ?? [])],
+      deny: [...(configured?.deny ?? [])],
+    };
   }
 
   context(): acp.AgentContext {
     return {
-      request: (method: string, params?: unknown, options?: acp.SendRequestOptions) =>
-        this.handleRequest(method, params, options),
-      notify: (method: string, params?: unknown) => this.handleNotification(method, params),
+      request: (
+        method: string,
+        params?: unknown,
+        options?: acp.SendRequestOptions,
+      ) => this.handleRequest(method, params, options),
+      notify: (method: string, params?: unknown) =>
+        this.handleNotification(method, params),
     } as unknown as acp.AgentContext;
   }
 
@@ -73,7 +113,9 @@ export class TuiAcpClient {
       const id = this.streamingMessageId;
       this.store.setState((state) => ({
         messages: state.messages.map((message) =>
-          message.id === id && message.role === "assistant" ? { ...message, streaming: false } : message,
+          message.id === id && message.role === "assistant"
+            ? { ...message, streaming: false }
+            : message,
         ),
       }));
     }
@@ -88,13 +130,39 @@ export class TuiAcpClient {
     this.appendMessage({ id: uid(), role: "error", text });
   }
 
-  releaseAllTerminals(): void {
-    for (const terminalId of [...this.terminals.keys()]) {
-      void this.releaseTerminal({ sessionId: this.store.getState().sessionId, terminalId });
-    }
+  failPendingTools(reason: string): number {
+    let count = 0;
+    this.store.setState((state) => ({
+      messages: state.messages.map((message) => {
+        if (message.role !== "tool" || message.call.status !== "pending")
+          return message;
+        count++;
+        const output = message.call.output
+          ? `${message.call.output.replace(/\s+$/, "")}\n${reason}`
+          : reason;
+        return {
+          ...message,
+          call: { ...message.call, status: "failed", output },
+        };
+      }),
+    }));
+    return count;
   }
 
-  async readTextFile(params: ReadTextFileRequest): Promise<ReadTextFileResponse> {
+  async releaseAllTerminals(): Promise<void> {
+    await Promise.all(
+      [...this.terminals.keys()].map((terminalId) =>
+        this.releaseTerminal({
+          sessionId: this.store.getState().sessionId,
+          terminalId,
+        }),
+      ),
+    );
+  }
+
+  async readTextFile(
+    params: ReadTextFileRequest,
+  ): Promise<ReadTextFileResponse> {
     let content = await readFile(params.path, "utf8");
     if (params.line || params.limit) {
       const start = Math.max((params.line ?? 1) - 1, 0);
@@ -108,22 +176,31 @@ export class TuiAcpClient {
     await writeFile(params.path, params.content, "utf8");
   }
 
-  async createTerminal(params: CreateTerminalRequest): Promise<CreateTerminalResponse> {
+  async createTerminal(
+    params: CreateTerminalRequest,
+  ): Promise<CreateTerminalResponse> {
     const terminalId = `tui-${++this.nextTerminalId}`;
     const outputByteLimit = params.outputByteLimit ?? DEFAULT_OUTPUT_LIMIT;
     const env = { ...process.env };
-    for (const variable of params.env ?? []) env[variable.name] = variable.value;
+    for (const variable of params.env ?? [])
+      env[variable.name] = variable.value;
 
     const child = params.args?.length
       ? spawn(params.command, params.args, { cwd: params.cwd ?? this.cwd, env })
-      : spawn(params.command, { cwd: params.cwd ?? this.cwd, env, shell: true });
+      : spawn(params.command, {
+          cwd: params.cwd ?? this.cwd,
+          env,
+          shell: true,
+        });
 
     const record: TerminalRecord = {
       child,
       command: params.command,
+      toolCallId: this.findPendingTerminalTool(params.command),
       output: "",
       truncated: false,
       outputByteLimit,
+      previewTimer: null,
       exitStatus: null,
       exitPromise: Promise.resolve({}),
     };
@@ -131,9 +208,12 @@ export class TuiAcpClient {
     const append = (chunk: Buffer) => {
       record.output += chunk.toString("utf8");
       if (record.output.length > record.outputByteLimit) {
-        record.output = record.output.slice(record.output.length - record.outputByteLimit);
+        record.output = record.output.slice(
+          record.output.length - record.outputByteLimit,
+        );
         record.truncated = true;
       }
+      this.scheduleTerminalPreview(record);
     };
 
     child.stdout.on("data", append);
@@ -141,10 +221,12 @@ export class TuiAcpClient {
     record.exitPromise = new Promise((resolve) => {
       child.on("error", (err) => {
         record.output += `\n${err.message}`;
+        this.flushTerminalPreview(record);
         record.exitStatus = { exitCode: null, signal: "error" };
         resolve(record.exitStatus);
       });
       child.on("close", (exitCode, signal) => {
+        this.flushTerminalPreview(record);
         record.exitStatus = { exitCode, signal };
         resolve(record.exitStatus);
       });
@@ -154,7 +236,9 @@ export class TuiAcpClient {
     return { terminalId };
   }
 
-  async terminalOutput(params: TerminalOutputRequest): Promise<TerminalOutputResponse> {
+  async terminalOutput(
+    params: TerminalOutputRequest,
+  ): Promise<TerminalOutputResponse> {
     const record = this.requireTerminal(params.terminalId);
     return {
       output: record.output,
@@ -163,7 +247,9 @@ export class TuiAcpClient {
     };
   }
 
-  async waitForTerminalExit(params: WaitForTerminalExitRequest): Promise<WaitForTerminalExitResponse> {
+  async waitForTerminalExit(
+    params: WaitForTerminalExitRequest,
+  ): Promise<WaitForTerminalExitResponse> {
     return this.requireTerminal(params.terminalId).exitPromise;
   }
 
@@ -175,17 +261,28 @@ export class TuiAcpClient {
   async releaseTerminal(params: ReleaseTerminalRequest): Promise<void> {
     const record = this.terminals.get(params.terminalId);
     if (!record) return;
+    if (record.previewTimer) clearTimeout(record.previewTimer);
     if (!record.exitStatus) record.child.kill();
     this.terminals.delete(params.terminalId);
   }
 
-  async requestPermission(params: RequestPermissionRequest): Promise<RequestPermissionResponse> {
+  async requestPermission(
+    params: RequestPermissionRequest,
+  ): Promise<RequestPermissionResponse> {
     const permissionMode = this.store.getState().permissionMode;
     const toolName = params.toolCall.title ?? "tool";
+    const kind = params.toolCall.kind ?? "other";
     const args = toRecord(params.toolCall.rawInput);
+    const ruleDecision = evaluatePermissionRules(
+      this.permissionRules,
+      toolName,
+      args,
+    );
+    if (ruleDecision === "deny") return selected("reject");
+    if (ruleDecision === "allow") return selected("allow");
     if (permissionMode === "bypassAll") return selected("allow");
-    if (permissionMode === "acceptEdits" && AUTO_EDIT_TOOL_NAMES.has(toolName)) return selected("allow");
-    if (this.alwaysAllowedTools.has(toolName)) return selected("allow");
+    if (permissionMode === "acceptEdits" && AUTO_EDIT_TOOL_NAMES.has(toolName))
+      return selected("allow");
 
     const key = `${toolName}:${JSON.stringify(args)}`;
     if (this.allowedForSession.has(key)) return selected("allow");
@@ -195,17 +292,53 @@ export class TuiAcpClient {
         pendingPermission: {
           toolCallId: params.toolCall.toolCallId,
           toolName,
+          kind,
           args,
           resolve: (allow, scope) => {
             if (allow && scope === "session") this.allowedForSession.add(key);
             if (allow && scope === "always") {
-              this.alwaysAllowedTools.add(toolName);
-              addAlwaysAllowedTool(this.cwd, toolName);
+              const rule = exactPermissionRule(toolName, args);
+              this.permissionRules.allow = [
+                ...(this.permissionRules.allow ?? []),
+                rule,
+              ];
+              addAllowedPermissionRule(this.cwd, rule);
             }
             this.store.setState({ pendingPermission: null });
             resolve(allow ? selected("allow") : selected("reject"));
           },
         },
+      });
+    });
+  }
+
+  async createElicitation(
+    params: CreateElicitationRequest,
+    signal?: AbortSignal,
+  ): Promise<CreateElicitationResponse> {
+    const request = fromElicitationRequest(params);
+    if (!request) return { action: "decline" };
+    const id = `question-${uid()}`;
+
+    return new Promise<CreateElicitationResponse>((resolve) => {
+      let settled = false;
+      const finish = (response: UserInputResponse) => {
+        if (settled) return;
+        settled = true;
+        signal?.removeEventListener("abort", abort);
+        if (this.store.getState().pendingQuestion?.id === id) {
+          this.store.setState({ pendingQuestion: null });
+        }
+        resolve(toElicitationResponse(request, response));
+      };
+      const abort = () => finish({ action: "cancel", answers: [] });
+      signal?.addEventListener("abort", abort, { once: true });
+      if (signal?.aborted) {
+        abort();
+        return;
+      }
+      this.store.setState({
+        pendingQuestion: { id, request, resolve: finish },
       });
     });
   }
@@ -216,20 +349,45 @@ export class TuiAcpClient {
       case "user_message_chunk":
         return;
       case "agent_message_chunk":
-        if (update.content.type === "text") this.appendStreamingText(update.content.text);
+        if (update.content.type === "text")
+          this.appendStreamingText(update.content.text);
+        return;
+      case "agent_thought_chunk":
+        if (update.content.type === "text" && update.content.text.trim()) {
+          this.resetStreaming();
+          this.appendMessage({
+            id: uid(),
+            role: "assistant",
+            text: update.content.text,
+            streaming: false,
+          });
+        }
+        return;
+      case "current_mode_update":
+        if (isInteractionMode(update.currentModeId)) {
+          this.onInteractionModeChange?.(update.currentModeId);
+        }
         return;
       case "tool_call":
-        this.streamingMessageId = null;
+        // A tool call ends the preceding assistant text segment.  Keep the
+        // rendered message, but explicitly settle it before beginning the
+        // tool card; otherwise its streaming marker can animate forever.
+        this.resetStreaming();
         this.appendMessage({
           id: uid(),
           role: "tool",
           call: {
             toolCallId: update.toolCallId,
             name: update.title,
-            mutating: update.kind !== "read" && update.kind !== "search",
+            mutating:
+              typeof update._meta?.["nova-ai-cli/mutating"] === "boolean"
+                ? update._meta["nova-ai-cli/mutating"]
+                : update.kind !== "read" && update.kind !== "search",
+            kind: update.kind ?? "other",
             args: toRecord(update.rawInput),
             status: normalizeToolStatus(update.status),
             output: null,
+            diff: null,
           },
         });
         return;
@@ -237,6 +395,7 @@ export class TuiAcpClient {
         this.patchToolCall(update.toolCallId, {
           status: normalizeToolStatus(update.status),
           output: extractToolOutput(update),
+          diff: extractToolDiff(update),
         });
         return;
       default:
@@ -250,13 +409,20 @@ export class TuiAcpClient {
     const job = parseBackgroundJob("job" in params ? params.job : null);
     if (!job) return;
 
-    const preview = job.outputPath && event !== "started" ? await readPreview(job.outputPath) : "";
+    const preview =
+      job.outputPath && event !== "started"
+        ? await readPreview(job.outputPath)
+        : "";
     this.upsertBackgroundMessage({ ...job, preview });
     this.store.setState({ statusLine: `Background ${event}: ${job.title}` });
     await this.onBackgroundLifecycle?.(event, job);
   }
 
-  private async handleRequest(method: string, params?: unknown, options?: acp.SendRequestOptions): Promise<unknown> {
+  private async handleRequest(
+    method: string,
+    params?: unknown,
+    options?: acp.SendRequestOptions,
+  ): Promise<unknown> {
     options?.cancellationSignal?.throwIfAborted();
     switch (method) {
       case "fs/read_text_file":
@@ -275,12 +441,20 @@ export class TuiAcpClient {
         return this.releaseTerminal(params as ReleaseTerminalRequest);
       case "session/request_permission":
         return this.requestPermission(params as RequestPermissionRequest);
+      case "elicitation/create":
+        return this.createElicitation(
+          params as CreateElicitationRequest,
+          options?.cancellationSignal,
+        );
       default:
         throw new Error(`Unsupported ACP client request: ${method}`);
     }
   }
 
-  private async handleNotification(method: string, params?: unknown): Promise<void> {
+  private async handleNotification(
+    method: string,
+    params?: unknown,
+  ): Promise<void> {
     switch (method) {
       case "session/update":
         return this.sessionUpdate(params as SessionNotification);
@@ -295,6 +469,45 @@ export class TuiAcpClient {
     const record = this.terminals.get(terminalId);
     if (!record) throw new Error(`Terminal ${terminalId} not found`);
     return record;
+  }
+
+  private findPendingTerminalTool(command: string): string | null {
+    const messages = this.store.getState().messages;
+    for (let index = messages.length - 1; index >= 0; index--) {
+      const message = messages[index];
+      if (
+        !message ||
+        message.role !== "tool" ||
+        message.call.status !== "pending"
+      )
+        continue;
+      if (message.call.name === "run_package_script")
+        return message.call.toolCallId;
+      if (
+        message.call.name === "run_command" &&
+        message.call.args.command === command
+      )
+        return message.call.toolCallId;
+    }
+    return null;
+  }
+
+  private scheduleTerminalPreview(record: TerminalRecord): void {
+    if (!record.toolCallId || record.previewTimer) return;
+    record.previewTimer = setTimeout(() => {
+      record.previewTimer = null;
+      this.patchToolCall(record.toolCallId!, { output: record.output });
+    }, 50);
+    record.previewTimer.unref?.();
+  }
+
+  private flushTerminalPreview(record: TerminalRecord): void {
+    if (record.previewTimer) {
+      clearTimeout(record.previewTimer);
+      record.previewTimer = null;
+    }
+    if (record.toolCallId && record.output)
+      this.patchToolCall(record.toolCallId, { output: record.output });
   }
 
   private appendStreamingText(text: string): void {
@@ -314,7 +527,10 @@ export class TuiAcpClient {
     }));
   }
 
-  private patchToolCall(toolCallId: string, patch: Partial<ToolCallView>): void {
+  private patchToolCall(
+    toolCallId: string,
+    patch: Partial<ToolCallView>,
+  ): void {
     this.store.setState((state) => ({
       messages: state.messages.map((message) =>
         message.role === "tool" && message.call.toolCallId === toolCallId
@@ -325,18 +541,26 @@ export class TuiAcpClient {
   }
 
   private appendMessage(message: UIMessage): void {
-    this.store.setState((state) => ({ messages: [...state.messages, message] }));
+    this.store.setState((state) => ({
+      messages: [...state.messages, message],
+    }));
   }
 
   private upsertBackgroundMessage(job: BackgroundJobView): void {
     this.store.setState((state) => {
       const existing = state.messages.find(
-        (message) => message.role === "background" && message.job.jobId === job.jobId,
+        (message) =>
+          message.role === "background" && message.job.jobId === job.jobId,
       );
-      if (!existing) return { messages: [...state.messages, { id: uid(), role: "background", job }] };
+      if (!existing)
+        return {
+          messages: [...state.messages, { id: uid(), role: "background", job }],
+        };
       return {
         messages: state.messages.map((message) =>
-          message.role === "background" && message.job.jobId === job.jobId ? { ...message, job } : message,
+          message.role === "background" && message.job.jobId === job.jobId
+            ? { ...message, job }
+            : message,
         ),
       };
     });
@@ -348,27 +572,52 @@ function selected(optionId: string): RequestPermissionResponse {
 }
 
 function toRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
 }
 
-function normalizeToolStatus(status: acp.ToolCallStatus | null | undefined): ToolCallView["status"] {
+function normalizeToolStatus(
+  status: acp.ToolCallStatus | null | undefined,
+): ToolCallView["status"] {
   if (status === "completed" || status === "failed") return status;
   return "pending";
 }
 
 function extractToolOutput(update: acp.ToolCallUpdate): string | null {
-  if (typeof update.rawOutput === "object" && update.rawOutput && "output" in update.rawOutput) {
+  if (
+    typeof update.rawOutput === "object" &&
+    update.rawOutput &&
+    "output" in update.rawOutput
+  ) {
     return String(update.rawOutput.output ?? "");
   }
-  const content = update.content?.find((item) => item.type === "content" && item.content.type === "text");
-  return content && content.type === "content" && content.content.type === "text" ? content.content.text : null;
+  const content = update.content?.find(
+    (item) => item.type === "content" && item.content.type === "text",
+  );
+  return content &&
+    content.type === "content" &&
+    content.content.type === "text"
+    ? content.content.text
+    : null;
+}
+
+function extractToolDiff(update: acp.ToolCallUpdate): ToolDiffView | null {
+  const diff = update.content?.find((item) => item.type === "diff");
+  if (!diff || diff.type !== "diff") return null;
+  return {
+    path: diff.path,
+    oldText: diff.oldText ?? null,
+    newText: diff.newText,
+  };
 }
 
 function parseBackgroundJob(value: unknown): BackgroundJobView | null {
   if (!value || typeof value !== "object") return null;
   const job = value as Record<string, unknown>;
   const jobId = typeof job.jobId === "string" ? job.jobId : null;
-  const kind = job.kind === "terminal" || job.kind === "prompt" ? job.kind : null;
+  const kind =
+    job.kind === "terminal" || job.kind === "prompt" ? job.kind : null;
   const title = typeof job.title === "string" ? job.title : "background job";
   const status =
     job.status === "running" ||

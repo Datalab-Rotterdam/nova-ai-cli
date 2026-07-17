@@ -7,6 +7,8 @@ import {
   startBackgroundAgentTool,
   startBackgroundCommandTool,
 } from "./background.js";
+import { askUserTool } from "./ask-user.js";
+import { editFileTool } from "./edit-file.js";
 import { inspectEnvironmentTool } from "./inspect-environment.js";
 import { listDirectoryTool } from "./list-directory.js";
 import { readFileTool } from "./read-file.js";
@@ -18,11 +20,13 @@ import type { ToolDefinition } from "./types.js";
 import { writeFileTool } from "./write-file.js";
 
 const TOOLS: ToolDefinition[] = [
+  askUserTool,
   inspectEnvironmentTool,
   listDirectoryTool,
   searchTextTool,
   readFileTool,
   writeFileTool,
+  editFileTool,
   runCommandTool,
   runPackageScriptTool,
   startBackgroundCommandTool,
@@ -39,7 +43,12 @@ export function availableTools(
   options: { background?: boolean } = {},
 ): ToolDefinition[] {
   return TOOLS.filter((tool) => {
-    if (tool.isAvailable) return tool.isAvailable({ caps, environment, background: options.background });
+    if (tool.isAvailable)
+      return tool.isAvailable({
+        caps,
+        environment,
+        background: options.background,
+      });
     return tool.requiredCapability?.(caps) ?? true;
   });
 }
