@@ -18,6 +18,7 @@ import {
 } from "../core/context-compaction.js";
 import { runTurn } from "../core/run-turn.js";
 import { resolveModelSupportsImageInput } from "../core/model-capabilities.js";
+import { stripReasoningTags } from "../core/reasoning-tags.js";
 import {
   interactionModeAllowsTools,
   isInteractionMode,
@@ -26,6 +27,7 @@ import {
 import { AcpToolHost } from "./acp-tool-host.js";
 import { runBrowserAuth } from "./auth-server.js";
 import { readCredentials } from "./credentials.js";
+import { stripToolCallMarkup } from "./tools/marker.js";
 import {
   buildSkillsSystemPrompt,
   createLoadSkillTool,
@@ -116,10 +118,15 @@ type Session = {
   model: string | null;
 };
 
+export type PromptRuntimeOptions = {
+  takeSteeringMessages?(): ChatMessage[] | Promise<ChatMessage[]>;
+};
+
 export class NovaAgent {
   private readonly sessions = new Map<string, Session>();
   private readonly backgroundJobs = new BackgroundJobManager();
   private readonly imageSupportByModel = new Map<string, boolean>();
+  private readonly contextWindowByModel = new Map<string, number>();
   private readonly nesSessions = new Map<string, NesSession>();
   private readonly disabledProviders = new Set<string>();
   private clientCapabilities: acp.ClientCapabilities | undefined;
@@ -283,7 +290,11 @@ export class NovaAgent {
     );
 
     for (const message of stored.messages) {
-      const text = chatContentToText(message.content);
+      const rawText = chatContentToText(message.content);
+      const text =
+        message.role === "assistant"
+          ? stripReasoningTags(stripToolCallMarkup(rawText))
+          : rawText;
       if (!text) continue;
       if (message.role === "user") {
         await client.notify("session/update", {
@@ -554,7 +565,10 @@ export class NovaAgent {
         },
         { signal },
       );
-      if (signal.aborted || this.nesSessions.get(params.sessionId) !== session) {
+      if (
+        signal.aborted ||
+        this.nesSessions.get(params.sessionId) !== session
+      ) {
         return { suggestions: [] };
       }
       const current = session.documents.get(params.uri);
@@ -714,7 +728,7 @@ export class NovaAgent {
       );
 
     const novaClient = new NovaAI({ apiKey: credentials.apiKey });
-    const contextWindow = await resolveModelContextWindow(novaClient, model);
+    const contextWindow = await this.resolveContextWindow(novaClient, model);
     const result = await compactConversation(
       session.history,
       novaClient,
@@ -736,6 +750,7 @@ export class NovaAgent {
   async prompt(
     params: acp.PromptRequest,
     client: acp.AgentContext,
+    runtime: PromptRuntimeOptions = {},
   ): Promise<acp.PromptResponse> {
     const session = this.sessions.get(params.sessionId);
     if (!session) {
@@ -763,6 +778,7 @@ export class NovaAgent {
       );
     }
     await this.assertImageInputSupported(novaClient, model, params.prompt);
+    const contextWindow = await this.resolveContextWindow(novaClient, model);
 
     session.environment = await detectToolEnvironment(
       session.cwd,
@@ -857,7 +873,7 @@ export class NovaAgent {
             model,
             {
               signal: abortController.signal,
-              contextWindow: contextWindowFromError(error) ?? undefined,
+              contextWindow: contextWindowFromError(error) ?? contextWindow,
             },
           );
           if (compaction.compacted) {
@@ -870,6 +886,8 @@ export class NovaAgent {
           }
           return compaction;
         },
+        contextWindow,
+        takeSteeringMessages: runtime.takeSteeringMessages,
         emit,
         novaClient,
         model,
@@ -1183,6 +1201,7 @@ export class NovaAgent {
     session.memory = discoverMemories(session.cwd);
     const novaClient = new NovaAI({ apiKey });
     await this.assertImageInputSupported(novaClient, model, params.prompt);
+    const contextWindow = await this.resolveContextWindow(novaClient, model);
     const background = this.createBackgroundToolApi(params.sessionId, client);
     const tools = [
       ...availableTools(this.clientCapabilities, session.environment, {
@@ -1239,6 +1258,7 @@ export class NovaAgent {
         background,
         tools,
         requestPermission,
+        contextWindow,
         emit,
         novaClient,
         model,
@@ -1258,6 +1278,18 @@ export class NovaAgent {
         [userMessage, ...turnMessages],
       );
     }
+  }
+
+  private async resolveContextWindow(
+    novaClient: NovaAI,
+    model: string,
+  ): Promise<number> {
+    let window = this.contextWindowByModel.get(model);
+    if (window === undefined) {
+      window = await resolveModelContextWindow(novaClient, model);
+      this.contextWindowByModel.set(model, window);
+    }
+    return window;
   }
 
   private async assertImageInputSupported(

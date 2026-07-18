@@ -14,6 +14,7 @@ import {
   isContextLimitError,
   type ContextCompactionResult,
 } from "./context-compaction.js";
+import { estimateMessagesTokens } from "./context-usage.js";
 import { ReasoningTagFilter, stripReasoningTags } from "./reasoning-tags.js";
 import type { ToolHost } from "./tool-host.js";
 import { truncateToolOutput } from "./tool-output.js";
@@ -21,6 +22,7 @@ import { truncateToolOutput } from "./tool-output.js";
 const DEFAULT_MAX_TOOL_ROUNDS = 64;
 const MAX_EMPTY_COMPLETION_RETRIES = 2;
 const MAX_TRUNCATED_COMPLETION_RETRIES = 2;
+const PROACTIVE_COMPACTION_THRESHOLD = 0.8;
 const EMPTY_COMPLETION_INSTRUCTION =
   "The previous completion contained no visible assistant response. Continue the task now with either the next required tool call or a final answer.";
 const TRUNCATED_COMPLETION_INSTRUCTION =
@@ -44,8 +46,11 @@ export type RunTurnDeps = {
   ): Promise<boolean>;
   compactContext?(
     messages: ChatMessage[],
+    /** null when compaction is proactive rather than error-driven. */
     error: unknown,
   ): Promise<ContextCompactionResult>;
+  /** Enables proactive compaction before the estimate exceeds the window. */
+  contextWindow?: number | null;
   /**
    * Drains user guidance that arrived while a tool round was running. The
    * callback is only read between model requests, never during a stream or
@@ -100,6 +105,7 @@ export async function runTurn(
     toolsEnabled ? tools.find((tool) => tool.name === name) : undefined;
   const turnMessages: ChatMessage[] = [];
   let contextCompactionUsed = false;
+  let proactiveCompactionUsed = false;
   let toolRounds = 0;
   let emptyCompletionRetries = 0;
   let truncatedCompletionRetries = 0;
@@ -123,6 +129,28 @@ export async function runTurn(
       for (const message of steeringMessages) pushTurn(message);
     }
     hasCompletedRound = false;
+
+    // Compact before the request when the estimate nears the window instead
+    // of waiting for the API to reject it. The reactive error path below
+    // stays independent as a backstop for a bad estimate.
+    if (
+      !proactiveCompactionUsed &&
+      compactContext &&
+      typeof deps.contextWindow === "number" &&
+      deps.contextWindow > 0 &&
+      estimateMessagesTokens(messages) >
+        deps.contextWindow * PROACTIVE_COMPACTION_THRESHOLD
+    ) {
+      proactiveCompactionUsed = true;
+      const result = await compactContext(messages, null);
+      if (result.compacted) {
+        await emit({
+          type: "context_compacted",
+          removedMessages: result.removedMessages,
+          keptMessages: result.keptMessages,
+        });
+      }
+    }
 
     let buffer = "";
     let flushed = 0;

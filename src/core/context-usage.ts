@@ -121,6 +121,17 @@ export function estimateTokens(value: string): number {
   return Math.max(1, Math.ceil(Buffer.byteLength(value, "utf8") / 4));
 }
 
+const PER_MESSAGE_TOKEN_OVERHEAD = 4;
+
+/** Rough total for a request's messages, used for proactive compaction. */
+export function estimateMessagesTokens(messages: ChatMessage[]): number {
+  return messages.reduce(
+    (total, message) =>
+      total + PER_MESSAGE_TOKEN_OVERHEAD + estimateTokens(messageText(message)),
+    0,
+  );
+}
+
 function toolCategory(name: string): ContextUsageCategory {
   if (name === "load_skill") return "skills";
   if (name === "load_memory" || name === "save_memory") return "memory";

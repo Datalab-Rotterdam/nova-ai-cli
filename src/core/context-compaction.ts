@@ -1,5 +1,6 @@
 import type { ChatMessage, NovaAI } from "@datalabrotterdam/nova-sdk";
 import { chatContentToText } from "./chat-content.js";
+import { resolveModelMetadata } from "./model-capabilities.js";
 
 const DEFAULT_CONTEXT_WINDOW = 32_768;
 const MAX_RECENT_MESSAGES = 8;
@@ -66,10 +67,7 @@ export async function resolveModelContextWindow(
   model: string,
 ): Promise<number> {
   try {
-    const response = await novaClient.models.list();
-    const metadata = response.data.find(
-      (entry) => entry.id === model || entry.aliases?.includes(model),
-    );
+    const metadata = await resolveModelMetadata(novaClient, model);
     const value = metadata?.context_window ?? metadata?.max_model_len;
     return typeof value === "number" && value > 0
       ? value

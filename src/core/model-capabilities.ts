@@ -27,10 +27,11 @@ export function findModelMetadata(
   );
 }
 
-export async function resolveModelSupportsImageInput(
+/** Paginates the models endpoint until the requested model is found. */
+export async function resolveModelMetadata(
   client: Pick<NovaAI, "models">,
   modelId: string,
-): Promise<boolean> {
+): Promise<ModelResponse | undefined> {
   let after: string | undefined;
   do {
     const response = await client.models.list({
@@ -38,12 +39,19 @@ export async function resolveModelSupportsImageInput(
       ...(after ? { after } : {}),
     });
     const model = findModelMetadata(response.data, modelId);
-    if (model) return modelSupportsImageInput(model);
+    if (model) return model;
     if (!response.has_more || !response.last_id || response.last_id === after) {
-      return false;
+      return undefined;
     }
     after = response.last_id;
   } while (true);
+}
+
+export async function resolveModelSupportsImageInput(
+  client: Pick<NovaAI, "models">,
+  modelId: string,
+): Promise<boolean> {
+  return modelSupportsImageInput(await resolveModelMetadata(client, modelId));
 }
 
 function normalizeCapability(value: string): string {

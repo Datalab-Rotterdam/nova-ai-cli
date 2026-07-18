@@ -1057,3 +1057,114 @@ test("repeated invalid tool args still terminate at the tool safety ceiling", as
   assert.equal(result.stopReason, "max_turn_requests");
   assert.equal(executions, 0);
 });
+
+test("proactive compaction fires before the first request when the estimate exceeds the threshold", async () => {
+  const rounds = [["All done."]];
+  const requests: ChatMessage[][] = [];
+  const novaClient = {
+    chat: {
+      completions: {
+        stream: (request: { messages: ChatMessage[] }) => {
+          requests.push([...request.messages]);
+          const chunks = rounds.shift() ?? [];
+          return (async function* () {
+            for (const content of chunks) {
+              yield {
+                type: "chunk",
+                data: { choices: [{ delta: { content } }] },
+              };
+            }
+          })();
+        },
+      },
+    },
+  } as unknown as NovaAI;
+
+  const bulky = "x".repeat(8_000);
+  const messages: ChatMessage[] = [
+    { role: "user", content: bulky },
+    { role: "assistant", content: bulky },
+    { role: "user", content: "Summarize." },
+  ];
+  let compactCalls = 0;
+  let compactError: unknown = "unset";
+  const events: AgentEvent[] = [];
+
+  const result = await runTurn(messages, new AbortController().signal, {
+    host: {} as ToolHost,
+    sessionId: "test-session",
+    cwd: ".",
+    environment: {} as ToolEnvironment,
+    tools: [],
+    requestPermission: async () => true,
+    compactContext: async (currentMessages, error) => {
+      compactCalls++;
+      compactError = error;
+      currentMessages.splice(0, currentMessages.length, {
+        role: "system",
+        content: "[Conversation context compacted]",
+      }, { role: "user", content: "Summarize." });
+      return { compacted: true, history: [], removedMessages: 2, keptMessages: 1 };
+    },
+    contextWindow: 1_000,
+    emit: (event) => {
+      events.push(event);
+    },
+    novaClient,
+    model: "test-model",
+  });
+
+  assert.equal(result.stopReason, "end_turn");
+  assert.equal(compactCalls, 1);
+  assert.equal(compactError, null);
+  // The first (and only) request already saw the compacted history.
+  assert.equal(requests.length, 1);
+  assert.match(String(requests[0]?.[0]?.content), /context compacted/);
+  assert.ok(events.some((event) => event.type === "context_compacted"));
+});
+
+test("proactive compaction is skipped when usage stays under the threshold", async () => {
+  const rounds = [["All done."]];
+  const novaClient = {
+    chat: {
+      completions: {
+        stream: () => {
+          const chunks = rounds.shift() ?? [];
+          return (async function* () {
+            for (const content of chunks) {
+              yield {
+                type: "chunk",
+                data: { choices: [{ delta: { content } }] },
+              };
+            }
+          })();
+        },
+      },
+    },
+  } as unknown as NovaAI;
+  let compactCalls = 0;
+
+  const result = await runTurn(
+    [{ role: "user", content: "Small prompt." }],
+    new AbortController().signal,
+    {
+      host: {} as ToolHost,
+      sessionId: "test-session",
+      cwd: ".",
+      environment: {} as ToolEnvironment,
+      tools: [],
+      requestPermission: async () => true,
+      compactContext: async () => {
+        compactCalls++;
+        return { compacted: false, history: [], removedMessages: 0, keptMessages: 1 };
+      },
+      contextWindow: 100_000,
+      emit: () => {},
+      novaClient,
+      model: "test-model",
+    },
+  );
+
+  assert.equal(result.stopReason, "end_turn");
+  assert.equal(compactCalls, 0);
+});

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   calculateContextUsage,
+  estimateMessagesTokens,
   estimateTokens,
 } from "../../src/core/context-usage.js";
 
@@ -88,4 +89,16 @@ test("background-agent tool context is attributed to agents", () => {
     estimateTokens(call) +
       estimateTokens("Tool result: background agent started"),
   );
+});
+
+test("estimateMessagesTokens sums content with per-message overhead", () => {
+  const empty = estimateMessagesTokens([]);
+  assert.equal(empty, 0);
+  const single = estimateMessagesTokens([{ role: "user", content: "abcd" }]);
+  assert.equal(single, 4 + 1);
+  const double = estimateMessagesTokens([
+    { role: "user", content: "abcd" },
+    { role: "assistant", content: "x".repeat(40) },
+  ]);
+  assert.equal(double, 4 + 1 + 4 + 10);
 });
