@@ -11,6 +11,7 @@ export function buildToolsSystemPrompt(tools: ToolDefinition[], cwd: string): st
   if (tools.length === 0) return null;
 
   const toolList = tools.map(renderToolDoc).join("\n");
+  const hasMcpTools = tools.some((tool) => tool.name.startsWith("mcp__"));
 
   return [
     `The user's workspace root is: ${cwd}`,
@@ -27,6 +28,11 @@ export function buildToolsSystemPrompt(tools: ToolDefinition[], cwd: string): st
     '{"name": "write_file", "args": {"path": "' + cwd.replace(/\\/g, "\\\\") + '/example.txt", "content": "file contents here"}}',
     "```",
     "- One tool call per turn. After the result comes back, continue or call another tool.",
+    ...(hasMcpTools
+      ? [
+          "Tools named mcp__* come from external MCP servers; give them absolute workspace paths for any file, directory, or project argument.",
+        ]
+      : []),
     "Wait for the tool's result before continuing. Available tools:",
     toolList,
   ].join("\n");
