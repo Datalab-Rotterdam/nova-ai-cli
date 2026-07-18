@@ -132,5 +132,6 @@ function state(): UIState {
     statusLine: null,
     queuedCount: 0,
     contextUsage: null,
+    updateAvailable: null,
   };
 }

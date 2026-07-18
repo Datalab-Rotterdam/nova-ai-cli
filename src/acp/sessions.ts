@@ -9,6 +9,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { ChatMessage } from "@datalabrotterdam/nova-sdk";
 import { chatContentToText } from "../core/chat-content.js";
+import { truncateStoredToolMessage } from "../core/tool-output.js";
 
 export type StoredSession = {
   sessionId: string;
@@ -44,10 +45,14 @@ export function parseSessionFile(raw: string): StoredSession | null {
     if (parsed.kind === "header") {
       header = parsed;
     } else if (parsed.kind === "message") {
-      messages.push(parsed.message);
+      messages.push(normalizeStoredMessage(parsed.message));
       updatedAt = parsed.updatedAt;
     } else if (parsed.kind === "compaction" && Array.isArray(parsed.messages)) {
-      messages.splice(0, messages.length, ...parsed.messages);
+      messages.splice(
+        0,
+        messages.length,
+        ...parsed.messages.map(normalizeStoredMessage),
+      );
       updatedAt = parsed.updatedAt;
     }
   }
@@ -60,6 +65,14 @@ export function parseSessionFile(raw: string): StoredSession | null {
     updatedAt,
     messages,
   };
+}
+
+function normalizeStoredMessage(message: ChatMessage): ChatMessage {
+  if (message.role !== "user" || typeof message.content !== "string") {
+    return message;
+  }
+  const content = truncateStoredToolMessage(message.content);
+  return content === message.content ? message : { ...message, content };
 }
 
 export function loadStoredSession(sessionId: string): StoredSession | null {

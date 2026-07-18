@@ -32,7 +32,12 @@ export type BackgroundJobView = {
 };
 
 export type UIMessage =
-  | { id: string; role: "user"; text: string }
+  | {
+      id: string;
+      role: "user";
+      text: string;
+      queued?: "steer" | "followup";
+    }
   | { id: string; role: "assistant"; text: string; streaming: boolean }
   | { id: string; role: "error"; text: string }
   | { id: string; role: "tool"; call: ToolCallView }
@@ -61,6 +66,12 @@ export type SessionMeta = {
   updatedAt: string;
 };
 
+export type UpdateAvailable = {
+  currentVersion: string;
+  latestVersion: string;
+  command: string;
+};
+
 export type Mode =
   | "chat"
   | "session-switcher"
@@ -85,4 +96,5 @@ export type UIState = {
   statusLine: string | null;
   queuedCount: number;
   contextUsage: ContextUsage | null;
+  updateAvailable: UpdateAvailable | null;
 };

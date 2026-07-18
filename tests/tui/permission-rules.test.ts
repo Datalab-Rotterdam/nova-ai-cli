@@ -200,5 +200,6 @@ function state(
     statusLine: null,
     queuedCount: 0,
     contextUsage: null,
+    updateAvailable: null,
   };
 }

@@ -19,6 +19,10 @@ import {
   DraftImageAttachments,
   type PromptImageAttachment,
 } from "../files/prompt-images.js";
+import {
+  expandPromptPastes,
+  type PromptPasteAttachment,
+} from "../files/prompt-pastes.js";
 import { WorkspaceAutocompleteProvider } from "../files/workspace-autocomplete.js";
 import {
   listSessionPickerItems,
@@ -35,6 +39,7 @@ import type {
   PermissionMode,
   UIState,
 } from "../state/types.js";
+import { checkForUpdate } from "../update-check.js";
 import {
   BorderedWindow,
   formatTokenCount,
@@ -51,6 +56,7 @@ import {
 } from "./components.js";
 import { FullscreenProcessTerminal } from "./fullscreen-terminal.js";
 import { PromptEditor } from "./prompt-editor.js";
+import { bindPromptSubmission } from "./prompt-submission.js";
 import { colors, editorTheme, selectListTheme } from "./theme.js";
 
 export async function runPiTui(
@@ -73,6 +79,7 @@ export async function runPiTui(
     statusLine: null,
     queuedCount: 0,
     contextUsage: null,
+    updateAvailable: null,
   });
   const runner = new SessionRunner(store, credentials, cwd);
   const resumeIndex = args.indexOf("--resume");
@@ -88,6 +95,23 @@ export async function runPiTui(
     autocompleteMaxVisible: 8,
   });
   const draftImages = new DraftImageAttachments();
+  editor.setQueuedMessageProvider(() => runner.queuedMessageEntries());
+  editor.onQueuedMessageEditStart = (id) => {
+    runner.beginQueuedMessageEdit(id);
+  };
+  editor.onQueuedMessageEditFinish = (id, text) => {
+    runner.finishQueuedMessageEdit(
+      id,
+      text,
+      draftImages.referencedBy(text),
+      editor.referencedPastes(text),
+    );
+    draftImages.clear();
+  };
+  editor.onChange = (text) => {
+    const id = editor.editingQueuedMessage();
+    if (id) runner.updateQueuedMessage(id, text);
+  };
   editor.setAutocompleteProvider(
     new WorkspaceAutocompleteProvider(
       allCommands().map((command) => ({
@@ -106,7 +130,6 @@ export async function runPiTui(
   let exitTimer: ReturnType<typeof setTimeout> | undefined;
   let animationTimer: ReturnType<typeof setInterval> | undefined;
   let imagePasteActive = false;
-  let submissionPending = false;
   let stopped = false;
   let resolveExit: () => void = () => {};
   const exited = new Promise<void>((resolve) => {
@@ -511,6 +534,7 @@ export async function runPiTui(
   const submit = async (
     text: string,
     images: PromptImageAttachment[] = [],
+    pastes: PromptPasteAttachment[] = [],
   ): Promise<void> => {
     const value = text.trim();
     if (!value) return;
@@ -521,10 +545,11 @@ export async function runPiTui(
       statusLine: null,
     }));
     if (!value.startsWith("/")) {
-      await runner.submit(value, images);
+      await runner.submit(value, images, pastes);
       return;
     }
-    const match = /^\/(\S+)(?:\s+([\s\S]*))?$/.exec(value);
+    const commandValue = expandPromptPastes(value, pastes);
+    const match = /^\/(\S+)(?:\s+([\s\S]*))?$/.exec(commandValue);
     const name = match?.[1] ?? "";
     const command = findCommand(name);
     if (!command) {
@@ -541,33 +566,14 @@ export async function runPiTui(
     }
   };
 
-  editor.onSubmit = (text) => {
-    if (submissionPending) return;
-    submissionPending = true;
-    void (async () => {
-      const images = text.trimStart().startsWith("/")
-        ? []
-        : draftImages.referencedBy(text);
-      if (images.length > 0 && !(await runner.supportsImageInput())) {
-        store.setState({
-          statusLine: `Model ${runner.model} does not support image input; the draft was kept.`,
-        });
-        return;
-      }
-      editor.setText("");
-      draftImages.clear();
-      await submit(text, images);
-    })()
-      .catch((error) => {
-        appendError(
-          error instanceof Error ? error.message : "Failed to submit input.",
-        );
-        store.setState({ busy: false, statusLine: "Input failed." });
-      })
-      .finally(() => {
-        submissionPending = false;
-      });
-  };
+  bindPromptSubmission({
+    editor,
+    draftImages,
+    runner,
+    store,
+    submit,
+    appendError,
+  });
 
   const unsubscribeInput = tui.addInputListener((data) => {
     if (tui.hasOverlay() || layout.hasFullscreen()) return;
@@ -690,6 +696,9 @@ export async function runPiTui(
   process.once("SIGTERM", signalExit);
 
   tui.start();
+  void checkForUpdate().then((updateAvailable) => {
+    if (!stopped && updateAvailable) store.setState({ updateAvailable });
+  });
   animationTimer = setInterval(() => {
     if (
       !tui.hasOverlay() &&

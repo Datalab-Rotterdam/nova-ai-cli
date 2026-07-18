@@ -32,10 +32,26 @@ separate scrollable overlay with arrows, Page Up/Down, Home, and End.
 The input is a real multiline editor with a visible `> ` prompt, hardware
 insertion cursor, wrapping, history, bracketed paste, undo, slash-command
 autocomplete, and `@file` completion. Enter submits;
-submitting while a response streams appends to the FIFO prompt queue.
-`/steer <message>` cancels the current response and inserts its message at the
-front, while `/queue` and `/queue clear` inspect or clear pending messages.
+submitting while a response streams appends a visible entry to the FIFO prompt
+queue. `/steer <message>` also appears immediately, then enters the active turn
+at the next safe model boundary after a tool finishes instead of cancelling the
+response. Pending entries stay at the bottom of the transcript while new agent
+output is inserted above them. With an empty editor, Up recalls the newest
+queued entry; Up/Down cycle queued entries, edits update them in place, and
+submitting an empty recalled entry removes it. `/queue` and `/queue clear`
+inspect or clear pending messages.
 Shift+Enter or Ctrl+J inserts a newline.
+
+Large clipboard pastes (more than 10 lines or 1,000 characters) stay outside
+the editor and appear as a compact `[Pasted from clipboard #N: ...]` marker.
+The transcript keeps that marker while the complete pasted text is sent to the
+model. Smaller pastes remain inline.
+
+After startup, the TUI checks npm for a newer published version in the
+background. When one is available, a pinned footer banner shows both versions
+and tells the user to run
+`npm install -g @datalabrotterdam/nova-ai-cli@latest`. Registry errors and
+timeouts are ignored so the check never blocks or interrupts the session.
 
 Alt+V reads an image from the system clipboard and inserts a lightweight
 `[#ImageN]` marker at the cursor. The binary PNG stays outside the editor and
@@ -56,8 +72,9 @@ block. Its heading aggregates the work (for example, `Reading 1 file, running
 terminal-output lines. Terminal output is coalesced into the pending tool call
 while the process runs so frequent writes do not force a repaint per chunk.
 An animated Nova marker identifies active work without repainting the whole
-screen. It moves into the activity heading while a tool runs, then disappears
-as soon as the response settles. Canceled and unexpectedly failed requests
+screen. The working row shows the live elapsed time and `esc to interrupt`
+hint. It moves into the activity heading while a tool runs, then disappears as
+soon as the response settles. Canceled and unexpectedly failed requests
 mark every remaining pending tool as failed, and collapsed rows keep the final
 error reason visible.
 

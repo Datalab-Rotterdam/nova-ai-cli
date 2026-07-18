@@ -78,13 +78,24 @@ export class TranscriptView implements Component {
   private expandedTools = false;
   private animationFrame = 0;
   private cache: TranscriptCache | null = null;
+  private workingStartedAt: number | null;
 
-  constructor(private readonly store: Store<UIState>) {
+  constructor(
+    private readonly store: Store<UIState>,
+    private readonly now: () => number = Date.now,
+  ) {
     this.state = store.getState();
+    this.workingStartedAt = this.state.busy ? this.now() : null;
   }
 
   sync(): void {
-    this.state = this.store.getState();
+    const nextState = this.store.getState();
+    if (nextState.busy && !this.state.busy) {
+      this.workingStartedAt = this.now();
+    } else if (!nextState.busy) {
+      this.workingStartedAt = null;
+    }
+    this.state = nextState;
     this.invalidate();
   }
 
@@ -182,7 +193,7 @@ export class TranscriptView implements Component {
       );
       const start = lines.length;
       lines.push(...rendered);
-      if (message.role === "user") {
+      if (message.role === "user" && !message.queued) {
         questions.push({ start, after: lines.length, lines: rendered });
       }
     }
@@ -191,8 +202,12 @@ export class TranscriptView implements Component {
       (message) => message.role === "tool" && message.call.status === "pending",
     );
     if (this.state.busy && !hasPendingTool) {
-      lines.push(
-        ` ${colors.accent(WORKING_FRAMES[this.animationFrame]!)} ${colors.muted("Working…")}`,
+      const startedAt = this.workingStartedAt ?? this.now();
+      const elapsed = formatElapsedTime(this.now() - startedAt);
+      appendWrapped(
+        lines,
+        ` ${colors.accent(WORKING_FRAMES[this.animationFrame]!)} ${colors.muted(`Working (${elapsed} \u2022 esc to interrupt)`)}`,
+        width,
       );
     }
 
@@ -214,9 +229,12 @@ export class TranscriptView implements Component {
     const questions = this.cache?.questions ?? [];
     for (let index = questions.length - 1; index >= 0; index--) {
       const question = questions[index];
-      if (question && question.start <= firstVisibleRow) {
-        return question.start < firstVisibleRow ? question : null;
-      }
+      if (!question || question.start > firstVisibleRow) continue;
+      // Only pin a question once the viewport has moved into its answer. If
+      // the first visible row is still inside a long question, pinning it and
+      // jumping to `after` makes small wheel/page movements skip the entire
+      // message and appear to do nothing.
+      return question.after <= firstVisibleRow ? question : null;
     }
     return null;
   }
@@ -224,6 +242,20 @@ export class TranscriptView implements Component {
   private renderMessage(message: UIMessage, width: number): string[] {
     switch (message.role) {
       case "user":
+        if (message.queued) {
+          const label = message.queued === "steer" ? "steer" : "queued";
+          return prefixed(
+            new Text(
+              colors.muted(
+                message.text || "(empty; press Enter to remove from queue)",
+              ),
+              0,
+              0,
+            ).render(Math.max(1, width - label.length - 3)),
+            colors.warning(`${label}> `),
+            width,
+          );
+        }
         return prefixed(
           new Text(colors.primary(message.text), 0, 0).render(
             Math.max(1, width - 2),
@@ -323,6 +355,15 @@ export class StatusView implements Component {
   invalidate(): void {}
 
   render(width: number): string[] {
+    const update = this.state.updateAvailable
+      ? new Text(
+          colors.warning(
+            `Update ${this.state.updateAvailable.latestVersion} available (current ${this.state.updateAvailable.currentVersion}). Run: ${this.state.updateAvailable.command}`,
+          ),
+          0,
+          0,
+        ).render(Math.max(1, width))
+      : [];
     const activity = this.state.busy
       ? colors.warning("working")
       : colors.success("ready");
@@ -338,8 +379,19 @@ export class StatusView implements Component {
     const skills = this.mcp.skills ? ` | skills:${this.mcp.skills}` : "";
     const status = this.state.statusLine ? ` | ${this.state.statusLine}` : "";
     const line = `${colors.muted(this.model)} | ${this.state.interactionMode} | ${this.state.permissionMode} | ${activity}${usage}${queue}${mcp}${skills}${status}`;
-    return [truncateToWidth(line, width, "")];
+    return [...update, truncateToWidth(line, width, "")];
   }
+}
+
+export function formatElapsedTime(elapsedMs: number): string {
+  const totalSeconds = Math.max(0, Math.floor(elapsedMs / 1_000));
+  const hours = Math.floor(totalSeconds / 3_600);
+  const minutes = Math.floor((totalSeconds % 3_600) / 60);
+  const seconds = totalSeconds % 60;
+
+  if (hours > 0) return `${hours}h ${minutes}m ${seconds}s`;
+  if (minutes > 0) return `${minutes}m ${seconds}s`;
+  return `${seconds}s`;
 }
 
 export function formatTokenCount(value: number): string {
@@ -641,7 +693,13 @@ export class SelectionDialog implements Component {
     const prefix = selected ? this.theme.selectedPrefix("> ") : "  ";
     const prefixWidth = visibleWidth(prefix);
     if (item.columns) {
-      return this.renderColumns(item.columns, selected, width, prefix, prefixWidth);
+      return this.renderColumns(
+        item.columns,
+        selected,
+        width,
+        prefix,
+        prefixWidth,
+      );
     }
     const description = item.description?.replace(/[\r\n]+/g, " ").trim();
     const available = Math.max(1, width - prefixWidth);
@@ -685,13 +743,15 @@ export class SelectionDialog implements Component {
     );
     const separator = "  ";
     const available = Math.max(1, width - prefixWidth);
-    const fixedWidth = leadingWidth + visibleWidth(separator) * 2 + visibleWidth(trailing);
+    const fixedWidth =
+      leadingWidth + visibleWidth(separator) * 2 + visibleWidth(trailing);
     const mainWidth = Math.max(0, available - fixedWidth);
 
     const renderedLeading = truncateToWidth(leading, leadingWidth, "").padEnd(
       leadingWidth,
     );
-    const renderedMain = mainWidth > 0 ? truncateToWidth(main, mainWidth, "") : "";
+    const renderedMain =
+      mainWidth > 0 ? truncateToWidth(main, mainWidth, "") : "";
     const left = selected
       ? this.theme.selectedText(renderedLeading)
       : renderedLeading;

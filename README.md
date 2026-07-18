@@ -212,7 +212,7 @@ Built-in and session tools (`src/acp/tools/registry.ts` plus mode-scoped tools):
 | -------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
 | `ask_user`                 | No       | Uses ACP form elicitation for described single/multiple-choice questions, recommended options, and a final custom-answer choice                |
 | `enter_plan_mode`          | No       | One-way agent-to-plan transition; accepts no arguments, cannot change permissions, and disables later tools in the same turn                  |
-| `inspect_environment`      | No       | Reports platform, ACP client capabilities, detected commands, package manager, and package scripts                                             |
+| `inspect_environment`      | No       | Reports platform, ACP capabilities, safe ENV/PATH tooling, resolved commands, Docker/Compose usability, package manager, and package scripts   |
 | `list_directory`           | No       | Lists workspace files/directories with path bounds and result limits, gated by client `fs.readTextFile` capability                             |
 | `search_text`              | No       | Searches workspace text files with literal/regex modes and excludes common generated directories, gated by client `fs.readTextFile` capability |
 | `read_file`                | No       | Reads a file's contents, gated by client `fs.readTextFile` capability                                                                          |

@@ -3,6 +3,7 @@ import test from "node:test";
 import { Key, Text, visibleWidth } from "@earendil-works/pi-tui";
 import {
   BorderedWindow,
+  formatElapsedTime,
   FullscreenLayout,
   ScrollPanel,
   SelectionDialog,
@@ -27,6 +28,7 @@ function state(): UIState {
     statusLine: null,
     queuedCount: 0,
     contextUsage: null,
+    updateAvailable: null,
   };
 }
 
@@ -83,19 +85,37 @@ test("transcript does not insert blank rows between timeline entries", () => {
 
 test("working activity animates only while work remains active", () => {
   const store = createStore({ ...state(), busy: true });
-  const transcript = new TranscriptView(store);
+  let now = 0;
+  const transcript = new TranscriptView(store, () => now);
   transcript.sync();
 
   const first = transcript.render(60).join("\n");
-  assert.match(first, /Working/);
+  assert.match(first, /Working \(0s \u2022 esc to interrupt\)/);
+  now = 142_000;
   assert.equal(transcript.advanceAnimation(), true);
   const next = transcript.render(60).join("\n");
   assert.notEqual(next, first);
+  assert.match(next, /Working \(2m 22s \u2022 esc to interrupt\)/);
 
   store.setState({ busy: false });
   transcript.sync();
   assert.equal(transcript.advanceAnimation(), false);
   assert.doesNotMatch(transcript.render(60).join("\n"), /Working/);
+
+  now = 200_000;
+  store.setState({ busy: true });
+  transcript.sync();
+  assert.match(
+    transcript.render(60).join("\n"),
+    /Working \(0s \u2022 esc to interrupt\)/,
+  );
+});
+
+test("elapsed working time formats compactly", () => {
+  assert.equal(formatElapsedTime(-1), "0s");
+  assert.equal(formatElapsedTime(12_999), "12s");
+  assert.equal(formatElapsedTime(142_000), "2m 22s");
+  assert.equal(formatElapsedTime(3_723_000), "1h 2m 3s");
 });
 
 test("Nova AI header is transcript content and scrolls with history", () => {
@@ -171,6 +191,35 @@ test("status renders as one row below the editor without a separator", () => {
     /qwen3\.6:27b.*agent.*ask.*ready.*ctx:4k\/262k.*skills:38.*Request canceled\./,
   );
   assert.doesNotMatch(lines[0]!, /─/);
+});
+
+test("status pins the available update and exact upgrade command", () => {
+  const store = createStore(state());
+  store.setState({
+    updateAvailable: {
+      currentVersion: "1.1.0",
+      latestVersion: "1.2.0",
+      command: "npm install -g @datalabrotterdam/nova-ai-cli@latest",
+    },
+  });
+  const status = new StatusView(store, "test-model", {
+    configured: 0,
+    connected: 0,
+    failed: 0,
+  });
+  status.update(store.getState(), "test-model", {
+    configured: 0,
+    connected: 0,
+    failed: 0,
+  });
+
+  const lines = status.render(200);
+  assert.equal(lines.length, 2);
+  assert.match(lines[0]!, /Update 1\.2\.0 available \(current 1\.1\.0\)/);
+  assert.match(
+    lines[0]!,
+    /npm install -g @datalabrotterdam\/nova-ai-cli@latest/,
+  );
 });
 
 test("read and search tools stay compact in the transcript", () => {
@@ -504,6 +553,46 @@ test("fullscreen layout keeps the active question sticky while its answer scroll
   const scrolled = layout.render(60);
   assert.match(scrolled[0]!, /What changed\?/);
   assert.ok(scrolled.some((line) => line.includes("answer line")));
+});
+
+test("fullscreen layout scrolls within a long user message", () => {
+  const store = createStore(state());
+  store.setState({
+    messages: [
+      {
+        id: "long-question",
+        role: "user",
+        text: Array.from(
+          { length: 50 },
+          (_, index) => `question line ${index + 1}`,
+        ).join("\n"),
+      },
+      {
+        id: "interrupted-answer",
+        role: "assistant",
+        text: "The response was interrupted.",
+        streaming: false,
+      },
+      { id: "continue", role: "user", text: "continue" },
+    ],
+  });
+  const transcript = new TranscriptView(store);
+  transcript.sync();
+  const layout = new FullscreenLayout(
+    transcript,
+    new Text("status", 0, 0),
+    new Text("editor", 0, 0),
+    () => 10,
+    () => {},
+  );
+
+  const atBottom = layout.render(60).join("\n");
+  layout.scrollOlder(4);
+  const older = layout.render(60).join("\n");
+
+  assert.notEqual(older, atBottom);
+  assert.match(atBottom, /question line 4[5-9]|question line 50/);
+  assert.match(older, /question line 4[0-9]/);
 });
 
 test("selection dialog overwrites a stable rectangle while scrolling", () => {

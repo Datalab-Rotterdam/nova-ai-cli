@@ -542,7 +542,7 @@ export class TuiAcpClient {
 
   private appendMessage(message: UIMessage): void {
     this.store.setState((state) => ({
-      messages: [...state.messages, message],
+      messages: insertBeforeQueuedMessages(state.messages, message),
     }));
   }
 
@@ -554,7 +554,11 @@ export class TuiAcpClient {
       );
       if (!existing)
         return {
-          messages: [...state.messages, { id: uid(), role: "background", job }],
+          messages: insertBeforeQueuedMessages(state.messages, {
+            id: uid(),
+            role: "background",
+            job,
+          }),
         };
       return {
         messages: state.messages.map((message) =>
@@ -565,6 +569,21 @@ export class TuiAcpClient {
       };
     });
   }
+}
+
+function insertBeforeQueuedMessages(
+  messages: UIMessage[],
+  message: UIMessage,
+): UIMessage[] {
+  const queuedIndex = messages.findIndex(
+    (item) => item.role === "user" && item.queued !== undefined,
+  );
+  if (queuedIndex < 0) return [...messages, message];
+  return [
+    ...messages.slice(0, queuedIndex),
+    message,
+    ...messages.slice(queuedIndex),
+  ];
 }
 
 function selected(optionId: string): RequestPermissionResponse {

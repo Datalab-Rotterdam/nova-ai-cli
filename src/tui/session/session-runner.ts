@@ -6,7 +6,10 @@ import {
   type ChatMessage,
 } from "@datalabrotterdam/nova-sdk";
 import { NovaAgent } from "../../acp/agent.js";
-import { stripToolCallMarkup } from "../../acp/tools/marker.js";
+import {
+  extractToolCall,
+  stripToolCallMarkup,
+} from "../../acp/tools/marker.js";
 import type {
   BackgroundJobKind,
   BackgroundJobSummary,
@@ -32,7 +35,12 @@ import {
 } from "../files/prompt-pastes.js";
 import { readWorkspaceMcpConfiguration } from "../settings/workspace-mcp.js";
 import type { Store } from "../state/store.js";
-import type { InteractionMode, UIMessage, UIState } from "../state/types.js";
+import type {
+  InteractionMode,
+  ToolCallView,
+  UIMessage,
+  UIState,
+} from "../state/types.js";
 import { TuiAcpClient } from "./tui-acp-client.js";
 
 let nextId = 0;
@@ -42,6 +50,121 @@ function uid(): string {
   // Keep their IDs disjoint so a new streamed message can never mutate a
   // restored transcript entry with the same ordinal.
   return `history-${nextId}`;
+}
+
+type RestoredToolMetadata = Pick<ToolCallView, "kind" | "mutating">;
+
+const RESTORED_TOOL_METADATA: Record<string, RestoredToolMetadata> = {
+  read_file: { kind: "read", mutating: false },
+  list_directory: { kind: "search", mutating: false },
+  search_text: { kind: "search", mutating: false },
+  inspect_environment: { kind: "read", mutating: false },
+  load_skill: { kind: "read", mutating: false },
+  load_memory: { kind: "read", mutating: false },
+  list_background_jobs: { kind: "read", mutating: false },
+  read_background_output: { kind: "read", mutating: false },
+  ask_user: { kind: "think", mutating: false },
+  enter_plan_mode: { kind: "switch_mode", mutating: false },
+  write_file: { kind: "edit", mutating: true },
+  edit_file: { kind: "edit", mutating: true },
+  save_memory: { kind: "edit", mutating: true },
+  run_command: { kind: "execute", mutating: true },
+  run_package_script: { kind: "execute", mutating: true },
+  start_background_command: { kind: "execute", mutating: true },
+  start_background_agent: { kind: "think", mutating: true },
+  kill_background_job: { kind: "execute", mutating: true },
+  release_background_job: { kind: "execute", mutating: true },
+};
+
+/** Rebuilds the live transcript shape from the model-facing stored history. */
+export function restoreSessionMessages(messages: ChatMessage[]): UIMessage[] {
+  const restored: UIMessage[] = [];
+  let pendingTool: ToolCallView | null = null;
+
+  const settleMissingToolResult = () => {
+    if (!pendingTool) return;
+    pendingTool.status = "failed";
+    pendingTool.output =
+      "Tool result was not persisted before the session ended.";
+    pendingTool = null;
+  };
+
+  for (const message of messages) {
+    const rawText = chatContentToText(message.content);
+    if (message.role === "assistant") {
+      settleMissingToolResult();
+      const toolCall = extractToolCall(rawText);
+      const visibleText = stripReasoningTags(stripToolCallMarkup(rawText));
+      if (visibleText.trim()) {
+        restored.push({
+          id: uid(),
+          role: "assistant",
+          text: visibleText,
+          streaming: false,
+        });
+      }
+      if (toolCall) {
+        const metadata = RESTORED_TOOL_METADATA[toolCall.name] ?? {
+          // Persisted ACP/MCP calls do not currently retain annotations. Keep
+          // unknown calls compact without falsely labelling them as changes.
+          kind: "execute",
+          mutating: false,
+        };
+        pendingTool = {
+          toolCallId: uid(),
+          name: toolCall.name,
+          args: toolCall.args,
+          kind: metadata.kind,
+          mutating: metadata.mutating,
+          status: "pending",
+          output: null,
+          diff: null,
+        };
+        restored.push({ id: uid(), role: "tool", call: pendingTool });
+      }
+      continue;
+    }
+
+    if (message.role !== "user") continue;
+    const outcome = pendingTool ? storedToolOutcome(rawText) : null;
+    if (pendingTool && outcome) {
+      pendingTool.status = outcome.status;
+      pendingTool.output = outcome.output;
+      pendingTool = null;
+      continue;
+    }
+
+    settleMissingToolResult();
+    restored.push({ id: uid(), role: "user", text: rawText });
+  }
+
+  settleMissingToolResult();
+  return restored;
+}
+
+function storedToolOutcome(
+  text: string,
+): Pick<ToolCallView, "status" | "output"> | null {
+  if (text.startsWith("Tool result:")) {
+    return {
+      status: "completed",
+      output: text.slice("Tool result:".length).trimStart(),
+    };
+  }
+  if (text.startsWith("Tool error:")) {
+    return {
+      status: "failed",
+      output: text.slice("Tool error:".length).trimStart(),
+    };
+  }
+  if (
+    text === "Tool call rejected by user." ||
+    /^Tool "[^"]+" is not available\.$/.test(text) ||
+    /^Tool call "[^"]+" has invalid arguments:/.test(text)
+  ) {
+    return { status: "failed", output: text };
+  }
+  return null;
 }
 
 export type McpSessionStatus = {
@@ -157,21 +280,7 @@ export class SessionRunner {
       }),
     );
 
-    const messages: UIMessage[] = stored.messages
-      .filter(
-        (message) => message.role === "user" || message.role === "assistant",
-      )
-      .map((message) => ({
-        id: uid(),
-        role: message.role as "user" | "assistant",
-        text:
-          message.role === "assistant"
-            ? stripReasoningTags(
-                stripToolCallMarkup(chatContentToText(message.content)),
-              )
-            : chatContentToText(message.content),
-        ...(message.role === "assistant" ? { streaming: false } : {}),
-      })) as UIMessage[];
+    const messages = restoreSessionMessages(stored.messages);
 
     this.store.setState({
       messages,

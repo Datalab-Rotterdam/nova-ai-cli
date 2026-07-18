@@ -20,16 +20,14 @@ function state(): UIState {
     statusLine: null,
     queuedCount: 0,
     contextUsage: null,
+    updateAvailable: null,
   };
 }
 
 test("an autonomous ACP mode update changes interaction mode but never permission mode", async () => {
   const store = createStore(state());
-  const client = new TuiAcpClient(
-    store,
-    process.cwd(),
-    undefined,
-    (mode) => store.setState({ interactionMode: mode }),
+  const client = new TuiAcpClient(store, process.cwd(), undefined, (mode) =>
+    store.setState({ interactionMode: mode }),
   );
 
   await client.sessionUpdate({

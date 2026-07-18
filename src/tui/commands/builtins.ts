@@ -173,7 +173,7 @@ export const builtinCommands: SlashCommand[] = [
   {
     name: "steer",
     description:
-      "Cancel the streaming response and run this instruction next (/steer <message>)",
+      "Add guidance to the active turn at its next tool boundary (/steer <message>)",
     run(ctx, args) {
       const value = args.trim();
       if (!value) {

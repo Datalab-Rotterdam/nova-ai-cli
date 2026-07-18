@@ -96,6 +96,32 @@ test("a persisted compaction marker replaces earlier history and keeps later tur
   assert.equal(session?.updatedAt, "2026-01-03T00:00:00Z");
 });
 
+test("oversized persisted tool results are bounded when session history is restored", () => {
+  const ordinaryUserMessage = `User supplied ${"u".repeat(110_000)}`;
+  const toolResult = `Tool result: start:${"x".repeat(120_000)}:end`;
+  const raw = [
+    JSON.stringify({ kind: "header", cwd: "/repo", title: "test" }),
+    JSON.stringify({
+      kind: "message",
+      updatedAt: "2026-01-01T00:00:00Z",
+      message: { role: "user", content: ordinaryUserMessage },
+    }),
+    JSON.stringify({
+      kind: "message",
+      updatedAt: "2026-01-01T00:00:01Z",
+      message: { role: "user", content: toolResult },
+    }),
+  ].join("\n");
+
+  const session = parseSessionFile(raw);
+  assert.equal(session?.messages[0]?.content, ordinaryUserMessage);
+  const restoredToolResult = String(session?.messages[1]?.content);
+  assert.ok(restoredToolResult.length <= 100_020);
+  assert.match(restoredToolResult, /^Tool result: start:/);
+  assert.match(restoredToolResult, /:end$/);
+  assert.match(restoredToolResult, /Tool output truncated from 120010/);
+});
+
 describe("deleteStoredSession", () => {
   it("removes a persisted session file", () => {
     const sessionId = `test-delete-${crypto.randomUUID()}`;
