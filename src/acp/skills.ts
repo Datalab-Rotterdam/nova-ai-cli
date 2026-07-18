@@ -56,7 +56,15 @@ export function createLoadSkillTool(skills: SkillDefinition[]): ToolDefinition {
   const catalog = new Map(skills.map((skill) => [skill.name, skill]));
   return {
     name: "load_skill",
-    description: 'load_skill: {"name": "<skill name>", "resource": "<optional relative file>"} - load a discovered skill instruction or one of its referenced resources.',
+    description: "load a discovered skill instruction or one of its referenced resources.",
+    parameters: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "skill name" },
+        resource: { type: "string", description: "optional relative file, defaults to SKILL.md" },
+      },
+      required: ["name"],
+    },
     mutating: false,
     kind: "read",
     async execute(_context, args) {

@@ -3,7 +3,15 @@ import type { ToolDefinition } from "./types.js";
 export const startBackgroundCommandTool: ToolDefinition = {
   name: "start_background_command",
   description:
-    'start_background_command: {"command": "<shell command>", "title": "<optional label>"} - start a long-running shell command, such as a dev server, in the background and return its job id.',
+    "start a long-running shell command, such as a dev server, in the background and return its job id.",
+  parameters: {
+    type: "object",
+    properties: {
+      command: { type: "string", description: "shell command" },
+      title: { type: "string", description: "optional label" },
+    },
+    required: ["command"],
+  },
   isAvailable: ({ background }) => !!background,
   mutating: true,
   kind: "execute",
@@ -19,8 +27,15 @@ export const startBackgroundCommandTool: ToolDefinition = {
 
 export const startBackgroundAgentTool: ToolDefinition = {
   name: "start_background_agent",
-  description:
-    'start_background_agent: {"prompt": "<task prompt>", "title": "<optional label>"} - start another Nova agent turn in the background and return its job id.',
+  description: "start another Nova agent turn in the background and return its job id.",
+  parameters: {
+    type: "object",
+    properties: {
+      prompt: { type: "string", description: "task prompt" },
+      title: { type: "string", description: "optional label" },
+    },
+    required: ["prompt"],
+  },
   isAvailable: ({ background }) => !!background,
   mutating: true,
   kind: "think",
@@ -36,7 +51,8 @@ export const startBackgroundAgentTool: ToolDefinition = {
 
 export const listBackgroundJobsTool: ToolDefinition = {
   name: "list_background_jobs",
-  description: "list_background_jobs: {} - list running and completed background command/agent jobs for this session.",
+  description: "list running and completed background command/agent jobs for this session.",
+  parameters: { type: "object", properties: {} },
   isAvailable: ({ background }) => !!background,
   mutating: false,
   kind: "read",
@@ -50,7 +66,14 @@ export const listBackgroundJobsTool: ToolDefinition = {
 
 export const readBackgroundOutputTool: ToolDefinition = {
   name: "read_background_output",
-  description: 'read_background_output: {"jobId": "<background job id>"} - read stored agent output or current terminal output for a background job.',
+  description: "read stored agent output or current terminal output for a background job.",
+  parameters: {
+    type: "object",
+    properties: {
+      jobId: { type: "string", description: "background job id" },
+    },
+    required: ["jobId"],
+  },
   isAvailable: ({ background }) => !!background,
   mutating: false,
   kind: "read",
@@ -66,7 +89,14 @@ export const readBackgroundOutputTool: ToolDefinition = {
 
 export const killBackgroundJobTool: ToolDefinition = {
   name: "kill_background_job",
-  description: 'kill_background_job: {"jobId": "<background job id>"} - stop a running background command or agent job.',
+  description: "stop a running background command or agent job.",
+  parameters: {
+    type: "object",
+    properties: {
+      jobId: { type: "string", description: "background job id" },
+    },
+    required: ["jobId"],
+  },
   isAvailable: ({ background }) => !!background,
   mutating: true,
   kind: "execute",
@@ -82,7 +112,14 @@ export const killBackgroundJobTool: ToolDefinition = {
 export const releaseBackgroundJobTool: ToolDefinition = {
   name: "release_background_job",
   description:
-    'release_background_job: {"jobId": "<background job id>"} - release background job resources; terminal jobs are killed by ACP release if still running.',
+    "release background job resources; terminal jobs are killed by ACP release if still running.",
+  parameters: {
+    type: "object",
+    properties: {
+      jobId: { type: "string", description: "background job id" },
+    },
+    required: ["jobId"],
+  },
   isAvailable: ({ background }) => !!background,
   mutating: true,
   kind: "execute",

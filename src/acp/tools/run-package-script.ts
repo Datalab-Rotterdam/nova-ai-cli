@@ -4,7 +4,15 @@ import type { ToolDefinition } from "./types.js";
 export const runPackageScriptTool: ToolDefinition = {
   name: "run_package_script",
   description:
-    'run_package_script: {"script": "<package.json script name>", "args": ["optional", "args"]} - run a detected package.json script with npm, pnpm, or yarn in the workspace. Requires permission.',
+    "run a detected package.json script with npm, pnpm, or yarn in the workspace. Requires permission.",
+  parameters: {
+    type: "object",
+    properties: {
+      script: { type: "string", description: "package.json script name" },
+      args: { type: "array", items: { type: "string" }, description: "optional extra arguments" },
+    },
+    required: ["script"],
+  },
   isAvailable: ({ caps, environment }) =>
     !!caps?.terminal && !!environment?.packageManager && environment.packageScripts.length > 0,
   mutating: true,

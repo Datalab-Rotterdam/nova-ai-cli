@@ -1,9 +1,16 @@
+import { renderParametersDoc } from "./schema.js";
 import type { ToolDefinition } from "./types.js";
+
+function renderToolDoc(tool: ToolDefinition): string {
+  // Schema-less (legacy/third-party) tools keep their self-describing line.
+  if (!tool.parameters) return `- ${tool.description}`;
+  return `- ${tool.name}: ${tool.description}\n  args: ${renderParametersDoc(tool.parameters)}`;
+}
 
 export function buildToolsSystemPrompt(tools: ToolDefinition[], cwd: string): string | null {
   if (tools.length === 0) return null;
 
-  const toolList = tools.map((tool) => `- ${tool.description}`).join("\n");
+  const toolList = tools.map(renderToolDoc).join("\n");
 
   return [
     `The user's workspace root is: ${cwd}`,
@@ -15,7 +22,7 @@ export function buildToolsSystemPrompt(tools: ToolDefinition[], cwd: string): st
     "```",
     "STRICT rules for this JSON:",
     "- All tool arguments go INSIDE the \"args\" object. Never put them at the top level next to \"name\".",
-    "- Include every argument the selected tool needs, exactly as named below.",
+    "- Include every argument the selected tool needs, exactly as named in its args signature below.",
     "- Example for write_file: ```tool_call",
     '{"name": "write_file", "args": {"path": "' + cwd.replace(/\\/g, "\\\\") + '/example.txt", "content": "file contents here"}}',
     "```",

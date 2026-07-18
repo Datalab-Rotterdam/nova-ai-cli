@@ -105,8 +105,14 @@ export function buildMemorySystemPrompt(memories: MemoryEntry[]): string | null 
 export function createLoadMemoryTool(memories: MemorySource): ToolDefinition {
   return {
     name: "load_memory",
-    description:
-      'load_memory: {"name": "<memory name>"} - load a discovered memory note\'s full content.',
+    description: "load a discovered memory note's full content.",
+    parameters: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "memory name" },
+      },
+      required: ["name"],
+    },
     mutating: false,
     kind: "read",
     async execute(_context, args) {
@@ -146,8 +152,18 @@ export function createSaveMemoryTool(
 ): ToolDefinition {
   return {
     name: "save_memory",
-    description:
-      'save_memory: {"name": "kebab-case-slug", "description": "one-line hook", "type": "user|feedback|project|reference", "scope": "global|workspace", "content": "..."} - create or update a persistent memory note.',
+    description: "create or update a persistent memory note.",
+    parameters: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "kebab-case-slug" },
+        description: { type: "string", description: "one-line hook" },
+        type: { type: "string", enum: ["user", "feedback", "project", "reference"] },
+        scope: { type: "string", enum: ["global", "workspace"] },
+        content: { type: "string" },
+      },
+      required: ["name", "description", "type", "scope", "content"],
+    },
     mutating: true,
     kind: "edit",
     async execute(_context, args) {

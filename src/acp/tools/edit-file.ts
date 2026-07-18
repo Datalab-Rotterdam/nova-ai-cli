@@ -3,7 +3,16 @@ import type { ToolDefinition } from "./types.js";
 export const editFileTool: ToolDefinition = {
   name: "edit_file",
   description:
-    'edit_file: {"path": "<absolute path>", "old_string": "<exact text to replace>", "new_string": "<replacement text>"} — replace one exact occurrence of old_string with new_string in a text file. Fails if old_string is not found exactly once.',
+    "replace one exact occurrence of old_string with new_string in a text file. Fails if old_string is not found exactly once.",
+  parameters: {
+    type: "object",
+    properties: {
+      path: { type: "string", description: "absolute path" },
+      old_string: { type: "string", description: "exact text to replace" },
+      new_string: { type: "string", description: "replacement text" },
+    },
+    required: ["path", "old_string", "new_string"],
+  },
   requiredCapability: (caps) => !!caps?.fs?.readTextFile && !!caps?.fs?.writeTextFile,
   mutating: true,
   kind: "edit",

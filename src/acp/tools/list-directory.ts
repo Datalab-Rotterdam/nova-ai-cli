@@ -8,8 +8,15 @@ const MAX_LIMIT = 1_000;
 
 export const listDirectoryTool: ToolDefinition = {
   name: "list_directory",
-  description:
-    'list_directory: {"path": "<optional workspace path>", "max_entries": 200, "include_hidden": false} - list files and directories under the workspace without shell dependencies.',
+  description: "list files and directories under the workspace without shell dependencies.",
+  parameters: {
+    type: "object",
+    properties: {
+      path: { type: "string", description: "optional workspace path" },
+      max_entries: { type: "integer", default: DEFAULT_LIMIT },
+      include_hidden: { type: "boolean", default: false },
+    },
+  },
   isAvailable: ({ caps, environment }) => !!caps?.fs?.readTextFile && !!environment?.workspaceReadable,
   mutating: false,
   kind: "search",

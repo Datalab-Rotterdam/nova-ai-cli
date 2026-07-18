@@ -5,6 +5,7 @@ import type {
   ToolAvailabilityContext,
   ToolEnvironment,
 } from "./environment.js";
+import type { ToolParameters } from "./schema.js";
 
 export type ToolContext = {
   host: ToolHost;
@@ -39,6 +40,8 @@ export type ToolResult =
 export type ToolDefinition = {
   name: string;
   description: string;
+  /** Args schema; when absent, central pre-dispatch validation is skipped. */
+  parameters?: ToolParameters;
   requiredCapability?: (caps: acp.ClientCapabilities | undefined) => boolean;
   isAvailable?: (ctx: ToolAvailabilityContext) => boolean;
   mutating: boolean;

@@ -2,8 +2,14 @@ import type { ToolDefinition } from "./types.js";
 
 export const runCommandTool: ToolDefinition = {
   name: "run_command",
-  description:
-    'run_command: {"command": "<shell command>"} — run a shell command in the workspace and return its output.',
+  description: "run a shell command in the workspace and return its output.",
+  parameters: {
+    type: "object",
+    properties: {
+      command: { type: "string", description: "shell command" },
+    },
+    required: ["command"],
+  },
   requiredCapability: (caps) => !!caps?.terminal,
   mutating: true,
   kind: "execute",

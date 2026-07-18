@@ -11,7 +11,43 @@ const ID_PATTERN = /^[A-Za-z][A-Za-z0-9_-]{0,47}$/;
 export const askUserTool: ToolDefinition = {
   name: "ask_user",
   description:
-    'ask_user: {"message":"<why input is needed>","questions":[{"id":"framework","question":"Which framework?","description":"<optional context>","type":"single|multiple","options":[{"id":"svelte","label":"Svelte","description":"<optional tradeoff>","recommended":true}]}]} - ask 1-4 interactive questions. Each question needs 2-6 options, supports single or multiple selection, option descriptions, one recommended option, and an automatic final Other choice where the user can enter a custom answer.',
+    "ask 1-4 interactive questions. Each question needs 2-6 options, supports single or multiple selection, option descriptions, one recommended option, and an automatic final Other choice where the user can enter a custom answer. " +
+    'Example: {"message":"<why input is needed>","questions":[{"id":"framework","question":"Which framework?","type":"single","options":[{"id":"svelte","label":"Svelte","recommended":true},{"id":"react","label":"React"}]}]}',
+  parameters: {
+    type: "object",
+    properties: {
+      message: { type: "string", description: "why input is needed" },
+      questions: {
+        type: "array",
+        description: "1-4 questions",
+        items: {
+          type: "object",
+          properties: {
+            id: { type: "string" },
+            question: { type: "string" },
+            description: { type: "string" },
+            type: { type: "string", enum: ["single", "multiple"] },
+            options: {
+              type: "array",
+              description: "2-6 options",
+              items: {
+                type: "object",
+                properties: {
+                  id: { type: "string" },
+                  label: { type: "string" },
+                  description: { type: "string" },
+                  recommended: { type: "boolean" },
+                },
+                required: ["id", "label"],
+              },
+            },
+          },
+          required: ["id", "question", "options"],
+        },
+      },
+    },
+    required: ["questions"],
+  },
   isAvailable: ({ caps }) => !!caps?.elicitation?.form,
   mutating: false,
   kind: "think",

@@ -2,7 +2,14 @@ import type { ToolDefinition } from "./types.js";
 
 export const readFileTool: ToolDefinition = {
   name: "read_file",
-  description: 'read_file: {"path": "<absolute path>"} — read a text file in the workspace.',
+  description: "read a text file in the workspace.",
+  parameters: {
+    type: "object",
+    properties: {
+      path: { type: "string", description: "absolute path" },
+    },
+    required: ["path"],
+  },
   requiredCapability: (caps) => !!caps?.fs?.readTextFile,
   mutating: false,
   kind: "read",

@@ -2,8 +2,15 @@ import type { ToolDefinition } from "./types.js";
 
 export const writeFileTool: ToolDefinition = {
   name: "write_file",
-  description:
-    'write_file: {"path": "<absolute path>", "content": "<full file content>"} — overwrite a text file in the workspace.',
+  description: "overwrite a text file in the workspace.",
+  parameters: {
+    type: "object",
+    properties: {
+      path: { type: "string", description: "absolute path" },
+      content: { type: "string", description: "full file content" },
+    },
+    required: ["path", "content"],
+  },
   requiredCapability: (caps) => !!caps?.fs?.writeTextFile,
   mutating: true,
   kind: "edit",

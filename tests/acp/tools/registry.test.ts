@@ -98,6 +98,16 @@ describe("availableTools", () => {
     ).map((t) => t.name);
     assert.equal(names.includes("run_package_script"), false);
   });
+
+  it("every registered tool declares an args schema", () => {
+    const tools = availableTools(FULL_CAPABILITIES, makeEnvironment(), {
+      background: true,
+    });
+    for (const tool of tools) {
+      assert.ok(tool.parameters, `tool "${tool.name}" is missing parameters`);
+      assert.equal(tool.parameters?.type, "object");
+    }
+  });
 });
 
 describe("findTool", () => {

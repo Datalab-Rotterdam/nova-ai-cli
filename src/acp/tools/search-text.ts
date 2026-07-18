@@ -10,8 +10,24 @@ const MAX_FILE_BYTES = 1_000_000;
 
 export const searchTextTool: ToolDefinition = {
   name: "search_text",
-  description:
-    'search_text: {"query": "<text or regex>", "path": "<optional workspace path>", "regex": false, "case_sensitive": false, "include_extensions": [".ts"], "exclude_dirs": ["node_modules"], "max_matches": 100} - search text files under the workspace without grep/rg.',
+  description: "search text files under the workspace without grep/rg.",
+  parameters: {
+    type: "object",
+    properties: {
+      query: { type: "string", description: "text or regex" },
+      path: { type: "string", description: "optional workspace path" },
+      regex: { type: "boolean", default: false },
+      case_sensitive: { type: "boolean", default: false },
+      include_extensions: {
+        type: "array",
+        items: { type: "string" },
+        description: 'e.g. [".ts"]',
+      },
+      exclude_dirs: { type: "array", items: { type: "string" } },
+      max_matches: { type: "integer", default: DEFAULT_MAX_MATCHES },
+    },
+    required: ["query"],
+  },
   isAvailable: ({ caps, environment }) => !!caps?.fs?.readTextFile && !!environment?.workspaceReadable,
   mutating: false,
   kind: "search",

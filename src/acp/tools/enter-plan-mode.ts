@@ -6,7 +6,8 @@ export function createEnterPlanModeTool(
   return {
     name: "enter_plan_mode",
     description:
-      "enter_plan_mode: {} - switch this session from agent mode to plan mode when further workspace actions are no longer needed. This is a one-way, least-privilege transition: it cannot change permission settings or enable agent/bypass modes.",
+      "switch this session from agent mode to plan mode when further workspace actions are no longer needed. This is a one-way, least-privilege transition: it cannot change permission settings or enable agent/bypass modes.",
+    parameters: { type: "object", properties: {}, additionalProperties: false },
     mutating: false,
     kind: "switch_mode",
     async execute(_ctx, args) {
