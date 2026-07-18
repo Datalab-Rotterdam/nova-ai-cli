@@ -1,4 +1,4 @@
-import assert from "node:assert/strict";
+﻿import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import * as acp from "@agentclientprotocol/sdk";
 import {
@@ -501,3 +501,206 @@ describe("NovaAgent.nes", () => {
     }
   });
 });
+
+describe("NovaAgent background prompt isolation", () => {
+  type CapturedRequest = { url: string; body: Record<string, unknown> | null };
+
+  function installFetchStub(replies: {
+    models?: Array<Record<string, unknown>>;
+    chatText?: () => string;
+  }): { captured: CapturedRequest[]; restore: () => void } {
+    const captured: CapturedRequest[] = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const rawBody = typeof init?.body === "string" ? init.body : null;
+      captured.push({ url, body: rawBody ? JSON.parse(rawBody) : null });
+      if (url.includes("/chat/completions")) {
+        const text = replies.chatText?.() ?? "OK.";
+        const sse =
+          `data: {"object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":${JSON.stringify(text)}}}]}\n\n` +
+          "data: [DONE]\n\n";
+        return new Response(sse, {
+          status: 200,
+          headers: { "Content-Type": "text/event-stream" },
+        });
+      }
+      return new Response(
+        JSON.stringify({ data: replies.models ?? [], has_more: false }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }) as typeof fetch;
+    return {
+      captured,
+      restore: () => {
+        globalThis.fetch = originalFetch;
+      },
+    };
+  }
+
+  const fakeClient = {
+    request: async () => ({}),
+    notify: async () => {},
+  } as never;
+
+  async function waitForJobSettled(
+    agent: NovaAgent,
+    sessionId: string,
+    jobId: string,
+  ): Promise<string> {
+    for (let attempt = 0; attempt < 100; attempt++) {
+      const job = agent
+        .listBackgroundJobs({ sessionId })
+        .jobs.find((entry) => entry.jobId === jobId);
+      if (job && job.status !== "running") return job.status;
+      await new Promise((resolvePoll) => setTimeout(resolvePoll, 10));
+    }
+    throw new Error("Background job did not settle in time.");
+  }
+
+  it("uses the session's selected model for background jobs", async () => {
+    const previousKey = process.env.NOVA_API_KEY;
+    process.env.NOVA_API_KEY = "test-key";
+    const stub = installFetchStub({ chatText: () => "Background done." });
+    try {
+      const agent = new NovaAgent();
+      agent.initialize({ protocolVersion: acp.PROTOCOL_VERSION, clientCapabilities: {} });
+      const { sessionId } = await agent.newSession({ cwd: "/repo", mcpServers: [] });
+      await agent.setSessionConfigOption({
+        sessionId,
+        configId: "model",
+        value: "session-model",
+      });
+
+      const { job } = await agent.startBackgroundPrompt(
+        { sessionId, prompt: [{ type: "text", text: "background task" }] },
+        fakeClient,
+      );
+      await waitForJobSettled(agent, sessionId, job.jobId);
+
+      const chatRequest = stub.captured.find((entry) =>
+        entry.url.includes("/chat/completions"),
+      );
+      assert.ok(chatRequest);
+      assert.equal(chatRequest?.body?.model, "session-model");
+      deleteStoredSession(sessionId);
+    } finally {
+      stub.restore();
+      if (previousKey === undefined) delete process.env.NOVA_API_KEY;
+      else process.env.NOVA_API_KEY = previousKey;
+    }
+  });
+
+  it("rejects an image prompt for a non-image model before creating a job", async () => {
+    const previousKey = process.env.NOVA_API_KEY;
+    const previousModel = process.env.NOVA_MODEL;
+    process.env.NOVA_API_KEY = "test-key";
+    process.env.NOVA_MODEL = "text-only-model";
+    const stub = installFetchStub({
+      models: [{ id: "text-only-model", capabilities: ["tools"] }],
+    });
+    try {
+      const agent = new NovaAgent();
+      agent.initialize({ protocolVersion: acp.PROTOCOL_VERSION, clientCapabilities: {} });
+      const { sessionId } = await agent.newSession({ cwd: "/repo", mcpServers: [] });
+
+      await assert.rejects(
+        agent.startBackgroundPrompt(
+          {
+            sessionId,
+            prompt: [
+              { type: "text", text: "describe" },
+              { type: "image", mimeType: "image/png", data: "YWJj" },
+            ],
+          },
+          fakeClient,
+        ),
+        /does not support image input/,
+      );
+      assert.deepEqual(agent.listBackgroundJobs({ sessionId }).jobs, []);
+    } finally {
+      stub.restore();
+      if (previousKey === undefined) delete process.env.NOVA_API_KEY;
+      else process.env.NOVA_API_KEY = previousKey;
+      if (previousModel === undefined) delete process.env.NOVA_MODEL;
+      else process.env.NOVA_MODEL = previousModel;
+    }
+  });
+
+  it("hands background output to the next prompt instead of mutating history", async () => {
+    const previousKey = process.env.NOVA_API_KEY;
+    const previousModel = process.env.NOVA_MODEL;
+    process.env.NOVA_API_KEY = "test-key";
+    process.env.NOVA_MODEL = "test-model";
+    let reply = "BG RESULT: dependencies audited.";
+    const stub = installFetchStub({ chatText: () => reply });
+    try {
+      const agent = new NovaAgent();
+      agent.initialize({ protocolVersion: acp.PROTOCOL_VERSION, clientCapabilities: {} });
+      const { sessionId } = await agent.newSession({ cwd: "/repo", mcpServers: [] });
+
+      const { job } = await agent.startBackgroundPrompt(
+        { sessionId, prompt: [{ type: "text", text: "audit dependencies" }] },
+        fakeClient,
+      );
+      const status = await waitForJobSettled(agent, sessionId, job.jobId);
+      assert.equal(status, "completed");
+
+      reply = "Continuing with the audit results.";
+      await agent.prompt(
+        {
+          sessionId,
+          prompt: [{ type: "text", text: "continue the main task" }],
+        },
+        fakeClient,
+      );
+
+      const foreground = stub.captured
+        .filter((entry) => entry.url.includes("/chat/completions"))
+        .at(-1);
+      assert.ok(foreground);
+      const requestMessages = foreground?.body?.messages as Array<{
+        role: string;
+        content: unknown;
+      }>;
+      const contents = requestMessages.map((message) => String(message.content));
+      const handoffIndex = contents.findIndex((content) =>
+        content.includes("[Background agent job"),
+      );
+      const userIndex = contents.findIndex((content) =>
+        content.includes("continue the main task"),
+      );
+      assert.ok(handoffIndex !== -1, "handoff note missing from the request");
+      assert.ok(contents[handoffIndex].includes("BG RESULT"));
+      assert.ok(handoffIndex < userIndex, "handoff note must precede the user turn");
+      // The background job's own prompt stays out of foreground history as a
+      // standalone message (its text still appears inside the handoff note's
+      // job title).
+      assert.equal(
+        contents.some((content) => content.trim() === "audit dependencies"),
+        false,
+      );
+
+      const stored = await loadStoredSession(sessionId);
+      const storedContents = (stored?.messages ?? []).map((message) =>
+        String(message.content),
+      );
+      const storedHandoff = storedContents.findIndex((content) =>
+        content.includes("[Background agent job"),
+      );
+      const storedUser = storedContents.findIndex((content) =>
+        content.includes("continue the main task"),
+      );
+      assert.ok(storedHandoff !== -1);
+      assert.ok(storedHandoff < storedUser);
+      deleteStoredSession(sessionId);
+    } finally {
+      stub.restore();
+      if (previousKey === undefined) delete process.env.NOVA_API_KEY;
+      else process.env.NOVA_API_KEY = previousKey;
+      if (previousModel === undefined) delete process.env.NOVA_MODEL;
+      else process.env.NOVA_MODEL = previousModel;
+    }
+  });
+});
+

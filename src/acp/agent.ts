@@ -19,6 +19,7 @@ import {
 import { runTurn } from "../core/run-turn.js";
 import { resolveModelSupportsImageInput } from "../core/model-capabilities.js";
 import { stripReasoningTags } from "../core/reasoning-tags.js";
+import { truncateToolOutput } from "../core/tool-output.js";
 import {
   interactionModeAllowsTools,
   isInteractionMode,
@@ -107,6 +108,13 @@ type Session = {
   pendingPrompt: AbortController | null;
   cwd: string;
   history: ChatMessage[];
+  /**
+   * Finished background prompt jobs park a bounded handoff note here; the
+   * next foreground prompt drains it into history. Background jobs never
+   * write to session.history directly — a job finishing mid-turn would
+   * otherwise interleave messages the foreground model never saw.
+   */
+  pendingBackgroundHandoffs: ChatMessage[];
   title: string | null;
   mcpConnections: McpConnection[];
   mcpTools: ToolDefinition[];
@@ -205,6 +213,7 @@ export class NovaAgent {
       pendingPrompt: null,
       cwd: params.cwd,
       history: [],
+      pendingBackgroundHandoffs: [],
       title: null,
       mcpConnections,
       mcpTools,
@@ -257,6 +266,7 @@ export class NovaAgent {
       pendingPrompt: null,
       cwd: params.cwd,
       history,
+      pendingBackgroundHandoffs: [],
       title,
       mcpConnections,
       mcpTools,
@@ -828,7 +838,10 @@ export class NovaAgent {
       role: "user",
       content: contentBlocksToNovaContent(params.prompt),
     };
-    session.history.push(userMessage);
+    // Finished background jobs hand their notes to the next foreground turn
+    // here, keeping history and the session file in the order the model saw.
+    const backgroundHandoffs = session.pendingBackgroundHandoffs.splice(0);
+    session.history.push(...backgroundHandoffs, userMessage);
 
     const messages: ChatMessage[] = [
       ...(systemPrompt
@@ -920,7 +933,7 @@ export class NovaAgent {
         appendSessionTurn(
           params.sessionId,
           { cwd: session.cwd, title: session.title },
-          [userMessage, ...turnMessages],
+          [...backgroundHandoffs, userMessage, ...turnMessages],
         );
       }
     }
@@ -995,12 +1008,18 @@ export class NovaAgent {
       throw acp.RequestError.authRequired();
     }
 
-    const model = credentials.defaultModel ?? process.env.NOVA_MODEL;
+    const model =
+      session.model ?? credentials.defaultModel ?? process.env.NOVA_MODEL;
     if (!model) {
       throw new Error(
         "No Nova model configured. Re-run authentication or set NOVA_MODEL.",
       );
     }
+
+    // Fail the request before a job exists rather than emitting a phantom
+    // started→failed job for an unsupported prompt.
+    const novaClient = new NovaAI({ apiKey: credentials.apiKey });
+    await this.assertImageInputSupported(novaClient, model, params.prompt);
 
     const abortController = new AbortController();
     const job = this.backgroundJobs.createPromptJob({
@@ -1020,7 +1039,7 @@ export class NovaAgent {
       params,
       client,
       abortController,
-      credentials.apiKey,
+      novaClient,
       model,
       session,
     ).catch(async (err) => {
@@ -1189,7 +1208,7 @@ export class NovaAgent {
     params: StartPromptParams,
     client: acp.AgentContext,
     abortController: AbortController,
-    apiKey: string,
+    novaClient: NovaAI,
     model: string,
     session: Session,
   ): Promise<void> {
@@ -1199,8 +1218,6 @@ export class NovaAgent {
     );
     session.skills = discoverSkills(session.cwd);
     session.memory = discoverMemories(session.cwd);
-    const novaClient = new NovaAI({ apiKey });
-    await this.assertImageInputSupported(novaClient, model, params.prompt);
     const contextWindow = await this.resolveContextWindow(novaClient, model);
     const background = this.createBackgroundToolApi(params.sessionId, client);
     const tools = [
@@ -1223,6 +1240,8 @@ export class NovaAgent {
       role: "user",
       content: contentBlocksToNovaContent(params.prompt),
     };
+    // Snapshot: a concurrent foreground turn keeps mutating session.history,
+    // and this job must never see or produce interleaved state.
     const messages: ChatMessage[] = [
       ...(systemPrompt
         ? [{ role: "system" as const, content: systemPrompt }]
@@ -1249,6 +1268,7 @@ export class NovaAgent {
     };
 
     let turnMessages: ChatMessage[] = [];
+    let completedNormally = false;
     try {
       const result = await runTurn(messages, abortController.signal, {
         host,
@@ -1264,19 +1284,35 @@ export class NovaAgent {
         model,
       });
       turnMessages = result.turnMessages;
+      completedNormally = result.stopReason !== "cancelled";
       const status = result.stopReason === "cancelled" ? "killed" : "completed";
       const current = this.backgroundJobs.get(jobId);
       if (!current || current.status !== "running") return;
       const summary = this.backgroundJobs.finish(jobId, status);
       await emitBackgroundUpdate(client, status, summary);
     } finally {
-      session.history.push(userMessage, ...turnMessages);
-      session.title ??= deriveTitle(session.history);
-      appendSessionTurn(
-        params.sessionId,
-        { cwd: session.cwd, title: session.title },
-        [userMessage, ...turnMessages],
-      );
+      // Queue a bounded handoff note; the next foreground prompt drains it
+      // into history and the session file. If the process exits first, the
+      // note is lost from the session but the full transcript survives in
+      // the job artifact (read_background_output).
+      const title = this.backgroundJobs.get(jobId)?.title ?? "Background prompt";
+      const finalAssistant = [...turnMessages]
+        .reverse()
+        .find((message) => message.role === "assistant");
+      const finalText = finalAssistant
+        ? stripReasoningTags(
+            stripToolCallMarkup(chatContentToText(finalAssistant.content)),
+          ).trim()
+        : "";
+      session.pendingBackgroundHandoffs.push({
+        role: "user",
+        content: truncateToolOutput(
+          `[Background agent job "${title}" ${completedNormally ? "completed" : "did not complete"} (jobId: ${jobId})]\n` +
+            (finalText ||
+              `(no final output; read_background_output with jobId ${jobId} has the full transcript)`),
+          "Background job handoff",
+        ),
+      });
     }
   }
 
