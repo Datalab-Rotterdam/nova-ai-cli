@@ -30,7 +30,120 @@ describe("editFileTool", () => {
   it("errors when old_string matches more than once", async () => {
     const ctx = makeContext({ readTextFile: async () => "foo foo" });
     const result = await editFileTool.execute(ctx, { path: "/tmp/x", old_string: "foo", new_string: "bar" });
-    assert.deepEqual(result, { error: "old_string matches 2 locations in /tmp/x; it must match exactly once." });
+    assert.ok("error" in result);
+    if ("error" in result) {
+      assert.match(result.error, /matches 2 locations in \/tmp\/x \(lines 1, 1\)/);
+      assert.match(result.error, /replace_all/);
+    }
+  });
+
+  it("replaces every occurrence with replace_all", async () => {
+    let written = "";
+    const ctx = makeContext({
+      readTextFile: async () => "foo bar foo baz foo",
+      writeTextFile: async (_path, content) => {
+        written = content;
+      },
+    });
+    const result = await editFileTool.execute(ctx, {
+      path: "/tmp/x",
+      old_string: "foo",
+      new_string: "qux",
+      replace_all: true,
+    });
+    assert.ok("output" in result);
+    assert.equal(written, "qux bar qux baz qux");
+  });
+
+  it("keeps $-patterns in new_string literal", async () => {
+    let written = "";
+    const ctx = makeContext({
+      readTextFile: async () => "total = X",
+      writeTextFile: async (_path, content) => {
+        written = content;
+      },
+    });
+    const result = await editFileTool.execute(ctx, {
+      path: "/tmp/x",
+      old_string: "X",
+      new_string: "$$total & $&",
+    });
+    assert.ok("output" in result);
+    assert.equal(written, "total = $$total & $&");
+  });
+
+  it("matches across CRLF/LF line-ending differences and preserves file endings", async () => {
+    let written = "";
+    const ctx = makeContext({
+      readTextFile: async () => "alpha\r\nbeta\r\ngamma\r\n",
+      writeTextFile: async (_path, content) => {
+        written = content;
+      },
+    });
+    const result = await editFileTool.execute(ctx, {
+      path: "/tmp/x",
+      old_string: "alpha\nbeta",
+      new_string: "alpha\nBETA",
+    });
+    assert.ok("output" in result);
+    assert.equal(written, "alpha\r\nBETA\r\ngamma\r\n");
+  });
+
+  it("matches an indentation-shifted unique window and re-indents new_string", async () => {
+    let written = "";
+    const ctx = makeContext({
+      readTextFile: async () => "function f() {\n    if (x) {\n      go();\n    }\n}\n",
+      writeTextFile: async (_path, content) => {
+        written = content;
+      },
+    });
+    const result = await editFileTool.execute(ctx, {
+      path: "/tmp/x",
+      old_string: "if (x) {\n  go();\n}",
+      new_string: "if (x) {\n  stop();\n}",
+    });
+    assert.ok("output" in result);
+    assert.equal(written, "function f() {\n    if (x) {\n      stop();\n    }\n}\n");
+  });
+
+  it("reports every ambiguous whitespace-tolerant window", async () => {
+    const ctx = makeContext({
+      readTextFile: async () => "  a();\nx\n    a();\n",
+    });
+    const result = await editFileTool.execute(ctx, {
+      path: "/tmp/x",
+      old_string: "a();\nnope",
+      new_string: "b();",
+    });
+    assert.ok("error" in result);
+    if ("error" in result) assert.match(result.error, /not found/);
+
+    const ambiguous = await editFileTool.execute(
+      makeContext({ readTextFile: async () => "  a();\nx\n    a();\n" }),
+      { path: "/tmp/x", old_string: "a();", new_string: "b();" },
+    );
+    assert.ok("error" in ambiguous);
+    if ("error" in ambiguous) {
+      assert.match(ambiguous.error, /matches 2 locations in \/tmp\/x \(lines 1, 3\)/);
+    }
+  });
+
+  it("returns the closest window snippet when nothing matches", async () => {
+    const ctx = makeContext({
+      readTextFile: async () =>
+        "const a = 1;\nif (expectedNonce && token.nonce !== expectedNonce) {\n  throw new Error();\n}\n",
+    });
+    const result = await editFileTool.execute(ctx, {
+      path: "/tmp/x",
+      old_string: "if (expectedNonce && token.nonce != expectedNonce) {\n  throw new Error();\n}",
+      new_string: "whatever",
+    });
+    assert.ok("error" in result);
+    if ("error" in result) {
+      assert.match(result.error, /Closest match \(lines 2-4, 1 of 3 lines differ\)/);
+      assert.match(result.error, /token\.nonce !== expectedNonce/);
+      assert.match(result.error, /Adjust old_string to match the file exactly/);
+    }
   });
 
   it("replaces the single match and returns a diff", async () => {
