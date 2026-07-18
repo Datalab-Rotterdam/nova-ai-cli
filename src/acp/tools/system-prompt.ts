@@ -27,7 +27,8 @@ export function buildToolsSystemPrompt(tools: ToolDefinition[], cwd: string): st
     "- Example for write_file: ```tool_call",
     '{"name": "write_file", "args": {"path": "' + cwd.replace(/\\/g, "\\\\") + '/example.txt", "content": "file contents here"}}',
     "```",
-    "- One tool call per turn. After the result comes back, continue or call another tool.",
+    "- You may emit several tool_call blocks in one turn when the calls are independent (e.g. reading multiple files): put them back-to-back with nothing between or after them; results come back numbered in one message. Maximum 8 calls per turn.",
+    "- When a call depends on an earlier call's result, emit only that call and wait for the result before continuing.",
     ...(hasMcpTools
       ? [
           "Tools named mcp__* come from external MCP servers; give them absolute workspace paths for any file, directory, or project argument.",

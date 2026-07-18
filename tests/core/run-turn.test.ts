@@ -779,15 +779,13 @@ test("the reported incomplete completion preamble is continued even with a stop 
   );
 });
 
-test("an interrupted tool fence is re-emitted and never streamed as assistant text", async () => {
+test("an interrupted tool fence is continued and never streamed as assistant text", async () => {
   const rounds = [
     [
       "I will write the plan.\n",
       '```tool_call\n{"name":"write_file","args":{"path":"plan.md","content":"unfinished',
     ],
-    [
-      '```tool_call\n{"name":"write_file","args":{"path":"plan.md","content":"complete plan"}}\n```',
-    ],
+    [' but now complete"}}\n```'],
     ["The remediation plan was written."],
   ];
   const requests: ChatMessage[][] = [];
@@ -849,14 +847,148 @@ test("an interrupted tool fence is re-emitted and never streamed as assistant te
   );
   assert.match(
     String(requests[1]?.at(-1)?.content),
-    /Re-emit the entire tool call/,
+    /Continue exactly at the next character/,
   );
-  assert.equal(writtenContent, "complete plan");
+  assert.equal(writtenContent, "unfinished but now complete");
   assert.equal(
     streamed,
     "I will write the plan.\nThe remediation plan was written.",
   );
   assert.doesNotMatch(streamed, /tool_call|unfinished|write_file/);
+});
+
+test("an interrupted tool fence may still be re-emitted from its opening marker", async () => {
+  const rounds = [
+    [
+      '```tool_call\n{"name":"write_file","args":{"path":"plan.md","content":"unfinished',
+    ],
+    [
+      '```tool_call\n{"name":"write_file","args":{"path":"plan.md","content":"replacement"}}\n```',
+    ],
+    ["Done."],
+  ];
+  const novaClient = {
+    chat: {
+      completions: {
+        stream: () => {
+          const chunks = rounds.shift() ?? [];
+          return (async function* () {
+            for (const content of chunks) {
+              yield {
+                type: "chunk",
+                data: { choices: [{ delta: { content } }] },
+              };
+            }
+          })();
+        },
+      },
+    },
+  } as unknown as NovaAI;
+  let writtenContent = "";
+  const tool: ToolDefinition = {
+    name: "write_file",
+    description: "test write",
+    mutating: false,
+    kind: "edit",
+    execute: async (_context, args) => {
+      writtenContent = String(args.content);
+      return { output: "Wrote plan.md" };
+    },
+  };
+
+  const result = await runTurn(
+    [{ role: "user", content: "Write a plan." }],
+    new AbortController().signal,
+    {
+      host: {} as ToolHost,
+      sessionId: "test-session",
+      cwd: ".",
+      environment: {} as ToolEnvironment,
+      tools: [tool],
+      requestPermission: async () => true,
+      emit: () => {},
+      novaClient,
+      model: "test-model",
+    },
+  );
+
+  assert.equal(result.stopReason, "end_turn");
+  assert.equal(writtenContent, "replacement");
+});
+
+test("repeatedly incomplete tool calls recover with a smaller-call instruction", async () => {
+  const partial =
+    '```tool_call\n{"name":"write_file","args":{"path":"plan.md","content":"unfinished';
+  const rounds = [
+    [partial],
+    [partial],
+    [partial],
+    ["I could not write the oversized file; here is the concise result."],
+  ];
+  const requests: ChatMessage[][] = [];
+  const novaClient = {
+    chat: {
+      completions: {
+        stream: (request: { messages: ChatMessage[] }) => {
+          requests.push([...request.messages]);
+          const chunks = rounds.shift() ?? [];
+          return (async function* () {
+            for (const content of chunks) {
+              yield {
+                type: "chunk",
+                data: { choices: [{ delta: { content } }] },
+              };
+            }
+          })();
+        },
+      },
+    },
+  } as unknown as NovaAI;
+  let executions = 0;
+  const tool: ToolDefinition = {
+    name: "write_file",
+    description: "test write",
+    mutating: false,
+    kind: "edit",
+    execute: async () => {
+      executions++;
+      return { output: "unexpected" };
+    },
+  };
+  const messages: ChatMessage[] = [
+    { role: "user", content: "Write a large plan." },
+  ];
+
+  const result = await runTurn(messages, new AbortController().signal, {
+    host: {} as ToolHost,
+    sessionId: "test-session",
+    cwd: ".",
+    environment: {} as ToolEnvironment,
+    tools: [tool],
+    requestPermission: async () => true,
+    emit: () => {},
+    novaClient,
+    model: "test-model",
+  });
+
+  assert.equal(result.stopReason, "end_turn");
+  assert.equal(executions, 0);
+  assert.match(
+    String(requests[3]?.at(-1)?.content),
+    /too large[\s\S]*smaller tool calls/i,
+  );
+  assert.equal(
+    messages.some(
+      (message) =>
+        typeof message.content === "string" &&
+        message.content.includes("unfinished"),
+    ),
+    false,
+  );
+  assert.equal(
+    messages.at(-1)?.content,
+    "I could not write the oversized file; here is the concise result.",
+  );
 });
 
 test("invalid tool args get a correction round and never reach the tool", async () => {
@@ -1167,4 +1299,372 @@ test("proactive compaction is skipped when usage stays under the threshold", asy
 
   assert.equal(result.stopReason, "end_turn");
   assert.equal(compactCalls, 0);
+});
+
+test("multiple back-to-back tool calls execute sequentially with one combined result", async () => {
+  const rounds = [
+    [
+      '```tool_call\n{"name":"read_file","args":{"path":"a.ts"}}\n```\n',
+      '```tool_call\n{"name":"read_file","args":{"path":"b.ts"}}\n```',
+    ],
+    ["Both files reviewed."],
+  ];
+  const requests: ChatMessage[][] = [];
+  const novaClient = {
+    chat: {
+      completions: {
+        stream: (request: { messages: ChatMessage[] }) => {
+          requests.push([...request.messages]);
+          const chunks = rounds.shift() ?? [];
+          return (async function* () {
+            for (const content of chunks) {
+              yield {
+                type: "chunk",
+                data: { choices: [{ delta: { content } }] },
+              };
+            }
+          })();
+        },
+      },
+    },
+  } as unknown as NovaAI;
+  const executed: string[] = [];
+  const tool: ToolDefinition = {
+    name: "read_file",
+    description: "test read",
+    mutating: false,
+    kind: "read",
+    execute: async (_context, args) => {
+      executed.push(String(args.path));
+      return { output: `contents of ${args.path}` };
+    },
+  };
+  const events: AgentEvent[] = [];
+  const messages: ChatMessage[] = [{ role: "user", content: "Read both files." }];
+
+  const result = await runTurn(messages, new AbortController().signal, {
+    host: {} as ToolHost,
+    sessionId: "test-session",
+    cwd: ".",
+    environment: {} as ToolEnvironment,
+    tools: [tool],
+    requestPermission: async () => true,
+    emit: (event) => {
+      events.push(event);
+    },
+    novaClient,
+    model: "test-model",
+  });
+
+  assert.equal(result.stopReason, "end_turn");
+  assert.deepEqual(executed, ["a.ts", "b.ts"]);
+  assert.equal(
+    events.filter((event) => event.type === "tool_pending").length,
+    2,
+  );
+  const combined = requests[1]?.at(-1);
+  assert.equal(combined?.role, "user");
+  assert.match(String(combined?.content), /^Tool results \(2 calls\):/);
+  assert.match(String(combined?.content), /\[1\] read_file → ok\nTool result: contents of a\.ts/);
+  assert.match(String(combined?.content), /\[2\] read_file → ok\nTool result: contents of b\.ts/);
+});
+
+test("a single tool call keeps the legacy result message byte-identical", async () => {
+  const rounds = [
+    ['```tool_call\n{"name":"read_file","args":{"path":"a.ts"}}\n```'],
+    ["Done."],
+  ];
+  const requests: ChatMessage[][] = [];
+  const novaClient = {
+    chat: {
+      completions: {
+        stream: (request: { messages: ChatMessage[] }) => {
+          requests.push([...request.messages]);
+          const chunks = rounds.shift() ?? [];
+          return (async function* () {
+            for (const content of chunks) {
+              yield {
+                type: "chunk",
+                data: { choices: [{ delta: { content } }] },
+              };
+            }
+          })();
+        },
+      },
+    },
+  } as unknown as NovaAI;
+  const tool: ToolDefinition = {
+    name: "read_file",
+    description: "test read",
+    mutating: false,
+    kind: "read",
+    execute: async () => ({ output: "file contents" }),
+  };
+  const messages: ChatMessage[] = [{ role: "user", content: "Read." }];
+
+  await runTurn(messages, new AbortController().signal, {
+    host: {} as ToolHost,
+    sessionId: "test-session",
+    cwd: ".",
+    environment: {} as ToolEnvironment,
+    tools: [tool],
+    requestPermission: async () => true,
+    emit: () => {},
+    novaClient,
+    model: "test-model",
+  });
+
+  assert.equal(requests[1]?.at(-1)?.content, "Tool result: file contents");
+});
+
+test("a user rejection mid-batch skips every remaining call", async () => {
+  const rounds = [
+    [
+      '```tool_call\n{"name":"write_file","args":{"path":"a.ts","content":"x"}}\n```\n' +
+        '```tool_call\n{"name":"write_file","args":{"path":"b.ts","content":"y"}}\n```\n' +
+        '```tool_call\n{"name":"write_file","args":{"path":"c.ts","content":"z"}}\n```',
+    ],
+    ["Understood, stopping."],
+  ];
+  const requests: ChatMessage[][] = [];
+  const novaClient = {
+    chat: {
+      completions: {
+        stream: (request: { messages: ChatMessage[] }) => {
+          requests.push([...request.messages]);
+          const chunks = rounds.shift() ?? [];
+          return (async function* () {
+            for (const content of chunks) {
+              yield {
+                type: "chunk",
+                data: { choices: [{ delta: { content } }] },
+              };
+            }
+          })();
+        },
+      },
+    },
+  } as unknown as NovaAI;
+  let executions = 0;
+  let permissionRequests = 0;
+  const tool: ToolDefinition = {
+    name: "write_file",
+    description: "test write",
+    mutating: true,
+    kind: "edit",
+    execute: async () => {
+      executions++;
+      return { output: "written" };
+    },
+  };
+  const messages: ChatMessage[] = [{ role: "user", content: "Write all three." }];
+
+  await runTurn(messages, new AbortController().signal, {
+    host: {} as ToolHost,
+    sessionId: "test-session",
+    cwd: ".",
+    environment: {} as ToolEnvironment,
+    tools: [tool],
+    requestPermission: async () => {
+      permissionRequests++;
+      return false;
+    },
+    emit: () => {},
+    novaClient,
+    model: "test-model",
+  });
+
+  assert.equal(executions, 0);
+  assert.equal(permissionRequests, 1);
+  const combined = String(requests[1]?.at(-1)?.content);
+  assert.match(combined, /\[1\] write_file → rejected\nTool call rejected by user\./);
+  assert.match(combined, /\[2\] write_file → skipped\nSkipped: an earlier call in this batch was rejected/);
+  assert.match(combined, /\[3\] write_file → skipped/);
+});
+
+test("a least-privilege switch first in a batch disables the rest of the batch", async () => {
+  const rounds = [
+    [
+      "<|tool_call>call:enter_plan_mode: {}<tool_call|>\n" +
+        '<|tool_call>call:run_command: {command: "npm publish"}<tool_call|>',
+    ],
+    ["Plan follows."],
+  ];
+  const requests: ChatMessage[][] = [];
+  const novaClient = {
+    chat: {
+      completions: {
+        stream: (request: { messages: ChatMessage[] }) => {
+          requests.push([...request.messages]);
+          const chunks = rounds.shift() ?? [];
+          return (async function* () {
+            for (const content of chunks) {
+              yield {
+                type: "chunk",
+                data: { choices: [{ delta: { content } }] },
+              };
+            }
+          })();
+        },
+      },
+    },
+  } as unknown as NovaAI;
+  let commandCalls = 0;
+  const tools: ToolDefinition[] = [
+    {
+      name: "enter_plan_mode",
+      description: "enter plan mode",
+      mutating: false,
+      kind: "switch_mode",
+      execute: async () => ({
+        output: "Switched to plan mode.",
+        disableFurtherTools: true,
+      }),
+    },
+    {
+      name: "run_command",
+      description: "run a command",
+      mutating: true,
+      kind: "execute",
+      execute: async () => {
+        commandCalls++;
+        return { output: "unexpected" };
+      },
+    },
+  ];
+  const messages: ChatMessage[] = [{ role: "user", content: "Plan now." }];
+
+  await runTurn(messages, new AbortController().signal, {
+    host: {} as ToolHost,
+    sessionId: "test-session",
+    cwd: ".",
+    environment: {} as ToolEnvironment,
+    tools,
+    requestPermission: async () => true,
+    emit: () => {},
+    novaClient,
+    model: "test-model",
+  });
+
+  assert.equal(commandCalls, 0);
+  const combined = String(requests[1]?.at(-1)?.content);
+  assert.match(combined, /\[1\] enter_plan_mode → ok/);
+  assert.match(combined, /\[2\] run_command → error\nTool "run_command" is not available\./);
+});
+
+test("calls beyond the per-round cap are rejected without executing", async () => {
+  const calls = Array.from(
+    { length: 9 },
+    (_unused, index) =>
+      `\`\`\`tool_call\n{"name":"read_file","args":{"path":"f${index}.ts"}}\n\`\`\``,
+  ).join("\n");
+  const rounds = [[calls], ["Done."]];
+  const requests: ChatMessage[][] = [];
+  const novaClient = {
+    chat: {
+      completions: {
+        stream: (request: { messages: ChatMessage[] }) => {
+          requests.push([...request.messages]);
+          const chunks = rounds.shift() ?? [];
+          return (async function* () {
+            for (const content of chunks) {
+              yield {
+                type: "chunk",
+                data: { choices: [{ delta: { content } }] },
+              };
+            }
+          })();
+        },
+      },
+    },
+  } as unknown as NovaAI;
+  let executions = 0;
+  const tool: ToolDefinition = {
+    name: "read_file",
+    description: "test read",
+    mutating: false,
+    kind: "read",
+    execute: async () => {
+      executions++;
+      return { output: "contents" };
+    },
+  };
+  const messages: ChatMessage[] = [{ role: "user", content: "Read them all." }];
+
+  await runTurn(messages, new AbortController().signal, {
+    host: {} as ToolHost,
+    sessionId: "test-session",
+    cwd: ".",
+    environment: {} as ToolEnvironment,
+    tools: [tool],
+    requestPermission: async () => true,
+    emit: () => {},
+    novaClient,
+    model: "test-model",
+  });
+
+  assert.equal(executions, 8);
+  const combined = String(requests[1]?.at(-1)?.content);
+  assert.match(combined, /^Tool results \(9 calls\):/);
+  assert.match(combined, /\[9\] read_file → rejected\nRejected: too many tool calls in one turn \(maximum 8\)/);
+});
+
+test("a malformed block among valid ones gets an inline error while the rest execute", async () => {
+  const rounds = [
+    [
+      '```tool_call\n{"name":"read_file","args":{"path":"a.ts"}}\n```\n' +
+        "```tool_call\n{not json at all\n```\n" +
+        '```tool_call\n{"name":"read_file","args":{"path":"c.ts"}}\n```',
+    ],
+    ["Continuing."],
+  ];
+  const requests: ChatMessage[][] = [];
+  const novaClient = {
+    chat: {
+      completions: {
+        stream: (request: { messages: ChatMessage[] }) => {
+          requests.push([...request.messages]);
+          const chunks = rounds.shift() ?? [];
+          return (async function* () {
+            for (const content of chunks) {
+              yield {
+                type: "chunk",
+                data: { choices: [{ delta: { content } }] },
+              };
+            }
+          })();
+        },
+      },
+    },
+  } as unknown as NovaAI;
+  const executed: string[] = [];
+  const tool: ToolDefinition = {
+    name: "read_file",
+    description: "test read",
+    mutating: false,
+    kind: "read",
+    execute: async (_context, args) => {
+      executed.push(String(args.path));
+      return { output: `contents of ${args.path}` };
+    },
+  };
+  const messages: ChatMessage[] = [{ role: "user", content: "Read files." }];
+
+  await runTurn(messages, new AbortController().signal, {
+    host: {} as ToolHost,
+    sessionId: "test-session",
+    cwd: ".",
+    environment: {} as ToolEnvironment,
+    tools: [tool],
+    requestPermission: async () => true,
+    emit: () => {},
+    novaClient,
+    model: "test-model",
+  });
+
+  assert.deepEqual(executed, ["a.ts", "c.ts"]);
+  const combined = String(requests[1]?.at(-1)?.content);
+  assert.match(combined, /\[1\] read_file → ok/);
+  assert.match(combined, /\[2\] \(unparseable\) → error\nThis tool_call block could not be parsed as JSON/);
+  assert.match(combined, /\[3\] read_file → ok/);
 });

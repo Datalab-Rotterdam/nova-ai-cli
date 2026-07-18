@@ -102,3 +102,23 @@ test("estimateMessagesTokens sums content with per-message overhead", () => {
   ]);
   assert.equal(double, 4 + 1 + 4 + 10);
 });
+
+test("combined multi-call results are attributed to the pending tool category", () => {
+  const usage = calculateContextUsage({
+    history: [
+      {
+        role: "assistant",
+        content:
+          '```tool_call\n{"name":"read_file","args":{"path":"a.ts"}}\n```\n' +
+          '```tool_call\n{"name":"read_file","args":{"path":"b.ts"}}\n```',
+      },
+      {
+        role: "user",
+        content:
+          "Tool results (2 calls):\n[1] read_file → ok\nTool result: aaa\n[2] read_file → ok\nTool result: bbb",
+      },
+    ],
+  });
+  assert.ok(usage.categories.tools > 0);
+  assert.equal(usage.categories.conversation, 0);
+});

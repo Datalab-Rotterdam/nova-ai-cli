@@ -5,64 +5,145 @@ export type ParsedToolCall = {
   matchEnd: number;
 };
 
-// Greedy match: takes the LAST closing ``` in the buffer, not the first. The
-// JSON payload (e.g. write_file content) may itself contain literal ``` runs
-// (markdown snippets, code fences) — a lazy match would close on those and
-// truncate/corrupt the JSON.
-const FENCE_RE = /```tool_call\s*\n([\s\S]*)\n```/;
+export type ToolCallBlock =
+  | { kind: "call"; call: ParsedToolCall; matchStart: number; matchEnd: number }
+  | { kind: "malformed"; matchStart: number; matchEnd: number };
+
+export type ToolCallScan = {
+  blocks: ToolCallBlock[];
+  /** End offset of the last complete block; 0 when there are none. */
+  lastMatchEnd: number;
+};
+
 const SENTINEL_START = "<|tool_call>";
-const SENTINEL_RE = /<\|tool_call>([\s\S]*?)<tool_call\|>/;
+const SENTINEL_END = "<tool_call|>";
+const FENCE_CLOSE = "\n```";
 
 /**
- * Looks for one complete ```tool_call fenced block in the accumulated stream
- * buffer. Returns null while the block hasn't fully arrived yet (it may be
- * split across multiple stream chunks).
+ * Scans the buffer for every complete tool-call block (fenced or sentinel),
+ * in order. A trailing block whose closing marker hasn't streamed in yet is
+ * not returned — the caller keeps buffering until it completes or the stream
+ * ends.
  */
-export function extractToolCall(buffer: string): ParsedToolCall | null {
-  const match = FENCE_RE.exec(buffer);
-  if (match) return extractFencedToolCall(match);
-
-  const sentinel = SENTINEL_RE.exec(buffer);
-  if (!sentinel) return null;
-  return extractSentinelToolCall(sentinel);
+export function scanToolCalls(buffer: string): ToolCallScan {
+  const blocks: ToolCallBlock[] = [];
+  let position = 0;
+  while (position < buffer.length) {
+    const fenceIndex = buffer.indexOf(FENCE_START, position);
+    const sentinelIndex = buffer.indexOf(SENTINEL_START, position);
+    if (fenceIndex === -1 && sentinelIndex === -1) break;
+    const useFence =
+      fenceIndex !== -1 && (sentinelIndex === -1 || fenceIndex < sentinelIndex);
+    const block = useFence
+      ? scanFencedBlock(buffer, fenceIndex)
+      : scanSentinelBlock(buffer, sentinelIndex);
+    if (!block) break;
+    blocks.push(block);
+    position = block.matchEnd;
+  }
+  return { blocks, lastMatchEnd: blocks.at(-1)?.matchEnd ?? 0 };
 }
 
-function extractFencedToolCall(match: RegExpExecArray): ParsedToolCall | null {
-  const payload = match[1];
-  if (payload === undefined) return null;
+function scanFencedBlock(buffer: string, start: number): ToolCallBlock | null {
+  // Opening marker, optional inline whitespace, then a newline.
+  let cursor = start + FENCE_START.length;
+  while (
+    cursor < buffer.length &&
+    buffer[cursor] !== "\n" &&
+    /\s/.test(buffer[cursor]!)
+  ) {
+    cursor++;
+  }
+  if (cursor >= buffer.length || buffer[cursor] !== "\n") return null;
+  const payloadStart = cursor + 1;
 
-  const jsonText = extractFirstJsonObject(payload);
-  if (jsonText === null) return null;
+  // Brace-scan the payload first (string-aware), so a ``` embedded inside the
+  // JSON never closes the block early; only then look for the closing fence.
+  const jsonText = extractFirstJsonObject(buffer.slice(payloadStart));
+  if (jsonText === null) {
+    const close = buffer.indexOf(FENCE_CLOSE, payloadStart);
+    if (close === -1) return null;
+    return {
+      kind: "malformed",
+      matchStart: start,
+      matchEnd: close + FENCE_CLOSE.length,
+    };
+  }
+  const jsonStart = buffer.indexOf("{", payloadStart);
+  const jsonEnd = jsonStart + jsonText.length;
+  const close = buffer.indexOf(FENCE_CLOSE, jsonEnd);
+  if (close === -1) return null;
+  const matchEnd = close + FENCE_CLOSE.length;
+  const call = parseCallPayload(jsonText, start, matchEnd);
+  return call
+    ? { kind: "call", call, matchStart: start, matchEnd }
+    : { kind: "malformed", matchStart: start, matchEnd };
+}
 
+function scanSentinelBlock(
+  buffer: string,
+  start: number,
+): ToolCallBlock | null {
+  const end = buffer.indexOf(SENTINEL_END, start + SENTINEL_START.length);
+  if (end === -1) return null;
+  const matchEnd = end + SENTINEL_END.length;
+  const payload = buffer.slice(start + SENTINEL_START.length, end).trim();
+  const call = /^call:([^:\s]+):\s*([\s\S]+)$/.exec(payload);
+  const args = call?.[1] && call[2] ? parseLooseObject(call[2]) : null;
+  if (!call?.[1] || !args) {
+    return { kind: "malformed", matchStart: start, matchEnd };
+  }
+  return {
+    kind: "call",
+    call: { name: call[1], args, matchStart: start, matchEnd },
+    matchStart: start,
+    matchEnd,
+  };
+}
+
+function parseCallPayload(
+  jsonText: string,
+  matchStart: number,
+  matchEnd: number,
+): ParsedToolCall | null {
   try {
     const parsed = JSON.parse(jsonText);
     if (typeof parsed?.name !== "string") return null;
     return {
       name: parsed.name,
-      args: unwrapArgs(typeof parsed.args === "object" && parsed.args !== null ? parsed.args : parsed),
-      matchStart: match.index,
-      matchEnd: match.index + match[0].length,
+      args: unwrapArgs(
+        typeof parsed.args === "object" && parsed.args !== null
+          ? parsed.args
+          : parsed,
+      ),
+      matchStart,
+      matchEnd,
     };
   } catch {
     return null;
   }
 }
 
-function extractSentinelToolCall(match: RegExpExecArray): ParsedToolCall | null {
-  const payload = match[1]?.trim();
-  if (!payload) return null;
+/**
+ * Looks for the first complete, valid tool-call block in the accumulated
+ * stream buffer. Returns null while no block has fully arrived yet (it may
+ * be split across multiple stream chunks).
+ */
+export function extractToolCall(buffer: string): ParsedToolCall | null {
+  for (const block of scanToolCalls(buffer).blocks) {
+    if (block.kind === "call") return block.call;
+  }
+  return null;
+}
 
-  const call = /^call:([^:\s]+):\s*([\s\S]+)$/.exec(payload);
-  if (!call?.[1] || !call[2]) return null;
-  const args = parseLooseObject(call[2]);
-  if (!args) return null;
-
-  return {
-    name: call[1],
-    args,
-    matchStart: match.index,
-    matchEnd: match.index + match[0].length,
-  };
+/**
+ * True while the tail could still grow into (more of) a tool-call block:
+ * it is whitespace, contains a start marker, or ends with a prefix of one.
+ * Used to keep buffering consecutive blocks instead of cutting the stream
+ * after the first complete call.
+ */
+export function tailMayContinueToolCalls(tail: string): boolean {
+  return tail.trim() === "" || hasPendingFence(tail);
 }
 
 /**
@@ -72,20 +153,49 @@ function extractSentinelToolCall(match: RegExpExecArray): ParsedToolCall | null 
  */
 function unwrapArgs(args: Record<string, unknown>): Record<string, unknown> {
   const keys = Object.keys(args);
-  if (keys.length === 1 && keys[0] === "args" && typeof args.args === "object" && args.args !== null) {
+  if (
+    keys.length === 1 &&
+    keys[0] === "args" &&
+    typeof args.args === "object" &&
+    args.args !== null
+  ) {
     return args.args as Record<string, unknown>;
   }
   return args;
 }
 
 /**
- * True when a ```tool_call fence is fully present (closing ``` arrived) but
- * its JSON payload failed to parse — distinct from "no tool call at all" so
- * the caller can feed the model a correction instead of treating a botched
- * tool call as the model's final answer.
+ * True when at least one complete tool-call block is present but none of
+ * them parse into a valid call — distinct from "no tool call at all" so the
+ * caller can feed the model a correction instead of treating a botched tool
+ * call as the model's final answer.
  */
 export function hasMalformedToolCall(buffer: string): boolean {
-  return (FENCE_RE.test(buffer) || SENTINEL_RE.test(buffer)) && extractToolCall(buffer) === null;
+  const { blocks } = scanToolCalls(buffer);
+  return (
+    blocks.length > 0 && blocks.every((block) => block.kind === "malformed")
+  );
+}
+
+/**
+ * True after a tool marker starts but before its closing marker arrives.
+ * With multiple blocks, only a start marker AFTER the last complete block
+ * counts — earlier markers are all inside finished blocks.
+ */
+export function hasIncompleteToolCall(buffer: string): boolean {
+  const { lastMatchEnd } = scanToolCalls(buffer);
+  return TOOL_CALL_STARTS.some(
+    (start) => buffer.indexOf(start, lastMatchEnd) !== -1,
+  );
+}
+
+/** Removes complete or partial tool markup from restored assistant text. */
+export function stripToolCallMarkup(buffer: string): string {
+  const starts = TOOL_CALL_STARTS.flatMap((start) => {
+    const index = buffer.indexOf(start);
+    return index >= 0 ? [index] : [];
+  });
+  return starts.length ? buffer.slice(0, Math.min(...starts)) : buffer;
 }
 
 /**
@@ -143,7 +253,7 @@ function parseLooseObject(text: string): Record<string, unknown> | null {
   try {
     const parsed: unknown = JSON.parse(quoteBareObjectKeys(objectText));
     return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-      ? parsed as Record<string, unknown>
+      ? (parsed as Record<string, unknown>)
       : null;
   } catch {
     return null;
@@ -198,7 +308,11 @@ function quoteBareObjectKeys(text: string): string {
       result += char;
       continue;
     }
-    if (context?.type === "object" && context.expectsKey && /[A-Za-z_$]/.test(char)) {
+    if (
+      context?.type === "object" &&
+      context.expectsKey &&
+      /[A-Za-z_$]/.test(char)
+    ) {
       let end = index + 1;
       while (end < text.length && /[\w$-]/.test(text[end]!)) end++;
       let colon = end;

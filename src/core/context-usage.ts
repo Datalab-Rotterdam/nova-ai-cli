@@ -30,7 +30,7 @@ export type ContextUsageInput = {
 };
 
 const TOOL_RESULT_PATTERN =
-  /^(?:Tool result:|Tool error:|Tool call rejected by user\.)/;
+  /^(?:Tool result:|Tool error:|Tool results \(|Tool call rejected by user\.)/;
 
 /**
  * Produces a model-independent context estimate. Nova can serve models with
