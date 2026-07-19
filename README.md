@@ -31,6 +31,7 @@ No install needed — run directly with `npx`:
 ```sh
 npx @datalabrotterdam/nova-ai-cli --setup   # store your Nova API key
 npx @datalabrotterdam/nova-ai-cli           # interactive terminal UI
+npx @datalabrotterdam/nova-ai-cli --headless "summarize this repo" # one non-interactive turn
 npx @datalabrotterdam/nova-ai-cli --acp     # speak ACP over stdio (editors/IDEs) — fully working
 npx @datalabrotterdam/nova-ai-cli --web     # experimental standalone browser UI
 ```
@@ -53,10 +54,11 @@ The TUI uses a plain Unicode star for the assistant marker, so it can be colored
 
 `nova-ai-cli` is a terminal client for Nova AI, in the same spirit as
 `claude`/`codex`. With no flags it runs the interactive terminal UI. Pass
-`--acp` to use the same agent over Agent Client Protocol, where it reads
+`--headless` to run one automation-friendly turn, or `--acp` to use the same
+agent over Agent Client Protocol, where it reads
 JSON-RPC requests from stdin and writes responses/notifications to stdout for
-an ACP-aware editor or IDE. Both paths share credentials, tools, permissions,
-MCP integrations, background jobs, and persisted sessions.
+an ACP-aware editor or IDE. All paths share credentials, tools, permissions,
+MCP integrations, queues, background jobs, and persisted sessions.
 
 ```sh
 # 1. one-time setup — opens a browser page to verify the key against Nova AI and store it locally
@@ -68,8 +70,31 @@ npx @datalabrotterdam/nova-ai-cli --acp
 
 Most editors invoke `--acp` for you once configured as an agent — `--setup` is the one command you run by hand first.
 
-**Status:** `--setup`, `--acp`, and interactive terminal chat are implemented.
-The standalone `--web` surface remains experimental.
+**Status:** `--setup`, `--headless`, `--acp`, and interactive terminal chat are
+implemented. The standalone `--web` surface remains experimental.
+
+### Headless automation
+
+Headless mode runs the same in-process ACP agent without terminal rendering. A
+plain invocation writes only assistant text; `--json` writes one JSON object per
+line for session, message delta, tool, permission, queue, background, result,
+and error events.
+
+```sh
+nova-ai --headless "review the changed files"
+git diff | nova-ai --headless --json --no-mcp "review this diff"
+nova-ai --headless --resume <session-id> --model <model-id> "continue"
+```
+
+The default `--permission-mode read-only` rejects mutating tools unless an
+explicit workspace allow rule approves the operation. `accept-edits` allows
+file and memory edits but still rejects shell commands; `bypass-all` must be
+selected explicitly. Workspace deny rules always win. Headless requests never
+wait for an interactive permission dialog or question. Use `--no-mcp` for a
+hermetic run that ignores workspace MCP configuration.
+
+Exit codes are stable: `0` success, `1` configuration/runtime failure, `2`
+cancelled, `3` tool-turn safety limit, and `130` interrupted.
 
 ### Interactive terminal UI
 
@@ -94,21 +119,27 @@ profile and workspace; `/skills` shows the active catalog.
 | `Ctrl+T`                           | Inspect full tool call details                                                       |
 | `Ctrl+B`                           | Inspect background shells and agents                                                 |
 | `Ctrl+R` / `Ctrl+P` / `Ctrl+K`     | Sessions / models / permission mode                                                  |
-| `Alt+V`                             | Paste a clipboard image as `[#ImageN]` when the selected model supports image input  |
+| `Alt+V`                            | Paste a clipboard image as `[#ImageN]` when the selected model supports image input  |
 | Mouse wheel / `Shift+Page Up/Down` | Scroll conversation history                                                          |
 | `Ctrl+Home` / `Ctrl+End`           | Jump to oldest / newest conversation content                                         |
 
 Enter submits. While a response is streaming, another submission is added to
-the FIFO queue and its position appears in the status row. `/steer <message>`
-cancels the active response and puts that message at the front of the queue;
+the agent-owned FIFO queue and its position appears in the status row.
+`/steer <message>` puts guidance at the front and injects it at the next safe
+model boundary after a tool finishes; it does not cancel the active response.
 `/queue` inspects it and `/queue clear` removes pending messages. `Shift+Enter`
-or `Ctrl+J` inserts a newline. Slash commands and `@file` references
-autocomplete in the editor.
+or `Ctrl+J` inserts a newline. Slash commands and `@file` references autocomplete
+in the editor.
 
 If Nova reports that the model's maximum context length was exceeded, the
 agent summarizes older conversation history, keeps the recent messages, shows
 a compaction notice, and retries the interrupted model request once. Use
 `/compact` to run the same compaction manually before the limit is reached.
+Each completed prompt is also an append-only checkpoint. `/rewind` removes the
+latest completed turn from model history and the transcript; `/rewind 3`
+removes three. Rewind is unavailable while work is active, clears pending queue
+entries, and can be repeated for checkpoints created since the most recent
+context compaction.
 The footer also shows `ctx:used/window`; `/usage` opens an estimated category
 breakdown for system instructions, conversation, agents, thinking, tools,
 skills, remaining capacity, and the total.
@@ -117,7 +148,9 @@ Fine-grained project permissions are configured in `.nova-ai/settings.json`
 with Claude-style rules such as `Bash(npm run *)`, `Edit(src/**)`, and deny
 rules such as `Bash(npm publish*)`. Deny rules take precedence; choosing
 `always` in the TUI stores an exact command/path rule rather than allowing an
-entire tool.
+entire tool. Shell rules evaluate every top-level pipeline or control-flow
+segment independently; substitutions, nested shells, grouping, malformed
+quoting, and similar complex syntax require an exact reviewed command rule.
 
 `@path`, `@./path`, Windows-style separators, and quoted mentions such as
 `@"docs/file with spaces.md"` attach file contents directly from the workspace.
@@ -161,24 +194,29 @@ A future version will swap this for real OAuth once DataLab Rotterdam ships an O
 
 ## What it implements
 
-| ACP method       | Behavior                                                                                                                                 |
-| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `initialize`     | Returns protocol version + the `nova-api-key` agent auth method                                                                          |
-| `session/new`    | Allocates a session id with in-memory history                                                                                            |
-| `session/load`   | Restores a previously-persisted session and replays its turns as `*_message_chunk` notifications                                         |
-| `session/list`   | Lists stored sessions, optionally filtered by `cwd`                                                                                      |
-| `session/set_mode` | Selects the advertised `agent`, `ask`, or `plan` interaction mode; permission modes are intentionally rejected                         |
-| `authenticate`   | Runs the local browser auth flow (`src/acp/auth-server.ts`) and resolves once a valid key is stored                                      |
-| `session/prompt` | Streams a `chat.completions.stream()` call, forwarding `agent_message_chunk` updates as text arrives; drives the tool-calling loop below |
-| `session/cancel` | Aborts the in-flight Nova AI request via `AbortController`                                                                               |
-| `nes/*`          | Provides ACP Next Edit Suggestions with versioned editor buffers, rich context, cancellation, and accept/reject lifecycle                  |
-| `background/*`   | Custom extension methods for background prompt and terminal jobs; see below                                                              |
+| ACP method            | Behavior                                                                                                                                 |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `initialize`          | Returns protocol version + the `nova-api-key` agent auth method                                                                          |
+| `session/new`         | Allocates a session id with in-memory history                                                                                            |
+| `session/load`        | Restores a previously-persisted session and replays its turns as `*_message_chunk` notifications                                         |
+| `session/list`        | Lists stored sessions, optionally filtered by `cwd`                                                                                      |
+| `session/set_mode`    | Selects the advertised `agent`, `ask`, or `plan` interaction mode; permission modes are intentionally rejected                           |
+| `authenticate`        | Runs the local browser auth flow (`src/acp/auth-server.ts`) and resolves once a valid key is stored                                      |
+| `session/prompt`      | Streams a `chat.completions.stream()` call, forwarding `agent_message_chunk` updates as text arrives; drives the tool-calling loop below |
+| `session/cancel`      | Aborts the in-flight Nova AI request via `AbortController`                                                                               |
+| `session/checkpoints` | Custom extension listing append-only completed-turn checkpoints                                                                          |
+| `session/rewind`      | Custom extension rewinding one or more completed turns and clearing stale queued work                                                    |
+| `nes/*`               | Provides ACP Next Edit Suggestions with versioned editor buffers, rich context, cancellation, and accept/reject lifecycle                |
+| `queue/*`             | Custom extension for agent-owned enqueue/list/edit/remove/clear operations and queue notifications                                       |
+| `background/*`        | Custom extension methods for background prompt and terminal jobs; see below                                                              |
 
 Text, resource-link, embedded-text, and image prompt blocks are supported. Image
 blocks are converted to OpenAI-compatible multimodal chat content only when the
 selected model advertises image, vision, or multimodal input capability.
 
-Sessions are persisted to disk (`src/acp/sessions.ts`) so `session/load` can rehydrate history, and a title is auto-derived from the conversation.
+Sessions are persisted as append-only turn, compaction, and rewind records
+(`src/acp/sessions.ts`) so `session/load` can rehydrate history without
+rewriting the audit trail. A title is auto-derived from the conversation.
 
 ### Next Edit Suggestions
 
@@ -211,13 +249,14 @@ Built-in and session tools (`src/acp/tools/registry.ts` plus mode-scoped tools):
 | Tool                       | Mutating | Behavior                                                                                                                                       |
 | -------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
 | `ask_user`                 | No       | Uses ACP form elicitation for described single/multiple-choice questions, recommended options, and a final custom-answer choice                |
-| `enter_plan_mode`          | No       | One-way agent-to-plan transition; accepts no arguments, cannot change permissions, and disables later tools in the same turn                  |
+| `enter_plan_mode`          | No       | One-way agent-to-plan transition; accepts no arguments, cannot change permissions, and disables later tools in the same turn                   |
+| `update_plan`              | No       | Publishes and replaces the live ACP task checklist, including progress for work delegated to background agents                                 |
 | `inspect_environment`      | No       | Reports platform, ACP capabilities, safe ENV/PATH tooling, resolved commands, Docker/Compose usability, package manager, and package scripts   |
 | `list_directory`           | No       | Lists workspace files/directories with path bounds and result limits, gated by client `fs.readTextFile` capability                             |
 | `search_text`              | No       | Searches workspace text files with literal/regex modes and excludes common generated directories, gated by client `fs.readTextFile` capability |
 | `read_file`                | No       | Reads a file's contents, gated by client `fs.readTextFile` capability                                                                          |
 | `load_memory`              | No       | Loads one discovered global or workspace memory note on demand                                                                                 |
-| `save_memory`              | Yes      | Atomically creates or updates a bounded persistent memory note - requires permission                                                          |
+| `save_memory`              | Yes      | Atomically creates or updates a bounded persistent memory note - requires permission                                                           |
 | `run_package_script`       | Yes      | Runs a detected `package.json` script with npm/pnpm/yarn when a package manager and ACP terminal support are available - requires permission   |
 | `write_file`               | Yes      | Writes/overwrites a file, gated by client `fs.writeTextFile` capability — requires permission                                                  |
 | `run_command`              | Yes      | Runs a shell command in the session's `cwd` — requires permission                                                                              |
@@ -225,6 +264,7 @@ Built-in and session tools (`src/acp/tools/registry.ts` plus mode-scoped tools):
 | `start_background_agent`   | Yes      | Starts another Nova agent turn in the background and returns its job id - requires permission                                                  |
 | `list_background_jobs`     | No       | Lists background jobs for the current session                                                                                                  |
 | `read_background_output`   | No       | Reads stored agent output or current terminal output for a background job                                                                      |
+| `wait_for_background_jobs` | No       | Waits for all or the first selected background job and returns current statuses plus bounded output previews                                   |
 | `kill_background_job`      | Yes      | Stops a running background command or agent job - requires permission                                                                          |
 | `release_background_job`   | Yes      | Releases background job resources; terminal jobs are released through ACP - requires permission                                                |
 
@@ -272,6 +312,27 @@ printing child-process stderr into the terminal UI.
 Use `/mcp` in the TUI to inspect configured, connected, and failed servers.
 Environment and header values are deliberately hidden. See
 [`src/tui/README.md`](./src/tui/README.md#mcp) for the configuration format.
+
+### Prompt queue and rewind extensions
+
+The queue belongs to the ACP session rather than the TUI process. This keeps
+FIFO order, steering, edits, and queue visibility consistent for terminal,
+headless, and custom ACP clients.
+
+| Extension method      | Params                                                                                      | Behavior                                      |
+| --------------------- | ------------------------------------------------------------------------------------------- | --------------------------------------------- |
+| `queue/enqueue`       | `{ "sessionId": "...", "text": "...", "prompt": [...], "kind": "followup                    | steer", "front": false }`                     | Adds normalized prompt content |
+| `queue/list`          | `{ "sessionId": "..." }`                                                                    | Lists ordered queue metadata                  |
+| `queue/edit_begin`    | `{ "sessionId": "...", "id": "..." }`                                                       | Locks an entry against concurrent consumption |
+| `queue/update`        | `{ "sessionId": "...", "id": "...", "text": "...", "prompt": [...], "expectedVersion": 2 }` | Version-checks an in-place update             |
+| `queue/remove`        | `{ "sessionId": "...", "id": "..." }`                                                       | Removes one pending entry                     |
+| `queue/clear`         | `{ "sessionId": "..." }`                                                                    | Removes all pending entries                   |
+| `session/checkpoints` | `{ "sessionId": "..." }`                                                                    | Lists completed turns available for rewind    |
+| `session/rewind`      | `{ "sessionId": "...", "turns": 1 }`                                                        | Rewinds history and clears queued work        |
+
+Queue changes emit `queue/changed`; rewinds emit `session/rewound`. Context
+compaction is a checkpoint boundary because older messages are replaced by a
+summary.
 
 ### Background jobs
 

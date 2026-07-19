@@ -120,6 +120,7 @@ test("TUI ACP client resolves standard form elicitation through pending question
 function state(): UIState {
   return {
     messages: [],
+    plan: [],
     pendingPermission: null,
     pendingQuestion: null,
     inputHistory: [],

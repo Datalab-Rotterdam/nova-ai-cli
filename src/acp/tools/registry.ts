@@ -6,6 +6,7 @@ import {
   releaseBackgroundJobTool,
   startBackgroundAgentTool,
   startBackgroundCommandTool,
+  waitForBackgroundJobsTool,
 } from "./background.js";
 import { askUserTool } from "./ask-user.js";
 import { editFileTool } from "./edit-file.js";
@@ -33,6 +34,7 @@ const TOOLS: ToolDefinition[] = [
   startBackgroundAgentTool,
   listBackgroundJobsTool,
   readBackgroundOutputTool,
+  waitForBackgroundJobsTool,
   killBackgroundJobTool,
   releaseBackgroundJobTool,
 ];

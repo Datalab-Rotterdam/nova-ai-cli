@@ -78,6 +78,7 @@ describe("availableTools", () => {
     assert.equal(withBackground.includes("start_background_agent"), true);
     assert.equal(withBackground.includes("list_background_jobs"), true);
     assert.equal(withBackground.includes("read_background_output"), true);
+    assert.equal(withBackground.includes("wait_for_background_jobs"), true);
     assert.equal(withBackground.includes("kill_background_job"), true);
     assert.equal(withBackground.includes("release_background_job"), true);
   });

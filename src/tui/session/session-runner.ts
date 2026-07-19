@@ -16,8 +16,10 @@ import type {
   OutputResponse,
 } from "../../acp/background.js";
 import type { StoredCredentials } from "../../acp/credentials.js";
+import type { PromptQueueEntryView } from "../../acp/prompt-queue.js";
 import { writeCredentials } from "../../acp/credentials.js";
 import { loadStoredSession } from "../../acp/sessions.js";
+import type { SessionCheckpoint } from "../../acp/sessions.js";
 import { discoverSkills } from "../../acp/skills.js";
 import { chatContentToText } from "../../core/chat-content.js";
 import {
@@ -63,7 +65,9 @@ const RESTORED_TOOL_METADATA: Record<string, RestoredToolMetadata> = {
   load_memory: { kind: "read", mutating: false },
   list_background_jobs: { kind: "read", mutating: false },
   read_background_output: { kind: "read", mutating: false },
+  wait_for_background_jobs: { kind: "think", mutating: false },
   ask_user: { kind: "think", mutating: false },
+  update_plan: { kind: "think", mutating: false },
   enter_plan_mode: { kind: "switch_mode", mutating: false },
   write_file: { kind: "edit", mutating: true },
   edit_file: { kind: "edit", mutating: true },
@@ -120,7 +124,9 @@ export function restoreSessionMessages(messages: ChatMessage[]): UIMessage[] {
           output: null,
           diff: null,
         };
-        restored.push({ id: uid(), role: "tool", call: pendingTool });
+        if (toolCall.name !== "update_plan") {
+          restored.push({ id: uid(), role: "tool", call: pendingTool });
+        }
       }
       continue;
     }
@@ -180,15 +186,15 @@ export type SkillSessionStatus = {
   path: string;
 };
 
-type QueuedPrompt = {
-  id: string;
-  text: string;
+type QueuedPromptAttachments = {
   images: PromptImageAttachment[];
   pastes: PromptPasteAttachment[];
-  kind: "steer" | "followup";
 };
 
-export type QueuedMessageEntry = Pick<QueuedPrompt, "id" | "text" | "kind">;
+export type QueuedMessageEntry = Pick<
+  PromptQueueEntryView,
+  "id" | "text" | "kind"
+>;
 
 export class SessionRunner {
   sessionId: string;
@@ -214,7 +220,10 @@ export class SessionRunner {
   private promptActive = false;
   private readonly completedBackgroundAgentJobs = new Set<string>();
   private handoffActive = false;
-  private readonly queue: QueuedPrompt[] = [];
+  private readonly queuedAttachments = new Map<
+    string,
+    QueuedPromptAttachments
+  >();
   private editingQueuedMessageId: string | null = null;
   private readonly imageSupportByModel = new Map<string, boolean>();
   private contextWindow: number | null = null;
@@ -265,7 +274,7 @@ export class SessionRunner {
 
     const previousSessionId = this.agentSessionLoaded ? this.sessionId : null;
     if (previousSessionId) this.agent.cancel({ sessionId: previousSessionId });
-    this.queue.length = 0;
+    this.queuedAttachments.clear();
     this.editingQueuedMessageId = null;
     this.sessionId = stored.sessionId;
     this.cwd = stored.cwd;
@@ -284,6 +293,7 @@ export class SessionRunner {
 
     this.store.setState({
       messages,
+      plan: [],
       sessionId: this.sessionId,
       cwd: this.cwd,
       queuedCount: 0,
@@ -329,24 +339,38 @@ export class SessionRunner {
   }
 
   queuedMessages(): string[] {
-    return this.queue.map((prompt) => prompt.text);
+    return this.promptQueueEntries().map((prompt) => prompt.text);
   }
 
   queuedMessageEntries(): QueuedMessageEntry[] {
-    return this.queue.map(({ id, text, kind }) => ({ id, text, kind }));
+    return this.promptQueueEntries().map(({ id, text, kind }) => ({
+      id,
+      text,
+      kind,
+    }));
   }
 
   beginQueuedMessageEdit(id: string): boolean {
-    if (!this.queue.some((prompt) => prompt.id === id)) return false;
+    if (!this.agentSessionLoaded) return false;
+    const { updated } = this.agent.beginQueuedPromptEdit({
+      sessionId: this.sessionId,
+      id,
+    });
+    if (!updated) return false;
     this.editingQueuedMessageId = id;
+    this.syncQueueTranscript();
     this.store.setState({ statusLine: "Editing queued message." });
     return true;
   }
 
   updateQueuedMessage(id: string, text: string): boolean {
-    const prompt = this.queue.find((item) => item.id === id);
-    if (!prompt) return false;
-    prompt.text = text;
+    if (!this.agentSessionLoaded) return false;
+    const { updated } = this.agent.updateQueuedPrompt({
+      sessionId: this.sessionId,
+      id,
+      text,
+    });
+    if (!updated) return false;
     this.syncQueueTranscript();
     return true;
   }
@@ -357,8 +381,8 @@ export class SessionRunner {
     images: PromptImageAttachment[] = [],
     pastes: PromptPasteAttachment[] = [],
   ): boolean {
-    const index = this.queue.findIndex((prompt) => prompt.id === id);
-    if (index < 0) {
+    const entry = this.promptQueueEntries().find((prompt) => prompt.id === id);
+    if (!entry) {
       if (this.editingQueuedMessageId === id)
         this.editingQueuedMessageId = null;
       return false;
@@ -366,25 +390,38 @@ export class SessionRunner {
 
     const value = text.trim();
     if (!value) {
-      this.queue.splice(index, 1);
+      this.agent.removeQueuedPrompt({ sessionId: this.sessionId, id });
+      this.queuedAttachments.delete(id);
+      if (this.editingQueuedMessageId === id)
+        this.editingQueuedMessageId = null;
+      this.syncQueueTranscript("Queued message removed.");
+      if (!this.store.getState().busy && !this.promptActive)
+        void this.runNextQueuedPrompt();
     } else {
-      const prompt = this.queue[index]!;
-      prompt.text = value;
-      prompt.images = mergeReferencedImages(prompt.images, images, value);
-      prompt.pastes = mergeReferencedPastes(prompt.pastes, pastes, value);
+      const attachments = this.queuedAttachments.get(id) ?? {
+        images: [],
+        pastes: [],
+      };
+      this.queuedAttachments.set(id, {
+        images: mergeReferencedImages(attachments.images, images, value),
+        pastes: mergeReferencedPastes(attachments.pastes, pastes, value),
+      });
+      this.agent.updateQueuedPrompt({
+        sessionId: this.sessionId,
+        id,
+        text: value,
+      });
+      void this.finalizeQueuedMessageEdit(id, value);
     }
-    if (this.editingQueuedMessageId === id) this.editingQueuedMessageId = null;
-    this.syncQueueTranscript(
-      value ? "Queued message updated." : "Queued message removed.",
-    );
-    if (!this.store.getState().busy && !this.promptActive)
-      void this.runNextQueuedPrompt();
     return true;
   }
 
   clearQueuedMessages(): number {
-    const count = this.queue.length;
-    this.queue.length = 0;
+    if (!this.agentSessionLoaded) return 0;
+    const { cleared: count } = this.agent.clearPromptQueue({
+      sessionId: this.sessionId,
+    });
+    this.queuedAttachments.clear();
     this.editingQueuedMessageId = null;
     this.syncQueueTranscript(
       count
@@ -402,7 +439,7 @@ export class SessionRunner {
       return false;
     }
 
-    this.enqueueQueuedPrompt(value, [], [], "steer", true);
+    void this.enqueueQueuedPrompt(value, [], [], "steer", true);
     return true;
   }
 
@@ -483,12 +520,12 @@ export class SessionRunner {
   async startNewSession(): Promise<void> {
     const previousSessionId = this.agentSessionLoaded ? this.sessionId : null;
     this.cancel();
-    this.queue.length = 0;
+    this.queuedAttachments.clear();
     this.editingQueuedMessageId = null;
     this.title = null;
     this.promptActive = false;
     this.agentSessionLoaded = false;
-    this.store.setState({ contextUsage: null });
+    this.store.setState({ contextUsage: null, plan: [] });
     if (previousSessionId)
       await this.agent.closeSession({ sessionId: previousSessionId });
     this.sessionReady = this.createSession();
@@ -546,6 +583,35 @@ export class SessionRunner {
     } finally {
       this.store.setState({ busy: false });
     }
+  }
+
+  async rewind(turns = 1): Promise<{
+    removedCheckpoints: SessionCheckpoint[];
+    remainingCheckpoints: SessionCheckpoint[];
+  }> {
+    if (this.promptActive || this.store.getState().busy) {
+      throw new Error("Cancel the active request before rewinding.");
+    }
+    await this.ensureSession();
+    const result = await this.agent.rewindSession({
+      sessionId: this.sessionId,
+      turns,
+    });
+    const stored = loadStoredSession(this.sessionId);
+    if (!stored) throw new Error("Rewound session could not be reloaded.");
+
+    this.queuedAttachments.clear();
+    this.editingQueuedMessageId = null;
+    this.title = stored.title;
+    this.acpClient.resetStreaming();
+    this.store.setState({
+      messages: restoreSessionMessages(stored.messages),
+      plan: [],
+      queuedCount: 0,
+      statusLine: `Rewound ${result.removedCheckpoints.length} turn${result.removedCheckpoints.length === 1 ? "" : "s"}.`,
+    });
+    this.updateContextUsage();
+    return result;
   }
 
   async startBackgroundShell(command: string): Promise<BackgroundJobSummary> {
@@ -616,10 +682,19 @@ export class SessionRunner {
     const value = text.trim();
     if (!value) return;
     if (this.store.getState().busy || this.promptActive) {
-      this.enqueueQueuedPrompt(value, images, pastes, "followup");
+      await this.enqueueQueuedPrompt(value, images, pastes, "followup");
       return;
     }
 
+    await this.executePrompt(value, images, pastes);
+  }
+
+  private async executePrompt(
+    value: string,
+    images: PromptImageAttachment[] = [],
+    pastes: PromptPasteAttachment[] = [],
+    preparedPrompt?: acp.ContentBlock[],
+  ): Promise<void> {
     this.acpClient.appendUserMessage(value);
     this.acpClient.resetStreaming();
     this.promptActive = true;
@@ -628,17 +703,8 @@ export class SessionRunner {
 
     try {
       await this.ensureSession();
-      const modelText = await this.injectFileMentions(
-        expandPromptPastes(value, pastes),
-      );
-      const prompt: acp.ContentBlock[] = [
-        { type: "text", text: modelText },
-        ...images.map((image) => ({
-          type: "image" as const,
-          data: image.data,
-          mimeType: image.mimeType,
-        })),
-      ];
+      const prompt =
+        preparedPrompt ?? (await this.preparePrompt(value, images, pastes));
       const response = await this.agent.prompt(
         {
           sessionId: this.sessionId,
@@ -648,9 +714,6 @@ export class SessionRunner {
           },
         },
         this.acpContext,
-        {
-          takeSteeringMessages: () => this.takeSteeringMessages(),
-        },
       );
       if (response.stopReason === "cancelled") {
         pendingToolFailure = "Canceled.";
@@ -682,35 +745,63 @@ export class SessionRunner {
     await this.runNextQueuedPrompt();
   }
 
-  private enqueueQueuedPrompt(
+  private async enqueueQueuedPrompt(
     text: string,
     images: PromptImageAttachment[],
     pastes: PromptPasteAttachment[],
-    kind: QueuedPrompt["kind"],
+    kind: "steer" | "followup",
     front = false,
-  ): void {
-    const prompt: QueuedPrompt = {
-      id: `queue-${crypto.randomUUID()}`,
+  ): Promise<void> {
+    if (!this.agentSessionLoaded) await this.ensureSession();
+    const provisionalPrompt = this.promptBlocks(
+      expandPromptPastes(text, pastes),
+      images,
+    );
+    const { entry, entries } = this.agent.queuePrompt({
+      sessionId: this.sessionId,
       text,
+      prompt: provisionalPrompt,
+      kind,
+      front,
+    });
+    this.queuedAttachments.set(entry.id, {
       images: [...images],
       pastes: [...pastes],
-      kind,
-    };
-    if (front) this.queue.unshift(prompt);
-    else this.queue.push(prompt);
+    });
     this.syncQueueTranscript(
       kind === "steer"
-        ? `Steering at the next tool boundary · queued:${this.queue.length}`
-        : `Queued message ${this.queue.length}: ${summarizeQueueMessage(text)}`,
+        ? `Steering at the next tool boundary · queued:${entries.length}`
+        : `Queued message ${entries.length}: ${summarizeQueueMessage(text)}`,
     );
+    if (kind === "followup") {
+      const locked = this.agent.beginQueuedPromptEdit({
+        sessionId: this.sessionId,
+        id: entry.id,
+      });
+      const expectedVersion = locked.entries.find(
+        (candidate) => candidate.id === entry.id,
+      )?.version;
+      const prompt = await this.preparePrompt(text, images, pastes);
+      this.agent.updateQueuedPrompt({
+        sessionId: this.sessionId,
+        id: entry.id,
+        prompt,
+        editing: false,
+        expectedVersion,
+      });
+    }
+    if (!this.store.getState().busy && !this.promptActive) {
+      await this.runNextQueuedPrompt();
+    }
   }
 
   private syncQueueTranscript(statusLine?: string): void {
+    const entries = this.promptQueueEntries();
     this.store.setState((state) => {
       const transcript = state.messages.filter(
         (message) => !(message.role === "user" && message.queued),
       );
-      const queued: UIMessage[] = this.queue.map((prompt) => ({
+      const queued: UIMessage[] = entries.map((prompt) => ({
         id: prompt.id,
         role: "user",
         text: prompt.text,
@@ -718,51 +809,82 @@ export class SessionRunner {
       }));
       return {
         messages: [...transcript, ...queued],
-        queuedCount: this.queue.length,
+        queuedCount: entries.length,
         ...(statusLine !== undefined ? { statusLine } : {}),
       };
     });
   }
 
-  private async takeSteeringMessages(): Promise<ChatMessage[]> {
-    let count = 0;
-    for (const prompt of this.queue) {
-      if (
-        prompt.kind !== "steer" ||
-        prompt.id === this.editingQueuedMessageId
-      ) {
-        break;
-      }
-      count++;
-    }
-    if (count === 0) return [];
-
-    const steering = this.queue.splice(0, count);
-    this.syncQueueTranscript(
-      `Applied ${steering.length} steering message${steering.length === 1 ? "" : "s"} to the active turn.`,
-    );
-    this.acpClient.resetStreaming();
-
-    const messages: ChatMessage[] = [];
-    for (const prompt of steering) {
-      this.acpClient.appendUserMessage(prompt.text);
-      messages.push({
-        role: "user",
-        content: await this.injectFileMentions(
-          expandPromptPastes(prompt.text, prompt.pastes),
-        ),
-      });
-    }
-    return messages;
-  }
-
   private async runNextQueuedPrompt(): Promise<void> {
     if (this.store.getState().busy || this.promptActive) return;
-    const next = this.queue[0];
-    if (!next || next.id === this.editingQueuedMessageId) return;
-    this.queue.shift();
+    if (!this.agentSessionLoaded) return;
+    const next = this.agent.takeNextQueuedPrompt({
+      sessionId: this.sessionId,
+    });
+    if (!next) return;
+    this.queuedAttachments.delete(next.id);
+    if (this.editingQueuedMessageId === next.id)
+      this.editingQueuedMessageId = null;
     this.syncQueueTranscript();
-    await this.submit(next.text, next.images, next.pastes);
+    await this.executePrompt(next.text, [], [], next.prompt);
+  }
+
+  private async finalizeQueuedMessageEdit(
+    id: string,
+    text: string,
+  ): Promise<void> {
+    const attachments = this.queuedAttachments.get(id) ?? {
+      images: [],
+      pastes: [],
+    };
+    const prompt = await this.preparePrompt(
+      text,
+      attachments.images,
+      attachments.pastes,
+    );
+    const { updated } = this.agent.updateQueuedPrompt({
+      sessionId: this.sessionId,
+      id,
+      text,
+      prompt,
+      editing: false,
+    });
+    if (!updated) return;
+    if (this.editingQueuedMessageId === id) this.editingQueuedMessageId = null;
+    this.syncQueueTranscript("Queued message updated.");
+    if (!this.store.getState().busy && !this.promptActive) {
+      await this.runNextQueuedPrompt();
+    }
+  }
+
+  private promptQueueEntries(): PromptQueueEntryView[] {
+    if (!this.agentSessionLoaded) return [];
+    return this.agent.listPromptQueue({ sessionId: this.sessionId }).entries;
+  }
+
+  private async preparePrompt(
+    text: string,
+    images: PromptImageAttachment[],
+    pastes: PromptPasteAttachment[],
+  ): Promise<acp.ContentBlock[]> {
+    const modelText = await this.injectFileMentions(
+      expandPromptPastes(text, pastes),
+    );
+    return this.promptBlocks(modelText, images);
+  }
+
+  private promptBlocks(
+    text: string,
+    images: PromptImageAttachment[],
+  ): acp.ContentBlock[] {
+    return [
+      { type: "text", text },
+      ...images.map((image) => ({
+        type: "image" as const,
+        data: image.data,
+        mimeType: image.mimeType,
+      })),
+    ];
   }
 
   private async createSession(): Promise<void> {

@@ -13,6 +13,7 @@ import { DraftImageAttachments } from "../../src/tui/files/prompt-images.js";
 import { SessionRunner } from "../../src/tui/session/session-runner.js";
 import { createStore } from "../../src/tui/state/store.js";
 import type { UIState } from "../../src/tui/state/types.js";
+import { installFakeAgentQueue } from "./fake-agent-queue.js";
 
 class MemoryTerminal implements Terminal {
   columns = 50;
@@ -66,6 +67,7 @@ class MemoryTerminal implements Terminal {
 function initialState(): UIState {
   return {
     messages: [],
+    plan: [],
     pendingPermission: null,
     pendingQuestion: null,
     inputHistory: [],
@@ -136,6 +138,7 @@ test("live prompt submission remains unlocked and renders queued follow-ups", as
     { apiKey: "test", defaultModel: "test-model" },
     process.cwd(),
   );
+  installFakeAgentQueue(runner);
   const prompts: string[] = [];
   const errors: string[] = [];
   let markStarted!: () => void;

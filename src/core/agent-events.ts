@@ -4,6 +4,7 @@ import type { ToolDiff } from "../acp/tools/types.js";
 export type AgentEvent =
   | { type: "text"; text: string }
   | { type: "context_compacted"; removedMessages: number; keptMessages: number }
+  | { type: "context_compaction_failed"; reason: string }
   | {
       type: "tool_pending";
       toolCallId: string;

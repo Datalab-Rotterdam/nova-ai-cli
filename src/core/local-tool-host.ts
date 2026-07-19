@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { dirname } from "node:path";
 import type { RunCommandResult, ToolHost } from "./tool-host.js";
 
 const OUTPUT_CAP = 100_000;
@@ -14,6 +15,7 @@ export class LocalToolHost implements ToolHost {
 
   async writeTextFile(path: string, content: string, signal: AbortSignal): Promise<void> {
     signal.throwIfAborted();
+    await mkdir(dirname(path), { recursive: true });
     await writeFile(path, content, "utf8");
   }
 

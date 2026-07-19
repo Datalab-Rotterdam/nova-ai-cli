@@ -307,6 +307,58 @@ test("a maximum-context error compacts history and retries the interrupted round
   );
 });
 
+test("a failed reactive compaction surfaces the original context-limit error", async () => {
+  const overflow = Object.assign(
+    new Error(
+      "This model's maximum context length is 262144 tokens. However, your prompt contains at least 262145 input tokens. Please reduce the length of the input prompt. (parameter=input_tokens, value=262145)",
+    ),
+    { status: 400 },
+  );
+  const novaClient = {
+    chat: {
+      completions: {
+        stream: () => {
+          return (async function* () {
+            throw overflow;
+          })();
+        },
+      },
+    },
+  } as unknown as NovaAI;
+  const messages: ChatMessage[] = [
+    { role: "user", content: "old context" },
+    { role: "assistant", content: "old response" },
+    { role: "user", content: "current request" },
+  ];
+  const events: AgentEvent[] = [];
+
+  await assert.rejects(
+    runTurn(messages, new AbortController().signal, {
+      host: {} as ToolHost,
+      sessionId: "test-session",
+      cwd: ".",
+      environment: {} as ToolEnvironment,
+      tools: [],
+      requestPermission: async () => true,
+      compactContext: async () => {
+        throw new Error(
+          "Nova AI returned an empty context-compaction summary.",
+        );
+      },
+      emit: (event) => {
+        events.push(event);
+      },
+      novaClient,
+      model: "test-model",
+    }),
+    overflow,
+  );
+  assert.deepEqual(
+    events.map((event) => event.type),
+    ["context_compaction_failed"],
+  );
+});
+
 test("a least-privilege mode switch blocks every later tool in the same turn", async () => {
   const rounds = [
     ["<|tool_call>call:enter_plan_mode: {}<tool_call|>"],
@@ -779,6 +831,127 @@ test("the reported incomplete completion preamble is continued even with a stop 
   );
 });
 
+test("a stop-finished response cut off inside a Markdown table cell is continued", async () => {
+  const rounds = [
+    {
+      content:
+        "## Production assessment\n\n| Area | Severity | Issue |\n|---|---|---|\n| **OPA Policy Sec",
+      finishReason: "stop",
+    },
+    {
+      content:
+        "urity** | Medium | Verify the production policy. |\n\nAssessment complete.",
+      finishReason: "stop",
+    },
+  ];
+  const requests: ChatMessage[][] = [];
+  const novaClient = {
+    chat: {
+      completions: {
+        stream: (request: { messages: ChatMessage[] }) => {
+          requests.push(request.messages);
+          const round = rounds.shift()!;
+          return (async function* () {
+            yield {
+              type: "chunk",
+              data: {
+                choices: [
+                  {
+                    delta: { content: round.content },
+                    finish_reason: round.finishReason,
+                  },
+                ],
+              },
+            };
+            yield { type: "done" };
+          })();
+        },
+      },
+    },
+  } as unknown as NovaAI;
+  const events: AgentEvent[] = [];
+  const messages: ChatMessage[] = [
+    { role: "user", content: "Is this production ready?" },
+  ];
+
+  const result = await runTurn(messages, new AbortController().signal, {
+    host: {} as ToolHost,
+    sessionId: "test-session",
+    cwd: ".",
+    environment: {} as ToolEnvironment,
+    tools: [],
+    requestPermission: async () => true,
+    emit: (event) => {
+      events.push(event);
+    },
+    novaClient,
+    model: "test-model",
+  });
+
+  const expected =
+    "## Production assessment\n\n| Area | Severity | Issue |\n|---|---|---|\n| **OPA Policy Security** | Medium | Verify the production policy. |\n\nAssessment complete.";
+  assert.equal(result.stopReason, "end_turn");
+  assert.equal(requests.length, 2);
+  assert.match(
+    String(requests[1]?.at(-1)?.content),
+    /previous response was cut off/i,
+  );
+  assert.equal(
+    events
+      .filter((event) => event.type === "text")
+      .map((event) => event.text)
+      .join(""),
+    expected,
+  );
+  assert.equal(messages.at(-1)?.content, expected);
+});
+
+test("a complete Markdown table with bold cells remains a normal completion", async () => {
+  let requests = 0;
+  const content =
+    "| Area | Status |\n|---|---|\n| **Security** | **Ready** |\n\nAssessment complete.";
+  const novaClient = {
+    chat: {
+      completions: {
+        stream: () => {
+          requests++;
+          return (async function* () {
+            yield {
+              type: "chunk",
+              data: {
+                choices: [
+                  {
+                    delta: { content },
+                    finish_reason: "stop",
+                  },
+                ],
+              },
+            };
+            yield { type: "done" };
+          })();
+        },
+      },
+    },
+  } as unknown as NovaAI;
+  const messages: ChatMessage[] = [{ role: "user", content: "Audit it." }];
+
+  const result = await runTurn(messages, new AbortController().signal, {
+    host: {} as ToolHost,
+    sessionId: "test-session",
+    cwd: ".",
+    environment: {} as ToolEnvironment,
+    tools: [],
+    requestPermission: async () => true,
+    emit: () => {},
+    novaClient,
+    model: "test-model",
+  });
+
+  assert.equal(result.stopReason, "end_turn");
+  assert.equal(requests, 1);
+  assert.equal(messages.at(-1)?.content, content);
+});
+
 test("an interrupted tool fence is continued and never streamed as assistant text", async () => {
   const rounds = [
     [
@@ -1073,7 +1246,9 @@ test("invalid tool args get a correction round and never reach the tool", async 
 
 test("quoted scalar args are coerced before the tool executes", async () => {
   const rounds = [
-    ['```tool_call\n{"name":"search","args":{"query":"x","max":"3","deep":"true"}}\n```'],
+    [
+      '```tool_call\n{"name":"search","args":{"query":"x","max":"3","deep":"true"}}\n```',
+    ],
     ["Search finished."],
   ];
   const novaClient = {
@@ -1232,11 +1407,21 @@ test("proactive compaction fires before the first request when the estimate exce
     compactContext: async (currentMessages, error) => {
       compactCalls++;
       compactError = error;
-      currentMessages.splice(0, currentMessages.length, {
-        role: "system",
-        content: "[Conversation context compacted]",
-      }, { role: "user", content: "Summarize." });
-      return { compacted: true, history: [], removedMessages: 2, keptMessages: 1 };
+      currentMessages.splice(
+        0,
+        currentMessages.length,
+        {
+          role: "system",
+          content: "[Conversation context compacted]",
+        },
+        { role: "user", content: "Summarize." },
+      );
+      return {
+        compacted: true,
+        history: [],
+        removedMessages: 2,
+        keptMessages: 1,
+      };
     },
     contextWindow: 1_000,
     emit: (event) => {
@@ -1253,6 +1438,63 @@ test("proactive compaction fires before the first request when the estimate exce
   assert.equal(requests.length, 1);
   assert.match(String(requests[0]?.[0]?.content), /context compacted/);
   assert.ok(events.some((event) => event.type === "context_compacted"));
+});
+
+test("a failed proactive compaction does not fail the turn", async () => {
+  const rounds = [["All done."]];
+  const novaClient = {
+    chat: {
+      completions: {
+        stream: () => {
+          const chunks = rounds.shift() ?? [];
+          return (async function* () {
+            for (const content of chunks) {
+              yield {
+                type: "chunk",
+                data: { choices: [{ delta: { content } }] },
+              };
+            }
+          })();
+        },
+      },
+    },
+  } as unknown as NovaAI;
+
+  const bulky = "x".repeat(8_000);
+  const messages: ChatMessage[] = [
+    { role: "user", content: bulky },
+    { role: "assistant", content: bulky },
+    { role: "user", content: "Summarize." },
+  ];
+  const events: AgentEvent[] = [];
+
+  const result = await runTurn(messages, new AbortController().signal, {
+    host: {} as ToolHost,
+    sessionId: "test-session",
+    cwd: ".",
+    environment: {} as ToolEnvironment,
+    tools: [],
+    requestPermission: async () => true,
+    compactContext: async () => {
+      throw new Error("Nova AI returned an empty context-compaction summary.");
+    },
+    contextWindow: 1_000,
+    emit: (event) => {
+      events.push(event);
+    },
+    novaClient,
+    model: "test-model",
+  });
+
+  assert.equal(result.stopReason, "end_turn");
+  assert.deepEqual(
+    events.map((event) => event.type),
+    ["context_compaction_failed", "text"],
+  );
+  assert.equal(
+    events[0]?.type === "context_compaction_failed" ? events[0].reason : null,
+    "Nova AI returned an empty context-compaction summary.",
+  );
 });
 
 test("proactive compaction is skipped when usage stays under the threshold", async () => {
@@ -1288,7 +1530,12 @@ test("proactive compaction is skipped when usage stays under the threshold", asy
       requestPermission: async () => true,
       compactContext: async () => {
         compactCalls++;
-        return { compacted: false, history: [], removedMessages: 0, keptMessages: 1 };
+        return {
+          compacted: false,
+          history: [],
+          removedMessages: 0,
+          keptMessages: 1,
+        };
       },
       contextWindow: 100_000,
       emit: () => {},
@@ -1340,7 +1587,9 @@ test("multiple back-to-back tool calls execute sequentially with one combined re
     },
   };
   const events: AgentEvent[] = [];
-  const messages: ChatMessage[] = [{ role: "user", content: "Read both files." }];
+  const messages: ChatMessage[] = [
+    { role: "user", content: "Read both files." },
+  ];
 
   const result = await runTurn(messages, new AbortController().signal, {
     host: {} as ToolHost,
@@ -1365,8 +1614,14 @@ test("multiple back-to-back tool calls execute sequentially with one combined re
   const combined = requests[1]?.at(-1);
   assert.equal(combined?.role, "user");
   assert.match(String(combined?.content), /^Tool results \(2 calls\):/);
-  assert.match(String(combined?.content), /\[1\] read_file → ok\nTool result: contents of a\.ts/);
-  assert.match(String(combined?.content), /\[2\] read_file → ok\nTool result: contents of b\.ts/);
+  assert.match(
+    String(combined?.content),
+    /\[1\] read_file → ok\nTool result: contents of a\.ts/,
+  );
+  assert.match(
+    String(combined?.content),
+    /\[2\] read_file → ok\nTool result: contents of b\.ts/,
+  );
 });
 
 test("a single tool call keeps the legacy result message byte-identical", async () => {
@@ -1457,7 +1712,9 @@ test("a user rejection mid-batch skips every remaining call", async () => {
       return { output: "written" };
     },
   };
-  const messages: ChatMessage[] = [{ role: "user", content: "Write all three." }];
+  const messages: ChatMessage[] = [
+    { role: "user", content: "Write all three." },
+  ];
 
   await runTurn(messages, new AbortController().signal, {
     host: {} as ToolHost,
@@ -1477,8 +1734,14 @@ test("a user rejection mid-batch skips every remaining call", async () => {
   assert.equal(executions, 0);
   assert.equal(permissionRequests, 1);
   const combined = String(requests[1]?.at(-1)?.content);
-  assert.match(combined, /\[1\] write_file → rejected\nTool call rejected by user\./);
-  assert.match(combined, /\[2\] write_file → skipped\nSkipped: an earlier call in this batch was rejected/);
+  assert.match(
+    combined,
+    /\[1\] write_file → rejected\nTool call rejected by user\./,
+  );
+  assert.match(
+    combined,
+    /\[2\] write_file → skipped\nSkipped: an earlier call in this batch was rejected/,
+  );
   assert.match(combined, /\[3\] write_file → skipped/);
 });
 
@@ -1549,7 +1812,10 @@ test("a least-privilege switch first in a batch disables the rest of the batch",
   assert.equal(commandCalls, 0);
   const combined = String(requests[1]?.at(-1)?.content);
   assert.match(combined, /\[1\] enter_plan_mode → ok/);
-  assert.match(combined, /\[2\] run_command → error\nTool "run_command" is not available\./);
+  assert.match(
+    combined,
+    /\[2\] run_command → error\nTool "run_command" is not available\./,
+  );
 });
 
 test("calls beyond the per-round cap are rejected without executing", async () => {
@@ -1606,7 +1872,10 @@ test("calls beyond the per-round cap are rejected without executing", async () =
   assert.equal(executions, 8);
   const combined = String(requests[1]?.at(-1)?.content);
   assert.match(combined, /^Tool results \(9 calls\):/);
-  assert.match(combined, /\[9\] read_file → rejected\nRejected: too many tool calls in one turn \(maximum 8\)/);
+  assert.match(
+    combined,
+    /\[9\] read_file → rejected\nRejected: too many tool calls in one turn \(maximum 8\)/,
+  );
 });
 
 test("a malformed block among valid ones gets an inline error while the rest execute", async () => {
@@ -1665,6 +1934,9 @@ test("a malformed block among valid ones gets an inline error while the rest exe
   assert.deepEqual(executed, ["a.ts", "c.ts"]);
   const combined = String(requests[1]?.at(-1)?.content);
   assert.match(combined, /\[1\] read_file → ok/);
-  assert.match(combined, /\[2\] \(unparseable\) → error\nThis tool_call block could not be parsed as JSON/);
+  assert.match(
+    combined,
+    /\[2\] \(unparseable\) → error\nThis tool_call block could not be parsed as JSON/,
+  );
   assert.match(combined, /\[3\] read_file → ok/);
 });

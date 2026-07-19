@@ -28,6 +28,24 @@ test("workspace autocomplete returns @file suggestions without fd", async () => 
   assert.equal(quoted?.items[0]?.value, '@"docs/file with spaces.md"');
 });
 
+test("workspace autocomplete falls back to the in-memory scorer when fd yields nothing", async () => {
+  const provider = new WorkspaceAutocompleteProvider(
+    [],
+    "C:\\workspace",
+    ["src/components/MessageList.ts", "README.md"],
+    "definitely-nonexistent-fd-binary-xyz",
+  );
+
+  const suggestions = await provider.getSuggestions(
+    ["inspect @mess"],
+    0,
+    "inspect @mess".length,
+    { signal: new AbortController().signal },
+  );
+  assert.ok(suggestions);
+  assert.equal(suggestions.items[0]?.value, "@src/components/MessageList.ts");
+});
+
 test("workspace autocomplete preserves slash-command completion", async () => {
   const provider = new WorkspaceAutocompleteProvider(
     [{ name: "skills", description: "Inspect skills" }],

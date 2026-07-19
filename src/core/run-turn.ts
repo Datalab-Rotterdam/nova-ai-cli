@@ -148,12 +148,26 @@ export async function runTurn(
         deps.contextWindow * PROACTIVE_COMPACTION_THRESHOLD
     ) {
       proactiveCompactionUsed = true;
-      const result = await compactContext(messages, null);
-      if (result.compacted) {
+      try {
+        const result = await compactContext(messages, null);
+        if (result.compacted) {
+          await emit({
+            type: "context_compacted",
+            removedMessages: result.removedMessages,
+            keptMessages: result.keptMessages,
+          });
+        }
+      } catch (compactionError) {
+        // Proactive compaction is an optimization, not a requirement — a
+        // failed summary (e.g. an empty completion) must not fail the turn.
+        // The reactive path below stays available if the request actually
+        // overflows.
         await emit({
-          type: "context_compacted",
-          removedMessages: result.removedMessages,
-          keptMessages: result.keptMessages,
+          type: "context_compaction_failed",
+          reason:
+            compactionError instanceof Error
+              ? compactionError.message
+              : "Unknown compaction error.",
         });
       }
     }
@@ -291,9 +305,23 @@ export async function runTurn(
           compactContext &&
           isContextLimitError(error)
         ) {
-          const result = await compactContext(messages, error);
-          if (result.compacted) {
-            contextCompactionUsed = true;
+          contextCompactionUsed = true;
+          let result: ContextCompactionResult | null = null;
+          try {
+            result = await compactContext(messages, error);
+          } catch (compactionError) {
+            // The recovery attempt itself failed — surface the original
+            // context-limit error, not this secondary failure, since that's
+            // what actually explains the request outcome to the caller.
+            await emit({
+              type: "context_compaction_failed",
+              reason:
+                compactionError instanceof Error
+                  ? compactionError.message
+                  : "Unknown compaction error.",
+            });
+          }
+          if (result?.compacted) {
             await emit({
               type: "context_compacted",
               removedMessages: result.removedMessages,
@@ -384,7 +412,7 @@ export async function runTurn(
 
       const completedAssistant = continuationPrefix + cleanedBuffer;
       const truncation = completionTruncationReason(
-        cleanedBuffer,
+        completedAssistant,
         finishReason,
         streamDone,
       );
@@ -464,7 +492,8 @@ export async function runTurn(
 
     for (let index = 0; index < blocks.length; index++) {
       const block = blocks[index]!;
-      const blockName = block.kind === "call" ? block.call.name : "(unparseable)";
+      const blockName =
+        block.kind === "call" ? block.call.name : "(unparseable)";
 
       if (index >= MAX_TOOL_CALLS_PER_ROUND) {
         entries.push({
@@ -640,7 +669,8 @@ function formatBatchResults(
 ): string {
   if (entries.length === 1) return entries[0]!.body;
   const sections = entries.map(
-    (entry, index) => `[${index + 1}] ${entry.name} → ${entry.status}\n${entry.body}`,
+    (entry, index) =>
+      `[${index + 1}] ${entry.name} → ${entry.status}\n${entry.body}`,
   );
   return `Tool results (${entries.length} calls):\n${sections.join("\n")}`;
 }
@@ -673,6 +703,17 @@ function looksObviouslyIncomplete(text: string): boolean {
   const trimmed = text.trim();
   if (!trimmed) return true;
   if ((trimmed.match(/```/g)?.length ?? 0) % 2 !== 0) return true;
+  const lastLine = trimmed.split(/\r?\n/).at(-1)?.trim() ?? "";
+  if (lastLine.startsWith("|") && !lastLine.endsWith("|")) return true;
+
+  // A nominal `stop` can still arrive in the middle of formatted output. Check
+  // the accumulated response (not just the latest continuation suffix), while
+  // ignoring markers inside complete code blocks/spans and Markdown rules.
+  const markdown = trimmed
+    .replace(/```[\s\S]*?```/g, "")
+    .replace(/`[^`\r\n]*`/g, "")
+    .replace(/^\s*\*{3,}\s*$/gm, "");
+  if ((markdown.match(/\*\*/g)?.length ?? 0) % 2 !== 0) return true;
   if (/[:,\[(\-]$/.test(trimmed)) return true;
   return /\b(?:(?:i|we)(?:'ve| have) completed|and|or|but|because|including|the|an?|to|of|for|with|from|by)$/i.test(
     trimmed,

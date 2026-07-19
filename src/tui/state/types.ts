@@ -31,6 +31,12 @@ export type BackgroundJobView = {
   preview: string;
 };
 
+export type PlanEntryView = {
+  content: string;
+  priority: "high" | "medium" | "low";
+  status: "pending" | "in_progress" | "completed";
+};
+
 export type UIMessage =
   | {
       id: string;
@@ -84,6 +90,7 @@ export type { InteractionMode } from "../../core/interaction-modes.js";
 
 export type UIState = {
   messages: UIMessage[];
+  plan: PlanEntryView[];
   pendingPermission: PermissionRequestView | null;
   pendingQuestion: QuestionRequestView | null;
   inputHistory: string[];

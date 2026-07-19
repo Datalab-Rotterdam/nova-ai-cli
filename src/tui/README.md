@@ -9,7 +9,8 @@ This split is deliberate:
 
 - `state/` is the UI source of truth.
 - `session/tui-acp-client.ts` translates ACP requests and notifications.
-- `session/session-runner.ts` owns session and prompt lifecycle.
+- `session/session-runner.ts` coordinates TUI prompt lifecycle while the ACP
+  session owns queued prompts, ordering, and steering.
 - `pi-app/` contains presentation and keyboard interaction only.
 - `commands/` defines the UI-independent slash-command surface.
 
@@ -78,13 +79,20 @@ soon as the response settles. Canceled and unexpectedly failed requests
 mark every remaining pending tool as failed, and collapsed rows keep the final
 error reason visible.
 
+For multi-step work the agent uses `update_plan` to publish a standard ACP
+`plan` update. The transcript keeps the latest checklist visible with completed,
+active, and pending markers; the active marker animates on the existing render
+clock. Each update replaces the full checklist, so progress from the main agent
+or work it delegated to background agents appears in place instead of creating
+another transcript entry.
+
 | Key                              | Action                                                                                  |
 | -------------------------------- | --------------------------------------------------------------------------------------- |
 | Shift+Tab                        | Cycle agent / ask / plan mode                                                           |
 | Escape                           | Cancel active work                                                                      |
 | Ctrl+C twice                     | Cancel, then exit with a resume command                                                 |
 | Ctrl+O                           | Expand or collapse verbose inline tool/background details; activity blocks stay compact |
-| Ctrl+T                           | Inspect full tool call details                                                          |
+| Ctrl+T                           | Open the tool inspector                                                                 |
 | Ctrl+B                           | Inspect background shells and agents                                                    |
 | Ctrl+R                           | Switch session                                                                          |
 | Ctrl+P                           | Switch model                                                                            |
@@ -92,6 +100,11 @@ error reason visible.
 | Alt+V                            | Paste a clipboard image when supported by the selected model                            |
 | Mouse wheel / Shift+Page Up/Down | Scroll transcript                                                                       |
 | Ctrl+Home / Ctrl+End             | Jump to transcript top / bottom                                                         |
+
+The tool inspector is an accordion-style live view. Use the wheel or Up/Down
+to select a call; Enter, Space, Left, or Right to expand/collapse its arguments,
+diff, and output; and Page Up/Down to scroll long details. `/tools` opens the
+same inspector.
 
 Interaction modes and permission modes are separate security domains. The
 agent can call the argument-free `enter_plan_mode` tool to move itself from
@@ -105,8 +118,10 @@ The agent cannot change `permissionMode`. Only the user-facing Ctrl+K and
 `bypassAll` is never accepted as an ACP interaction mode.
 
 The same views are discoverable through `/tools`, `/agent`, `/shell`, `/mcp`,
-`/session` (`/sessions` is an alias), `/model`, and `/permission`; queue control uses `/queue` and
-`/steer`. `/skills` shows skills discovered from `.agents/skills`,
+`/session` (`/sessions` is an alias), `/model`, and `/permission`; queue control
+uses `/queue` and `/steer`. `/rewind [count]` removes completed turns from both
+the visible transcript and model history, and clears queued work so prompts
+created against the discarded state cannot run. `/skills` shows skills discovered from `.agents/skills`,
 `.claude/skills`, and `.codex/skills` in the user profile and workspace. The
 agent receives their metadata and loads matching instructions on demand with
 the safe `load_skill` tool.
@@ -120,6 +135,9 @@ preserving the recent exchange. The same compaction runs automatically when
 Nova returns a maximum-context or `input_tokens` overflow, after which the
 interrupted model round is retried once. Compacted history is persisted as a
 reset marker, so resuming the session does not reload discarded messages.
+Compaction also starts a new rewind-checkpoint epoch. Completed prompts after
+that point are stored as append-only turn records; `/rewind` appends a reset
+record without erasing the earlier audit log.
 
 The status row shows compact estimated context usage as `ctx:used/window`.
 `/usage` opens the bordered breakdown for system instructions, conversation,

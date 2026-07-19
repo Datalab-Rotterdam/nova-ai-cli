@@ -1,8 +1,13 @@
 ﻿import assert from "node:assert/strict";
-import { describe, it } from "node:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { after, describe, it } from "node:test";
 import * as acp from "@agentclientprotocol/sdk";
 import {
   contentBlocksToNovaContent,
+  contentBlocksToText,
+  frameSteeringPrompt,
   NovaAgent,
 } from "../../src/acp/agent.js";
 import {
@@ -10,6 +15,18 @@ import {
   deleteStoredSession,
   loadStoredSession,
 } from "../../src/acp/sessions.js";
+
+const testSessionsDir = mkdtempSync(join(tmpdir(), "nova-agent-sessions-"));
+process.env.NOVA_AI_CLI_SESSIONS_DIR = testSessionsDir;
+process.env.NOVA_AI_CLI_BACKGROUND_JOBS_DIR = join(
+  testSessionsDir,
+  "background-jobs",
+);
+after(() => {
+  delete process.env.NOVA_AI_CLI_SESSIONS_DIR;
+  delete process.env.NOVA_AI_CLI_BACKGROUND_JOBS_DIR;
+  rmSync(testSessionsDir, { recursive: true, force: true });
+});
 
 describe("NovaAgent.initialize", () => {
   it("advertises the protocol version, capabilities, and auth method", () => {
@@ -58,6 +75,58 @@ describe("ACP image prompts", () => {
   });
 });
 
+describe("frameSteeringPrompt", () => {
+  it("wraps the original blocks between a preamble and a continue-the-task instruction", () => {
+    const framed = frameSteeringPrompt([
+      { type: "text", text: "focus on the login flow instead" },
+    ]);
+    assert.equal(framed.length, 3);
+    assert.match(
+      contentBlocksToText(framed),
+      /^The user sent this message while you were still working on the current task:\n\n<steering_message>\nfocus on the login flow instead\n<\/steering_message>\n\nThis is guidance for the task already in progress, not a new unrelated request\. Incorporate it and continue\.$/,
+    );
+  });
+
+  it("keeps non-text blocks (e.g. images) inside the wrapper untouched", () => {
+    const image = { type: "image", mimeType: "image/png", data: "YWJj" } as const;
+    const framed = frameSteeringPrompt([image]);
+    assert.deepEqual(framed[1], image);
+  });
+});
+
+describe("NovaAgent.takeSteeringMessages", () => {
+  it("delivers steered prompts to the model framed as guidance for the active turn", async () => {
+    const agent = new NovaAgent();
+    const { sessionId } = await agent.newSession({ cwd: "/repo", mcpServers: [] });
+    const fakeClient = {
+      request: async () => ({}),
+      notify: async () => {},
+    } as never;
+
+    agent.queuePrompt(
+      {
+        sessionId,
+        text: "focus on the login flow instead",
+        prompt: [{ type: "text", text: "focus on the login flow instead" }],
+        kind: "steer",
+      },
+      fakeClient,
+    );
+
+    const messages = await agent.takeSteeringMessages({ sessionId }, fakeClient);
+    assert.equal(messages.length, 1);
+    assert.equal(messages[0]?.role, "user");
+    assert.match(
+      messages[0]?.content as string,
+      /^The user sent this message while you were still working on the current task:/,
+    );
+    assert.match(
+      messages[0]?.content as string,
+      /<steering_message>\nfocus on the login flow instead\n<\/steering_message>/,
+    );
+  });
+});
+
 describe("NovaAgent.newSession", () => {
   it("creates a session with a fresh id each time", async () => {
     const agent = new NovaAgent();
@@ -89,14 +158,8 @@ describe("NovaAgent.newSession", () => {
     });
 
     assert.ok(agent.contextUsage({ sessionId }).categories.tools > 0);
-    assert.deepEqual(
-      agent.setSessionMode({ sessionId, modeId: "plan" }),
-      {},
-    );
-    assert.equal(
-      agent.contextUsage({ sessionId }).categories.tools,
-      0,
-    );
+    assert.deepEqual(agent.setSessionMode({ sessionId, modeId: "plan" }), {});
+    assert.equal(agent.contextUsage({ sessionId }).categories.tools, 0);
     assert.throws(
       () => agent.setSessionMode({ sessionId, modeId: "bypassAll" }),
       /Unknown interaction mode: bypassAll/,
@@ -112,7 +175,10 @@ describe("NovaAgent.cancel", () => {
 
   it("aborts the pending prompt for a known session id", async () => {
     const agent = new NovaAgent();
-    const { sessionId } = await agent.newSession({ cwd: "/repo", mcpServers: [] });
+    const { sessionId } = await agent.newSession({
+      cwd: "/repo",
+      mcpServers: [],
+    });
 
     // Reach into prompt()'s session state via authenticate's failure path is
     // overkill here; instead drive a prompt that fails fast (no credentials)
@@ -125,7 +191,11 @@ describe("NovaAgent.loadSession", () => {
   it("throws when the stored session is not found", async () => {
     const agent = new NovaAgent();
     await assert.rejects(
-      () => agent.loadSession({ sessionId: "missing", cwd: "/repo", mcpServers: [] }, {} as acp.AgentContext),
+      () =>
+        agent.loadSession(
+          { sessionId: "missing", cwd: "/repo", mcpServers: [] },
+          {} as acp.AgentContext,
+        ),
       /not found/,
     );
   });
@@ -253,6 +323,50 @@ describe("NovaAgent.resumeSession", () => {
         }),
       /not found/,
     );
+  });
+});
+
+describe("NovaAgent.rewindSession", () => {
+  it("rewinds live history, clears queued work, and notifies ACP clients", async () => {
+    const agent = new NovaAgent();
+    const sessionId = `test-agent-rewind-${crypto.randomUUID()}`;
+    appendSessionTurn(sessionId, { cwd: "/repo", title: "first" }, [
+      { role: "user", content: "first" },
+      { role: "assistant", content: "one" },
+    ]);
+    appendSessionTurn(sessionId, { cwd: "/repo", title: "first" }, [
+      { role: "user", content: "second" },
+      { role: "assistant", content: "two" },
+    ]);
+    await agent.resumeSession({ sessionId, cwd: "/repo", mcpServers: [] });
+    agent.queuePrompt({
+      sessionId,
+      text: "queued",
+      prompt: [{ type: "text", text: "queued" }],
+    });
+    const notifications: string[] = [];
+    const client = {
+      notify: async (method: string) => {
+        notifications.push(method);
+      },
+      request: async () => ({}),
+    } as unknown as acp.AgentContext;
+
+    const result = await agent.rewindSession({ sessionId }, client);
+
+    assert.equal(result.messageCount, 2);
+    assert.deepEqual(
+      result.removedCheckpoints.map((checkpoint) => checkpoint.userText),
+      ["second"],
+    );
+    assert.deepEqual(agent.listPromptQueue({ sessionId }).entries, []);
+    assert.deepEqual(notifications, ["queue/changed", "session/rewound"]);
+    assert.equal(
+      agent.listSessionCheckpoints({ sessionId }).checkpoints.length,
+      1,
+    );
+    await agent.closeSession({ sessionId });
+    deleteStoredSession(sessionId);
   });
 });
 
@@ -425,7 +539,9 @@ describe("NovaAgent.nes", () => {
         client,
       );
 
-      assert.ok(requestedPath.replace(/\\/g, "/").endsWith("C:/workspace/a.ts"));
+      assert.ok(
+        requestedPath.replace(/\\/g, "/").endsWith("C:/workspace/a.ts"),
+      );
       assert.equal(requestBodies[0]?.model, "test-nes-model");
       assert.equal(response.suggestions.length, 1);
       assert.equal(response.suggestions[0]?.kind, "edit");
@@ -511,7 +627,10 @@ describe("NovaAgent background prompt isolation", () => {
   }): { captured: CapturedRequest[]; restore: () => void } {
     const captured: CapturedRequest[] = [];
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    globalThis.fetch = (async (
+      input: RequestInfo | URL,
+      init?: RequestInit,
+    ) => {
       const url = String(input);
       const rawBody = typeof init?.body === "string" ? init.body : null;
       captured.push({ url, body: rawBody ? JSON.parse(rawBody) : null });
@@ -564,8 +683,14 @@ describe("NovaAgent background prompt isolation", () => {
     const stub = installFetchStub({ chatText: () => "Background done." });
     try {
       const agent = new NovaAgent();
-      agent.initialize({ protocolVersion: acp.PROTOCOL_VERSION, clientCapabilities: {} });
-      const { sessionId } = await agent.newSession({ cwd: "/repo", mcpServers: [] });
+      agent.initialize({
+        protocolVersion: acp.PROTOCOL_VERSION,
+        clientCapabilities: {},
+      });
+      const { sessionId } = await agent.newSession({
+        cwd: "/repo",
+        mcpServers: [],
+      });
       await agent.setSessionConfigOption({
         sessionId,
         configId: "model",
@@ -601,8 +726,14 @@ describe("NovaAgent background prompt isolation", () => {
     });
     try {
       const agent = new NovaAgent();
-      agent.initialize({ protocolVersion: acp.PROTOCOL_VERSION, clientCapabilities: {} });
-      const { sessionId } = await agent.newSession({ cwd: "/repo", mcpServers: [] });
+      agent.initialize({
+        protocolVersion: acp.PROTOCOL_VERSION,
+        clientCapabilities: {},
+      });
+      const { sessionId } = await agent.newSession({
+        cwd: "/repo",
+        mcpServers: [],
+      });
 
       await assert.rejects(
         agent.startBackgroundPrompt(
@@ -636,8 +767,14 @@ describe("NovaAgent background prompt isolation", () => {
     const stub = installFetchStub({ chatText: () => reply });
     try {
       const agent = new NovaAgent();
-      agent.initialize({ protocolVersion: acp.PROTOCOL_VERSION, clientCapabilities: {} });
-      const { sessionId } = await agent.newSession({ cwd: "/repo", mcpServers: [] });
+      agent.initialize({
+        protocolVersion: acp.PROTOCOL_VERSION,
+        clientCapabilities: {},
+      });
+      const { sessionId } = await agent.newSession({
+        cwd: "/repo",
+        mcpServers: [],
+      });
 
       const { job } = await agent.startBackgroundPrompt(
         { sessionId, prompt: [{ type: "text", text: "audit dependencies" }] },
@@ -663,7 +800,9 @@ describe("NovaAgent background prompt isolation", () => {
         role: string;
         content: unknown;
       }>;
-      const contents = requestMessages.map((message) => String(message.content));
+      const contents = requestMessages.map((message) =>
+        String(message.content),
+      );
       const handoffIndex = contents.findIndex((content) =>
         content.includes("[Background agent job"),
       );
@@ -672,7 +811,10 @@ describe("NovaAgent background prompt isolation", () => {
       );
       assert.ok(handoffIndex !== -1, "handoff note missing from the request");
       assert.ok(contents[handoffIndex].includes("BG RESULT"));
-      assert.ok(handoffIndex < userIndex, "handoff note must precede the user turn");
+      assert.ok(
+        handoffIndex < userIndex,
+        "handoff note must precede the user turn",
+      );
       // The background job's own prompt stays out of foreground history as a
       // standalone message (its text still appears inside the handoff note's
       // job title).
@@ -703,4 +845,3 @@ describe("NovaAgent background prompt isolation", () => {
     }
   });
 });
-

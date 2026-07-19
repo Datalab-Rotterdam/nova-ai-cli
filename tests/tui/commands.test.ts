@@ -38,6 +38,37 @@ test("/usage opens the context usage inspector", async () => {
   assert.equal(opened, 1);
 });
 
+test("/rewind validates the turn count and reports removed checkpoints", async () => {
+  const output: string[] = [];
+  const calls: number[] = [];
+  const command = builtinCommands.find((entry) => entry.name === "rewind");
+  assert.ok(command);
+  const context = {
+    rewind: async (turns = 1) => {
+      calls.push(turns);
+      return {
+        removedCheckpoints: [
+          {
+            checkpointId: "checkpoint",
+            createdAt: "2026-07-18T00:00:00Z",
+            userText: "change the renderer",
+            messageCount: 2,
+          },
+        ],
+        remainingCheckpoints: [],
+      };
+    },
+    print: (text: string) => output.push(text),
+  } as unknown as SlashCommandContext;
+
+  await command.run(context, "2");
+  await command.run(context, "zero");
+
+  assert.deepEqual(calls, [2]);
+  assert.match(output[0] ?? "", /change the renderer/);
+  assert.equal(output[1], "Usage: /rewind [positive-turn-count]");
+});
+
 test("/session and /sessions open the same session picker", async () => {
   let opened = 0;
   const context = {

@@ -37,6 +37,25 @@ export const builtinCommands: SlashCommand[] = [
     },
   },
   {
+    name: "rewind",
+    description: "Rewind completed conversation turns (/rewind [count])",
+    async run(ctx, args) {
+      const value = args.trim();
+      const turns = value ? Number(value) : 1;
+      if (!Number.isSafeInteger(turns) || turns < 1) {
+        ctx.print("Usage: /rewind [positive-turn-count]");
+        return;
+      }
+      const result = await ctx.rewind(turns);
+      const labels = result.removedCheckpoints
+        .map((checkpoint) => checkpoint.userText)
+        .join(" | ");
+      ctx.print(
+        `Rewound ${result.removedCheckpoints.length} turn${result.removedCheckpoints.length === 1 ? "" : "s"}${labels ? `: ${labels}` : "."}`,
+      );
+    },
+  },
+  {
     name: "resume",
     description: "Resume the latest session, or /resume <session-id>",
     run(ctx, args) {
@@ -148,8 +167,7 @@ export const builtinCommands: SlashCommand[] = [
   },
   {
     name: "queue",
-    description:
-      "Inspect, add to, or clear the message queue (/queue [clear|message])",
+    description: "Inspect or clear the message queue (/queue [clear])",
     run(ctx, args) {
       const value = args.trim();
       if (value === "clear") {
@@ -157,7 +175,9 @@ export const builtinCommands: SlashCommand[] = [
         return;
       }
       if (value) {
-        ctx.queueMessage(value);
+        ctx.print(
+          "Usage: /queue [clear]. Submit text directly to queue it while the model is working.",
+        );
         return;
       }
       const queued = ctx.queuedMessages();

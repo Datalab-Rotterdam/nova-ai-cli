@@ -59,8 +59,12 @@ import {
   deleteStoredSession,
   deriveTitle,
   forkStoredSession,
+  listSessionCheckpoints as listStoredSessionCheckpoints,
   listStoredSessions,
   loadStoredSession,
+  rewindStoredSession,
+  type RewindSessionParams,
+  type SessionIdParams,
 } from "./sessions.js";
 import {
   buildProviderInfos,
@@ -86,6 +90,7 @@ import {
 } from "./nes.js";
 import { availableTools, buildToolsSystemPrompt } from "./tools/index.js";
 import { createEnterPlanModeTool } from "./tools/enter-plan-mode.js";
+import { createUpdatePlanTool } from "./tools/update-plan.js";
 import type { ToolDefinition } from "./tools/types.js";
 import { sessionModeState } from "./session-modes.js";
 import {
@@ -101,11 +106,21 @@ import type {
   StartPromptParams,
   StartTerminalParams,
 } from "./background.js";
+import {
+  PromptQueue,
+  type EnqueuePromptParams,
+  type PromptQueueEntry,
+  type PromptQueueEntryView,
+  type QueueEntryParams,
+  type QueueSessionParams,
+  type UpdateQueuedPromptParams,
+} from "./prompt-queue.js";
 
 const AUTH_METHOD_ID = "nova-api-key";
 
 type Session = {
   pendingPrompt: AbortController | null;
+  promptQueue: PromptQueue;
   cwd: string;
   history: ChatMessage[];
   /**
@@ -127,6 +142,7 @@ type Session = {
 };
 
 export type PromptRuntimeOptions = {
+  /** @deprecated Queue steering through queue/enqueue or queuePrompt instead. */
   takeSteeringMessages?(): ChatMessage[] | Promise<ChatMessage[]>;
 };
 
@@ -211,6 +227,7 @@ export class NovaAgent {
     const memory = discoverMemories(params.cwd);
     this.sessions.set(sessionId, {
       pendingPrompt: null,
+      promptQueue: new PromptQueue(),
       cwd: params.cwd,
       history: [],
       pendingBackgroundHandoffs: [],
@@ -264,6 +281,7 @@ export class NovaAgent {
     const memory = discoverMemories(params.cwd);
     this.sessions.set(sessionId, {
       pendingPrompt: null,
+      promptQueue: new PromptQueue(),
       cwd: params.cwd,
       history,
       pendingBackgroundHandoffs: [],
@@ -344,6 +362,50 @@ export class NovaAgent {
       updatedAt: s.updatedAt,
     }));
     return { sessions };
+  }
+
+  listSessionCheckpoints(params: SessionIdParams): {
+    checkpoints: ReturnType<typeof listStoredSessionCheckpoints>;
+  } {
+    this.requireSession(params.sessionId);
+    return { checkpoints: listStoredSessionCheckpoints(params.sessionId) };
+  }
+
+  async rewindSession(
+    params: RewindSessionParams,
+    client?: acp.AgentContext,
+  ): Promise<{
+    removedCheckpoints: ReturnType<typeof listStoredSessionCheckpoints>;
+    remainingCheckpoints: ReturnType<typeof listStoredSessionCheckpoints>;
+    messageCount: number;
+  }> {
+    const session = this.requireSession(params.sessionId);
+    if (session.pendingPrompt) {
+      throw new Error("Cannot rewind while a request is active.");
+    }
+    const result = rewindStoredSession(params.sessionId, params.turns ?? 1);
+    if (!result) {
+      throw new Error(`Session ${params.sessionId} has no persisted history.`);
+    }
+
+    session.history = result.session.messages;
+    session.title = result.session.title;
+    session.pendingBackgroundHandoffs.length = 0;
+    session.promptQueue.clear();
+    await this.notifyPromptQueue(params.sessionId, [], client);
+    await client
+      ?.notify("session/rewound", {
+        sessionId: params.sessionId,
+        removedCheckpoints: result.removedCheckpoints,
+        remainingCheckpoints: result.remainingCheckpoints,
+        messageCount: session.history.length,
+      })
+      .catch(() => {});
+    return {
+      removedCheckpoints: result.removedCheckpoints,
+      remainingCheckpoints: result.remainingCheckpoints,
+      messageCount: session.history.length,
+    };
   }
 
   setSessionMode(
@@ -680,6 +742,7 @@ export class NovaAgent {
   }): ContextUsage {
     const session = this.requireSession(params.sessionId);
     const baseTools = [
+      createUpdatePlanTool(() => {}),
       ...availableTools(this.clientCapabilities, session.environment, {
         background: true,
       }),
@@ -757,6 +820,128 @@ export class NovaAgent {
     return result;
   }
 
+  queuePrompt(
+    params: EnqueuePromptParams,
+    client?: acp.AgentContext,
+  ): { entry: PromptQueueEntryView; entries: PromptQueueEntryView[] } {
+    const session = this.requireSession(params.sessionId);
+    const entry = session.promptQueue.enqueue({
+      text: params.text,
+      prompt: params.prompt,
+      kind: params.kind,
+      front: params.front,
+    });
+    const entries = session.promptQueue.list();
+    this.notifyPromptQueue(params.sessionId, entries, client);
+    return { entry, entries };
+  }
+
+  listPromptQueue(params: QueueSessionParams): {
+    entries: PromptQueueEntryView[];
+  } {
+    return {
+      entries: this.requireSession(params.sessionId).promptQueue.list(),
+    };
+  }
+
+  beginQueuedPromptEdit(
+    params: QueueEntryParams,
+    client?: acp.AgentContext,
+  ): { updated: boolean; entries: PromptQueueEntryView[] } {
+    const session = this.requireSession(params.sessionId);
+    const updated = session.promptQueue.beginEdit(params.id);
+    const entries = session.promptQueue.list();
+    if (updated) this.notifyPromptQueue(params.sessionId, entries, client);
+    return { updated, entries };
+  }
+
+  updateQueuedPrompt(
+    params: UpdateQueuedPromptParams,
+    client?: acp.AgentContext,
+  ): { updated: boolean; entries: PromptQueueEntryView[] } {
+    const session = this.requireSession(params.sessionId);
+    const updated = session.promptQueue.update(params.id, {
+      text: params.text,
+      prompt: params.prompt,
+      editing: params.editing,
+      expectedVersion: params.expectedVersion,
+    });
+    const entries = session.promptQueue.list();
+    if (updated) this.notifyPromptQueue(params.sessionId, entries, client);
+    return { updated, entries };
+  }
+
+  removeQueuedPrompt(
+    params: QueueEntryParams,
+    client?: acp.AgentContext,
+  ): { removed: boolean; entries: PromptQueueEntryView[] } {
+    const session = this.requireSession(params.sessionId);
+    const removed = session.promptQueue.remove(params.id);
+    const entries = session.promptQueue.list();
+    if (removed) this.notifyPromptQueue(params.sessionId, entries, client);
+    return { removed, entries };
+  }
+
+  clearPromptQueue(
+    params: QueueSessionParams,
+    client?: acp.AgentContext,
+  ): { cleared: number; entries: PromptQueueEntryView[] } {
+    const session = this.requireSession(params.sessionId);
+    const cleared = session.promptQueue.clear();
+    const entries = session.promptQueue.list();
+    if (cleared) this.notifyPromptQueue(params.sessionId, entries, client);
+    return { cleared, entries };
+  }
+
+  takeNextQueuedPrompt(
+    params: QueueSessionParams,
+    client?: acp.AgentContext,
+  ): PromptQueueEntry | null {
+    const session = this.requireSession(params.sessionId);
+    const entry = session.promptQueue.takeNext();
+    if (entry) {
+      this.notifyPromptQueue(
+        params.sessionId,
+        session.promptQueue.list(),
+        client,
+      );
+    }
+    return entry;
+  }
+
+  async takeSteeringMessages(
+    params: QueueSessionParams,
+    client: acp.AgentContext,
+  ): Promise<ChatMessage[]> {
+    const session = this.requireSession(params.sessionId);
+    const steering = session.promptQueue.takeSteering();
+    if (!steering.length) return [];
+
+    await this.notifyPromptQueue(
+      params.sessionId,
+      session.promptQueue.list(),
+      client,
+    );
+    for (const entry of steering) {
+      await client
+        .notify("session/update", {
+          sessionId: params.sessionId,
+          update: {
+            sessionUpdate: "user_message_chunk",
+            content: { type: "text", text: entry.text },
+          },
+        })
+        .catch(() => {
+          // Steering remains model-visible if the client disconnects between
+          // queue removal and transcript notification.
+        });
+    }
+    return steering.map((entry) => ({
+      role: "user" as const,
+      content: contentBlocksToNovaContent(frameSteeringPrompt(entry.prompt)),
+    }));
+  }
+
   async prompt(
     params: acp.PromptRequest,
     client: acp.AgentContext,
@@ -771,6 +956,7 @@ export class NovaAgent {
     if (!credentials) {
       throw acp.RequestError.authRequired();
     }
+    await notifyPlanUpdate(client, params.sessionId, []);
 
     session.pendingPrompt?.abort();
     const abortController = new AbortController();
@@ -798,6 +984,9 @@ export class NovaAgent {
     session.memory = discoverMemories(session.cwd);
     const background = this.createBackgroundToolApi(params.sessionId, client);
     const baseTools = [
+      createUpdatePlanTool((entries) =>
+        notifyPlanUpdate(client, params.sessionId, entries),
+      ),
       ...availableTools(this.clientCapabilities, session.environment, {
         background: true,
       }),
@@ -900,7 +1089,13 @@ export class NovaAgent {
           return compaction;
         },
         contextWindow,
-        takeSteeringMessages: runtime.takeSteeringMessages,
+        takeSteeringMessages: async () => [
+          ...(await this.takeSteeringMessages(
+            { sessionId: params.sessionId },
+            client,
+          )),
+          ...((await runtime.takeSteeringMessages?.()) ?? []),
+        ],
         emit,
         novaClient,
         model,
@@ -987,6 +1182,24 @@ export class NovaAgent {
       },
       list: () => this.backgroundJobs.list(sessionId),
       output: (jobId) => this.backgroundOutput({ jobId }, client),
+      wait: async (jobIds, options) => {
+        for (const jobId of jobIds) {
+          const job = this.backgroundJobs.get(jobId);
+          if (!job || job.sessionId !== sessionId) {
+            throw new Error(`Background job ${jobId} not found`);
+          }
+        }
+        const waited = await this.backgroundJobs.waitForJobs(jobIds, options);
+        const outputs = await Promise.all(
+          jobIds.map((jobId) => this.backgroundOutput({ jobId }, client)),
+        );
+        return {
+          timedOut: waited.timedOut,
+          returnWhen: options.returnWhen,
+          jobs: outputs.map((result) => result.job),
+          outputs,
+        };
+      },
       kill: async (jobId) => {
         const response = await this.killBackgroundJob({ jobId }, client);
         return response.job;
@@ -1162,6 +1375,18 @@ export class NovaAgent {
     return session;
   }
 
+  private notifyPromptQueue(
+    sessionId: string,
+    entries: PromptQueueEntryView[],
+    client?: acp.AgentContext,
+  ): Promise<void> {
+    if (!client) return Promise.resolve();
+    return client.notify("queue/changed", { sessionId, entries }).catch(() => {
+      // Queue ownership and ordering remain valid if a client disconnects or
+      // does not understand this Nova extension notification.
+    });
+  }
+
   private async watchTerminalJob(
     client: acp.AgentContext,
     jobId: string,
@@ -1295,7 +1520,8 @@ export class NovaAgent {
       // into history and the session file. If the process exits first, the
       // note is lost from the session but the full transcript survives in
       // the job artifact (read_background_output).
-      const title = this.backgroundJobs.get(jobId)?.title ?? "Background prompt";
+      const title =
+        this.backgroundJobs.get(jobId)?.title ?? "Background prompt";
       const finalAssistant = [...turnMessages]
         .reverse()
         .find((message) => message.role === "assistant");
@@ -1345,6 +1571,23 @@ export class NovaAgent {
   }
 }
 
+async function notifyPlanUpdate(
+  client: acp.AgentContext,
+  sessionId: string,
+  entries: acp.PlanEntry[],
+): Promise<void> {
+  await client
+    .notify("session/update", {
+      sessionId,
+      update: { sessionUpdate: "plan", entries },
+    })
+    .catch(() => {
+      // Plan state is presentation-only; a disconnected client must not stop
+      // the agent's actual work or turn a successful checklist update into a
+      // failed tool call.
+    });
+}
+
 async function emitToAcp(
   client: acp.AgentContext,
   sessionId: string,
@@ -1368,6 +1611,18 @@ async function emitToAcp(
           content: {
             type: "text",
             text: `Context compacted automatically: summarized ${event.removedMessages} older messages and kept ${event.keptMessages} recent messages.`,
+          },
+        },
+      });
+      return;
+    case "context_compaction_failed":
+      await client.notify("session/update", {
+        sessionId,
+        update: {
+          sessionUpdate: "agent_thought_chunk",
+          content: {
+            type: "text",
+            text: `Automatic context compaction failed (${event.reason}); continuing without it.`,
           },
         },
       });
@@ -1471,6 +1726,27 @@ export function contentBlocksToText(
     })
     .filter(Boolean)
     .join("\n");
+}
+
+/**
+ * Wraps a steered prompt so the model treats it as guidance for the turn
+ * already in progress rather than an unrelated new request — without this,
+ * a raw user-role message dropped mid-loop reads like a fresh top-level ask.
+ */
+export function frameSteeringPrompt(
+  prompt: acp.ContentBlock[],
+): acp.ContentBlock[] {
+  return [
+    {
+      type: "text",
+      text: "The user sent this message while you were still working on the current task:\n\n<steering_message>",
+    },
+    ...prompt,
+    {
+      type: "text",
+      text: "</steering_message>\n\nThis is guidance for the task already in progress, not a new unrelated request. Incorporate it and continue.",
+    },
+  ];
 }
 
 export function contentBlocksToNovaContent(

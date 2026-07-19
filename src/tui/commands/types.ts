@@ -5,6 +5,7 @@ import type {
 } from "../../acp/background.js";
 import type { ContextCompactionResult } from "../../core/context-compaction.js";
 import type { InteractionMode, PermissionMode } from "../state/types.js";
+import type { SessionCheckpoint } from "../../acp/sessions.js";
 
 export type SlashCommandContext = {
   print(text: string): void;
@@ -25,11 +26,14 @@ export type SlashCommandContext = {
   openMcpInspector(): void;
   openSkillInspector(): void;
   openUsageInspector(): void | Promise<void>;
-  queueMessage(message: string): void;
   steerMessage(message: string): boolean;
   queuedMessages(): string[];
   clearQueuedMessages(): number;
   compactContext(): Promise<ContextCompactionResult>;
+  rewind(turns?: number): Promise<{
+    removedCheckpoints: SessionCheckpoint[];
+    remainingCheckpoints: SessionCheckpoint[];
+  }>;
   listModels(): Promise<Array<{ id: string; name?: string | null }>>;
   startBackgroundShell(command: string): Promise<BackgroundJobSummary>;
   startBackgroundAgent(prompt: string): Promise<BackgroundJobSummary>;

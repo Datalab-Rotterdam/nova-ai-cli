@@ -1,11 +1,14 @@
 import type { ChatMessage, NovaAI } from "@datalabrotterdam/nova-sdk";
 import { chatContentToText } from "./chat-content.js";
 import { resolveModelMetadata } from "./model-capabilities.js";
+import { stripReasoningTags } from "./reasoning-tags.js";
 
 const DEFAULT_CONTEXT_WINDOW = 32_768;
 const MAX_RECENT_MESSAGES = 8;
 const MAX_SOURCE_CHARS = 180_000;
 const MIN_SOURCE_CHARS = 8_000;
+const MAX_SUMMARY_ATTEMPTS = 2;
+const MAX_SUMMARY_TOKENS = 8_192;
 
 export const COMPACTION_SUMMARY_PREFIX = "[Conversation context compacted]";
 
@@ -211,30 +214,38 @@ async function summarizeChunk(
   contextWindow: number,
   signal?: AbortSignal,
 ): Promise<string> {
-  const response = await novaClient.chat.completions.create(
-    {
-      model,
-      messages: [
-        {
-          role: "system",
-          content:
-            "Compact the supplied conversation into durable working context. Preserve user requirements, decisions, file paths, code changes, commands, errors, tool results, unresolved tasks, and current state. Remove repetition and conversational filler. Do not invent facts.",
-        },
-        { role: "user", content: source },
-      ],
-      temperature: 0.1,
-      max_tokens: Math.min(
-        2_048,
-        Math.max(512, Math.floor(contextWindow * 0.05)),
-      ),
-    },
-    { signal },
+  const baseBudget = Math.min(
+    MAX_SUMMARY_TOKENS,
+    Math.max(512, Math.floor(contextWindow * 0.05)),
   );
-  const content = response.choices[0]?.message.content;
-  if (typeof content !== "string" || !content.trim()) {
-    throw new Error("Nova AI returned an empty context-compaction summary.");
+
+  for (let attempt = 1; attempt <= MAX_SUMMARY_ATTEMPTS; attempt++) {
+    const response = await novaClient.chat.completions.create(
+      {
+        model,
+        messages: [
+          {
+            role: "system",
+            content:
+              "Compact the supplied conversation into durable working context. Preserve user requirements, decisions, file paths, code changes, commands, errors, tool results, unresolved tasks, and current state. Remove repetition and conversational filler. Do not invent facts. Respond with the summary text only.",
+          },
+          { role: "user", content: source },
+        ],
+        // A retry bumps temperature and widens the token budget — a reasoning
+        // model that burned its whole budget "thinking" (leaving nothing for
+        // the actual summary) reproduces the same empty result at identical
+        // settings, so a byte-identical retry never helps.
+        temperature: attempt === 1 ? 0.1 : 0.4,
+        max_tokens: Math.min(MAX_SUMMARY_TOKENS, baseBudget * attempt),
+      },
+      { signal },
+    );
+    const content = response.choices[0]?.message.content;
+    const visible =
+      typeof content === "string" ? stripReasoningTags(content).trim() : "";
+    if (visible) return visible;
   }
-  return content.trim();
+  throw new Error("Nova AI returned an empty context-compaction summary.");
 }
 
 function serializeMessage(message: ChatMessage): string {

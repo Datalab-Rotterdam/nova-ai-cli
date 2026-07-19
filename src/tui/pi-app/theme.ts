@@ -14,6 +14,8 @@ export const colors = {
   muted: chalk.hex("#94a3b8"),
   faint: chalk.hex("#64748b"),
   code: chalk.hex("#fcd34d"),
+  diffAddBg: chalk.bgHex("#1b3a24"),
+  diffRemoveBg: chalk.bgHex("#3d1f1f"),
 };
 
 export const selectListTheme: SelectListTheme = {

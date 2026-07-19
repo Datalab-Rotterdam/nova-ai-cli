@@ -1,5 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { dirname } from "node:path";
 import type * as acp from "@agentclientprotocol/sdk";
 import type {
   CreateTerminalRequest,
@@ -20,6 +21,7 @@ import type {
   WriteTextFileRequest,
 } from "@agentclientprotocol/sdk";
 import type { UserInputResponse } from "../../core/user-questions.js";
+import type { PromptQueueEntryView } from "../../acp/prompt-queue.js";
 import {
   isInteractionMode,
   type InteractionMode,
@@ -40,6 +42,7 @@ import {
 import type { Store } from "../state/store.js";
 import type {
   BackgroundJobView,
+  PlanEntryView,
   ToolCallView,
   ToolDiffView,
   UIMessage,
@@ -173,6 +176,7 @@ export class TuiAcpClient {
   }
 
   async writeTextFile(params: WriteTextFileRequest): Promise<void> {
+    await mkdir(dirname(params.path), { recursive: true });
     await writeFile(params.path, params.content, "utf8");
   }
 
@@ -347,6 +351,10 @@ export class TuiAcpClient {
     const update = params.update;
     switch (update.sessionUpdate) {
       case "user_message_chunk":
+        if (update.content.type === "text") {
+          this.resetStreaming();
+          this.appendUserMessage(update.content.text);
+        }
         return;
       case "agent_message_chunk":
         if (update.content.type === "text")
@@ -368,11 +376,23 @@ export class TuiAcpClient {
           this.onInteractionModeChange?.(update.currentModeId);
         }
         return;
+      case "plan":
+        this.store.setState({
+          plan: update.entries.map(
+            ({ content, priority, status }): PlanEntryView => ({
+              content,
+              priority,
+              status,
+            }),
+          ),
+        });
+        return;
       case "tool_call":
         // A tool call ends the preceding assistant text segment.  Keep the
         // rendered message, but explicitly settle it before beginning the
         // tool card; otherwise its streaming marker can animate forever.
         this.resetStreaming();
+        if (update.title === "update_plan") return;
         this.appendMessage({
           id: uid(),
           role: "tool",
@@ -418,6 +438,41 @@ export class TuiAcpClient {
     await this.onBackgroundLifecycle?.(event, job);
   }
 
+  queueChanged(params: unknown): void {
+    if (!params || typeof params !== "object") return;
+    const rawEntries =
+      "entries" in params && Array.isArray(params.entries)
+        ? params.entries
+        : [];
+    const entries = rawEntries.flatMap((value) => {
+      if (!value || typeof value !== "object") return [];
+      const entry = value as Partial<PromptQueueEntryView>;
+      if (
+        typeof entry.id !== "string" ||
+        typeof entry.text !== "string" ||
+        (entry.kind !== "steer" && entry.kind !== "followup")
+      ) {
+        return [];
+      }
+      return [{ id: entry.id, text: entry.text, kind: entry.kind }];
+    });
+    this.store.setState((state) => {
+      const transcript = state.messages.filter(
+        (message) => !(message.role === "user" && message.queued),
+      );
+      const queued: UIMessage[] = entries.map((entry) => ({
+        id: entry.id,
+        role: "user",
+        text: entry.text,
+        queued: entry.kind,
+      }));
+      return {
+        messages: [...transcript, ...queued],
+        queuedCount: queued.length,
+      };
+    });
+  }
+
   private async handleRequest(
     method: string,
     params?: unknown,
@@ -460,6 +515,8 @@ export class TuiAcpClient {
         return this.sessionUpdate(params as SessionNotification);
       case "background/update":
         return this.backgroundUpdate(params);
+      case "queue/changed":
+        return this.queueChanged(params);
       default:
         return;
     }

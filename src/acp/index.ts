@@ -7,6 +7,13 @@ import {
   parseStartPromptParams,
   parseStartTerminalParams,
 } from "./background.js";
+import {
+  parseEnqueuePromptParams,
+  parseQueueEntryParams,
+  parseQueueSessionParams,
+  parseUpdateQueuedPromptParams,
+} from "./prompt-queue.js";
+import { parseRewindSessionParams, parseSessionIdParams } from "./sessions.js";
 
 async function runAcp(...args: string[]): Promise<void> {
   const agentImpl = new NovaAgent();
@@ -28,6 +35,12 @@ async function runAcp(...args: string[]): Promise<void> {
     .onRequest("session/delete", (ctx) => agentImpl.deleteSession(ctx.params))
     .onRequest("session/fork", (ctx) => agentImpl.forkSession(ctx.params))
     .onRequest("session/resume", (ctx) => agentImpl.resumeSession(ctx.params))
+    .onRequest("session/checkpoints", parseSessionIdParams, (ctx) =>
+      agentImpl.listSessionCheckpoints(ctx.params),
+    )
+    .onRequest("session/rewind", parseRewindSessionParams, (ctx) =>
+      agentImpl.rewindSession(ctx.params, ctx.client),
+    )
     .onRequest("session/set_config_option", (ctx) =>
       agentImpl.setSessionConfigOption(ctx.params),
     )
@@ -62,6 +75,24 @@ async function runAcp(...args: string[]): Promise<void> {
     .onRequest("background/output", parseJobIdParams, (ctx) => agentImpl.backgroundOutput(ctx.params, ctx.client))
     .onRequest("background/kill", parseJobIdParams, (ctx) => agentImpl.killBackgroundJob(ctx.params, ctx.client))
     .onRequest("background/release", parseJobIdParams, (ctx) => agentImpl.releaseBackgroundJob(ctx.params, ctx.client))
+    .onRequest("queue/enqueue", parseEnqueuePromptParams, (ctx) =>
+      agentImpl.queuePrompt(ctx.params, ctx.client),
+    )
+    .onRequest("queue/list", parseQueueSessionParams, (ctx) =>
+      agentImpl.listPromptQueue(ctx.params),
+    )
+    .onRequest("queue/edit_begin", parseQueueEntryParams, (ctx) =>
+      agentImpl.beginQueuedPromptEdit(ctx.params, ctx.client),
+    )
+    .onRequest("queue/update", parseUpdateQueuedPromptParams, (ctx) =>
+      agentImpl.updateQueuedPrompt(ctx.params, ctx.client),
+    )
+    .onRequest("queue/remove", parseQueueEntryParams, (ctx) =>
+      agentImpl.removeQueuedPrompt(ctx.params, ctx.client),
+    )
+    .onRequest("queue/clear", parseQueueSessionParams, (ctx) =>
+      agentImpl.clearPromptQueue(ctx.params, ctx.client),
+    )
     .onNotification("session/cancel", (ctx) => agentImpl.cancel(ctx.params))
     .connect(stream);
 }

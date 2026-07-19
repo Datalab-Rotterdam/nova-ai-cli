@@ -8,6 +8,7 @@ import {
   ScrollPanel,
   SelectionDialog,
   StatusView,
+  ToolInspector,
   TranscriptView,
 } from "../../src/tui/pi-app/components.js";
 import { createStore } from "../../src/tui/state/store.js";
@@ -16,6 +17,7 @@ import type { UIState } from "../../src/tui/state/types.js";
 function state(): UIState {
   return {
     messages: [],
+    plan: [],
     pendingPermission: null,
     pendingQuestion: null,
     inputHistory: [],
@@ -116,6 +118,42 @@ test("elapsed working time formats compactly", () => {
   assert.equal(formatElapsedTime(12_999), "12s");
   assert.equal(formatElapsedTime(142_000), "2m 22s");
   assert.equal(formatElapsedTime(3_723_000), "1h 2m 3s");
+});
+
+test("live task checklist renders completed, active, and pending steps", () => {
+  const store = createStore<UIState>({
+    ...state(),
+    busy: true,
+    plan: [
+      {
+        content: "Inspect the request",
+        priority: "medium" as const,
+        status: "completed" as const,
+      },
+      {
+        content: "Implement the change",
+        priority: "medium" as const,
+        status: "in_progress" as const,
+      },
+      {
+        content: "Run validation",
+        priority: "medium" as const,
+        status: "pending" as const,
+      },
+    ],
+  });
+  const transcript = new TranscriptView(store);
+  transcript.sync();
+
+  const first = transcript.render(60).join("\n");
+  assert.match(first, /Tasks.*\(1\/3\)/);
+  assert.match(first, /\[✓\].*Inspect the request/);
+  assert.match(first, /\[✦\].*Implement the change/);
+  assert.match(first, /\[ \].*Run validation/);
+
+  assert.equal(transcript.advanceAnimation(), true);
+  const next = transcript.render(60).join("\n");
+  assert.match(next, /\[✧\].*Implement the change/);
 });
 
 test("Nova AI header is transcript content and scrolls with history", () => {
@@ -641,6 +679,131 @@ test("selection dialog overwrites a stable rectangle while scrolling", () => {
   assert.equal(wheeled.length, initial.length);
   assert.ok(wheeled.at(-1)?.includes("9/20"));
   assert.ok(renders >= 2);
+});
+
+test("tool inspector selects calls and expands or collapses details in place", () => {
+  let renders = 0;
+  let closed = false;
+  const identity = (text: string) => text;
+  const calls = [
+    {
+      toolCallId: "read-call",
+      name: "read_file",
+      kind: "read",
+      mutating: false,
+      args: { path: "src/index.ts" },
+      status: "completed" as const,
+      output: Array.from(
+        { length: 20 },
+        (_, index) => `line ${index + 1}`,
+      ).join("\n"),
+      diff: null,
+    },
+    {
+      toolCallId: "shell-call",
+      name: "run_command",
+      kind: "execute",
+      mutating: true,
+      args: { command: "npm test" },
+      status: "pending" as const,
+      output: "running",
+      diff: null,
+    },
+  ];
+  const inspector = new ToolInspector(
+    "Tool calls",
+    () => calls,
+    {
+      selectedPrefix: identity,
+      selectedText: identity,
+      description: identity,
+      scrollInfo: identity,
+      noMatch: identity,
+    },
+    () => 14,
+    () => renders++,
+    () => {
+      closed = true;
+    },
+  );
+
+  const collapsed = inspector.render(72);
+  assert.equal(collapsed.length, 14);
+  assert.ok(collapsed.every((line) => visibleWidth(line) === 72));
+  assert.ok(collapsed.some((line) => line.includes("read_file: src/index.ts")));
+  assert.ok(collapsed.some((line) => line.includes("1/2 | collapsed")));
+  assert.equal(
+    collapsed.some((line) => line.includes("Arguments:")),
+    false,
+  );
+
+  inspector.handleInput("\r");
+  const expanded = inspector.render(72);
+  assert.ok(expanded.some((line) => line.includes("Arguments:")));
+  assert.ok(expanded.some((line) => line.includes('"path": "src/index.ts"')));
+  assert.ok(expanded.some((line) => line.includes("1/2 | expanded")));
+
+  inspector.handleInput("\u001b[6~"); // PageDown scrolls the detail pane.
+  const paged = inspector.render(72);
+  assert.notDeepEqual(paged, expanded);
+
+  inspector.handleInput("\u001b[B"); // Down selects the next call.
+  const next = inspector.render(72);
+  assert.ok(next.some((line) => line.includes("run_command: npm test")));
+  assert.ok(next.some((line) => line.includes("2/2 | expanded")));
+  assert.ok(next.some((line) => line.includes('"command": "npm test"')));
+
+  inspector.handleInput("\u001b[D"); // Left collapses the selected call.
+  assert.ok(
+    inspector.render(72).some((line) => line.includes("2/2 | collapsed")),
+  );
+  inspector.handleInput("\u001b");
+  assert.equal(closed, true);
+  assert.ok(renders >= 4);
+});
+
+test("fullscreen tool inspector bounds long selected paths inside one complete box", () => {
+  const identity = (text: string) => text;
+  const inspector = new ToolInspector(
+    "Tool calls",
+    () => [
+      {
+        toolCallId: "long-edit-call",
+        name: "edit_file",
+        kind: "edit",
+        mutating: true,
+        args: {
+          path: "C:\\Users\\alexa\\WebstormProjects\\datalab-rotterdam\\services\\identity\\src\\hooks.server.ts",
+        },
+        status: "failed",
+        output: "The requested text was not found.",
+        diff: null,
+      },
+    ],
+    {
+      selectedPrefix: identity,
+      selectedText: identity,
+      description: identity,
+      scrollInfo: identity,
+      noMatch: identity,
+    },
+    () => 22,
+    () => {},
+    () => {},
+  );
+  const window = new BorderedWindow(inspector);
+  const rendered = window.render(120);
+
+  assert.equal(rendered.length, 24);
+  assert.ok(rendered.every((line) => visibleWidth(line) === 120));
+  const plainRows = rendered.map((line) =>
+    line.replace(/\u001b\[[0-9;]*m/g, ""),
+  );
+  assert.match(plainRows[0]!, /^┌─+┐$/);
+  assert.match(plainRows.at(-1)!, /^└─+┘$/);
+  assert.ok(plainRows.slice(1, -1).every((line) => /^│[^│]*│$/.test(line)));
+  assert.ok(plainRows.some((line) => line.includes("edit_file")));
+  assert.ok(plainRows.some((line) => line.includes("failed | edit | changes")));
 });
 
 test("large session picker owns the full viewport without clipping its header", () => {

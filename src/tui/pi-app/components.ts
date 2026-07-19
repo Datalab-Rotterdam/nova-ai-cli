@@ -1,4 +1,5 @@
 import { diffLines } from "diff";
+import { highlight, supportsLanguage } from "cli-highlight";
 import {
   Container,
   Input,
@@ -15,11 +16,16 @@ import {
 } from "@earendil-works/pi-tui";
 import { OTHER_OPTION_ID } from "../../acp/user-questions.js";
 import type { Store } from "../state/store.js";
-import type { ToolCallView, UIMessage, UIState } from "../state/types.js";
+import type {
+  PlanEntryView,
+  ToolCallView,
+  UIMessage,
+  UIState,
+} from "../state/types.js";
 import { colors, markdownTheme } from "./theme.js";
 
-const ASSISTANT_MARKER = String.fromCodePoint(0x2726);
-const WORKING_FRAMES = [ASSISTANT_MARKER, "✧", "·", "✧"] as const;
+export const ASSISTANT_MARKER = String.fromCodePoint(0x2726);
+export const WORKING_FRAMES = [ASSISTANT_MARKER, "✧", "·", "✧"] as const;
 
 type QuestionAnchor = {
   start: number;
@@ -58,6 +64,15 @@ function prefixed(lines: string[], prefix: string, width: number): string[] {
         `${index === 0 && partIndex === 0 ? prefix : " ".repeat(visibleWidth(prefix))}${part}`,
     );
   });
+}
+
+function applyBackgroundToLine(
+  line: string,
+  width: number,
+  bgFn: (text: string) => string,
+): string {
+  const padding = " ".repeat(Math.max(0, width - visibleWidth(line)));
+  return bgFn(line + padding);
 }
 
 function fillLine(text: string, width: number): string {
@@ -196,6 +211,14 @@ export class TranscriptView implements Component {
       if (message.role === "user" && !message.queued) {
         questions.push({ start, after: lines.length, lines: rendered });
       }
+    }
+
+    if (this.state.plan.length > 0) {
+      lines.push(
+        ...renderPlan(this.state.plan, contentWidth, this.animationFrame).map(
+          (line) => ` ${line}`,
+        ),
+      );
     }
 
     const hasPendingTool = this.state.messages.some(
@@ -404,6 +427,48 @@ export function formatTokenCount(value: number): string {
     return `${thousands >= 10 ? Math.round(thousands) : thousands.toFixed(1).replace(/\.0$/, "")}k`;
   }
   return String(value);
+}
+
+function renderPlan(
+  entries: PlanEntryView[],
+  width: number,
+  animationFrame: number,
+): string[] {
+  const completed = entries.filter(
+    (entry) => entry.status === "completed",
+  ).length;
+  const lines = new Text(
+    `${colors.accent("Tasks")} ${colors.muted(`(${completed}/${entries.length})`)}`,
+    1,
+    0,
+  ).render(width);
+
+  for (const entry of entries) {
+    const prefix =
+      entry.status === "completed"
+        ? colors.success("[✓] ")
+        : entry.status === "in_progress"
+          ? colors.warning(
+              `[${WORKING_FRAMES[animationFrame % WORKING_FRAMES.length]!}] `,
+            )
+          : colors.faint("[ ] ");
+    const content =
+      entry.status === "completed"
+        ? colors.muted(entry.content)
+        : entry.status === "in_progress"
+          ? colors.primary(entry.content)
+          : colors.muted(entry.content);
+    lines.push(
+      ...prefixed(
+        new Text(content, 0, 0).render(
+          Math.max(1, width - visibleWidth(prefix)),
+        ),
+        prefix,
+        width,
+      ),
+    );
+  }
+  return lines;
 }
 
 export class BorderedWindow implements Component {
@@ -771,6 +836,243 @@ export class SelectionDialog implements Component {
     const twoColumns = `${prefix}${left}${separator}${this.theme.description(trailing)}`;
     return fillLine(twoColumns, width);
   }
+}
+
+export class ToolInspector implements Component {
+  private selectedIndex = 0;
+  private expanded = false;
+  private detailOffset = 0;
+
+  constructor(
+    private readonly title: string,
+    private readonly getCalls: () => ToolCallView[],
+    private readonly theme: SelectListTheme,
+    private readonly maxVisibleRows: () => number,
+    private readonly requestRender: () => void,
+    private readonly close: () => void,
+  ) {}
+
+  handleInput(data: string): void {
+    if (matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl("c"))) {
+      this.close();
+      return;
+    }
+
+    const calls = this.calls();
+    if (calls.length === 0) return;
+    const wheel = mouseWheelDelta(data);
+    if (wheel !== null) {
+      if (this.expanded) this.scrollDetails(wheel * 3);
+      else this.move(wheel * 3, false);
+    } else if (matchesKey(data, Key.up)) {
+      this.move(-1, true);
+    } else if (matchesKey(data, Key.down)) {
+      this.move(1, true);
+    } else if (matchesKey(data, Key.left)) {
+      this.setExpanded(false);
+    } else if (matchesKey(data, Key.right)) {
+      this.setExpanded(true);
+    } else if (matchesKey(data, Key.enter) || matchesKey(data, Key.space)) {
+      this.setExpanded(!this.expanded);
+    } else if (matchesKey(data, Key.pageUp)) {
+      if (this.expanded) this.scrollDetails(-this.detailPageRows());
+      else this.move(-this.collapsedListRows(), false);
+    } else if (matchesKey(data, Key.pageDown)) {
+      if (this.expanded) this.scrollDetails(this.detailPageRows());
+      else this.move(this.collapsedListRows(), false);
+    } else if (matchesKey(data, Key.home)) {
+      if (this.expanded) this.setDetailOffset(0);
+      else this.setSelectedIndex(0);
+    } else if (matchesKey(data, Key.end)) {
+      if (this.expanded) this.setDetailOffset(Number.MAX_SAFE_INTEGER);
+      else this.setSelectedIndex(calls.length - 1);
+    }
+  }
+
+  invalidate(): void {}
+
+  render(width: number): string[] {
+    const calls = this.calls();
+    const height = Math.max(1, this.maxVisibleRows());
+    if (calls.length === 0) {
+      return this.fillRows(
+        [
+          fillLine(colors.primary(this.title), width),
+          fillLine(
+            colors.faint("No tool calls yet. Press Esc to close."),
+            width,
+          ),
+        ],
+        height,
+        width,
+      );
+    }
+
+    const selected = calls[this.selectedIndex]!;
+    const listRows = this.expanded
+      ? Math.min(calls.length, Math.max(1, Math.min(6, height - 5)))
+      : Math.min(calls.length, this.collapsedListRows());
+    const listStart = centeredWindowStart(
+      this.selectedIndex,
+      calls.length,
+      listRows,
+    );
+    const visibleCalls = calls.slice(listStart, listStart + listRows);
+    const rows = [
+      fillLine(
+        `${colors.primary(this.title)} ${colors.faint(`(${calls.length})`)}`,
+        width,
+      ),
+      fillLine(
+        colors.faint(
+          "Wheel/arrows select | Enter/Space or Left/Right collapse/expand | Esc close",
+        ),
+        width,
+      ),
+      ...visibleCalls.map((call, index) =>
+        this.renderCallRow(
+          call,
+          listStart + index === this.selectedIndex,
+          width,
+        ),
+      ),
+    ];
+
+    if (this.expanded) {
+      const detailRows = formatToolCallDetails(selected)
+        .split(/\r?\n/)
+        .flatMap((line) =>
+          wrapTextWithAnsi(line || " ", Math.max(1, width - 2)).map(
+            (part) => `  ${part}`,
+          ),
+        );
+      const detailCapacity = Math.max(0, height - rows.length - 2);
+      const maximumOffset = Math.max(0, detailRows.length - detailCapacity);
+      this.detailOffset = Math.min(this.detailOffset, maximumOffset);
+      const visibleDetails = detailRows.slice(
+        this.detailOffset,
+        this.detailOffset + detailCapacity,
+      );
+      rows.push(
+        fillLine(
+          colors.faint(
+            `Details ${this.detailOffset + (detailRows.length ? 1 : 0)}-${Math.min(detailRows.length, this.detailOffset + visibleDetails.length)} of ${detailRows.length} | Page Up/Down or wheel scroll`,
+          ),
+          width,
+        ),
+        ...visibleDetails.map((line) => fillLine(line, width)),
+      );
+    }
+
+    rows.push(
+      fillLine(
+        colors.faint(
+          `${this.selectedIndex + 1}/${calls.length} | ${this.expanded ? "expanded" : "collapsed"}`,
+        ),
+        width,
+      ),
+    );
+    return this.fillRows(rows, height, width);
+  }
+
+  private calls(): ToolCallView[] {
+    const calls = this.getCalls();
+    this.selectedIndex = Math.max(
+      0,
+      Math.min(this.selectedIndex, calls.length - 1),
+    );
+    return calls;
+  }
+
+  private collapsedListRows(): number {
+    return Math.max(1, this.maxVisibleRows() - 3);
+  }
+
+  private detailPageRows(): number {
+    return Math.max(1, this.maxVisibleRows() - 10);
+  }
+
+  private move(delta: number, wrap: boolean): void {
+    const calls = this.calls();
+    if (calls.length === 0) return;
+    let next = this.selectedIndex + delta;
+    if (wrap && delta < 0 && this.selectedIndex === 0) next = calls.length - 1;
+    else if (wrap && delta > 0 && this.selectedIndex === calls.length - 1)
+      next = 0;
+    this.setSelectedIndex(next);
+  }
+
+  private setSelectedIndex(index: number): void {
+    const calls = this.calls();
+    const next = Math.max(0, Math.min(index, calls.length - 1));
+    if (next === this.selectedIndex) return;
+    this.selectedIndex = next;
+    this.detailOffset = 0;
+    this.requestRender();
+  }
+
+  private setExpanded(expanded: boolean): void {
+    if (expanded === this.expanded) return;
+    this.expanded = expanded;
+    this.detailOffset = 0;
+    this.requestRender();
+  }
+
+  private scrollDetails(delta: number): void {
+    this.setDetailOffset(this.detailOffset + delta);
+  }
+
+  private setDetailOffset(offset: number): void {
+    const next = Math.max(0, offset);
+    if (next === this.detailOffset) return;
+    this.detailOffset = next;
+    this.requestRender();
+  }
+
+  private renderCallRow(
+    call: ToolCallView,
+    selected: boolean,
+    width: number,
+  ): string {
+    const prefix = selected ? this.theme.selectedPrefix("> ") : "  ";
+    const disclosure = selected && this.expanded ? "v" : ">";
+    const summary = toolCallSummary(call);
+    const status = `${call.status} | ${call.kind}${call.mutating ? " | changes" : ""}`;
+    const available = Math.max(1, width - visibleWidth(prefix));
+    const suffix = width >= 48 ? `  ${status}` : "";
+    const labelWidth = Math.max(1, available - visibleWidth(suffix));
+    const label = truncateToWidth(
+      `${disclosure} ${toolStatusIcon(call.status)} ${call.name}${summary ? `: ${summary}` : ""}`,
+      labelWidth,
+      "...",
+    );
+    return fillLine(
+      `${prefix}${selected ? this.theme.selectedText(label) : label}${this.theme.description(suffix)}`,
+      width,
+    );
+  }
+
+  private fillRows(rows: string[], height: number, width: number): string[] {
+    const visible = rows.slice(0, height);
+    if (visible.length < height) {
+      const footer = visible.pop();
+      while (visible.length < height - 1) visible.push(fillLine("", width));
+      if (footer !== undefined) visible.push(footer);
+    }
+    return visible.map((line) => fillLine(line, width));
+  }
+}
+
+function centeredWindowStart(
+  selectedIndex: number,
+  itemCount: number,
+  visibleRows: number,
+): number {
+  const maximumStart = Math.max(0, itemCount - visibleRows);
+  return Math.max(
+    0,
+    Math.min(selectedIndex - Math.floor(visibleRows / 2), maximumStart),
+  );
 }
 
 export class QuestionDialog implements Component {
@@ -1157,6 +1459,7 @@ export function formatToolCallDetails(call: ToolCallView): string {
     for (const line of changedLines(
       call.diff.oldText ?? "",
       call.diff.newText,
+      call.diff.path,
     )) {
       rows.push(`${line.kind === "added" ? "+" : "-"} ${line.text}`);
     }
@@ -1172,10 +1475,7 @@ function renderToolCall(
   animationFrame = 0,
 ): string[] {
   const icon = toolStatusIcon(call.status, animationFrame);
-  const path = typeof call.args.path === "string" ? call.args.path : null;
-  const command =
-    typeof call.args.command === "string" ? call.args.command : null;
-  const summary = path ?? command ?? "";
+  const summary = toolCallSummary(call);
   const heading = `${icon} ${colors.accent(call.name)}${call.mutating ? colors.warning(" (changes)") : ""}${summary ? `: ${summary}` : ""}`;
   const lines = new Text(heading, 1, 0).render(width);
   if (call.status === "failed")
@@ -1183,13 +1483,31 @@ function renderToolCall(
   if (call.diff)
     return [
       ...lines,
-      ...renderChangedLines(call.diff.oldText ?? "", call.diff.newText, width),
+      ...renderChangedLines(
+        call.diff.oldText ?? "",
+        call.diff.newText,
+        call.diff.path,
+        width,
+      ),
     ];
   if (!expanded || isCompactTool(call)) return lines;
   return [
     ...lines,
     ...new Text(colors.muted(formatToolCallDetails(call)), 3, 0).render(width),
   ];
+}
+
+function toolCallSummary(call: ToolCallView): string {
+  const candidates = [
+    call.args.path,
+    call.args.command,
+    call.args.script,
+    call.args.query,
+    call.args.url,
+  ];
+  return (
+    candidates.find((value): value is string => typeof value === "string") ?? ""
+  );
 }
 
 function renderActivityGroup(
@@ -1329,39 +1647,89 @@ function sanitizeActivityLine(value: string): string {
     .replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, "");
 }
 
-function changedLines(oldText: string, newText: string): ChangedLine[] {
-  return diffLines(oldText, newText).flatMap((change) => {
-    const kind = change.added ? "added" : change.removed ? "removed" : null;
-    if (!kind) return [];
+const EXTENSION_LANGUAGE_ALIASES: Record<string, string> = {
+  mts: "typescript",
+  cts: "typescript",
+};
+
+function languageFromPath(path: string | null | undefined): string | undefined {
+  if (!path) return undefined;
+  const ext = path.split(/[\\/]/).pop()?.split(".").pop()?.toLowerCase();
+  if (!ext) return undefined;
+  const candidate = EXTENSION_LANGUAGE_ALIASES[ext] ?? ext;
+  return supportsLanguage(candidate) ? candidate : undefined;
+}
+
+function highlightSource(text: string, language: string | undefined): string[] {
+  if (!text) return [];
+  const trimmed = text.endsWith("\n") ? text.slice(0, -1) : text;
+  try {
+    const rendered = language
+      ? highlight(trimmed, { language, ignoreIllegals: true })
+      : highlight(trimmed, { ignoreIllegals: true });
+    return rendered.split("\n");
+  } catch {
+    return trimmed.split("\n");
+  }
+}
+
+function changedLines(
+  oldText: string,
+  newText: string,
+  path?: string | null,
+): ChangedLine[] {
+  const language = languageFromPath(path);
+  const oldHighlighted = highlightSource(oldText, language);
+  const newHighlighted = highlightSource(newText, language);
+  let oldIndex = 0;
+  let newIndex = 0;
+  const result: ChangedLine[] = [];
+  for (const change of diffLines(oldText, newText)) {
     const value = change.value.endsWith("\n")
       ? change.value.slice(0, -1)
       : change.value;
-    return value
-      .split("\n")
-      .map((text) => ({ kind, text: text.replace(/\r$/, "") }));
-  });
+    const plainLines = value.split("\n");
+    if (change.added) {
+      for (let i = 0; i < plainLines.length; i++) {
+        const text = newHighlighted[newIndex + i] ?? plainLines[i]!;
+        result.push({ kind: "added", text: text.replace(/\r$/, "") });
+      }
+      newIndex += plainLines.length;
+    } else if (change.removed) {
+      for (let i = 0; i < plainLines.length; i++) {
+        const text = oldHighlighted[oldIndex + i] ?? plainLines[i]!;
+        result.push({ kind: "removed", text: text.replace(/\r$/, "") });
+      }
+      oldIndex += plainLines.length;
+    } else {
+      oldIndex += plainLines.length;
+      newIndex += plainLines.length;
+    }
+  }
+  return result;
 }
 
 function renderChangedLines(
   oldText: string,
   newText: string,
+  path: string | null | undefined,
   width: number,
 ): string[] {
-  const changes = changedLines(oldText, newText);
+  const changes = changedLines(oldText, newText, path);
   if (changes.length === 0)
     return new Text(colors.faint("no textual changes"), 3, 0).render(width);
   return changes.flatMap((line) => {
     const marker =
       line.kind === "added" ? colors.success("+") : colors.danger("-");
-    const content =
-      line.kind === "added"
-        ? colors.success(line.text || " ")
-        : colors.danger(line.text || " ");
-    return prefixed(
-      new Text(content, 0, 0).render(Math.max(1, width - 5)),
-      `   ${marker} `,
-      width,
-    );
+    const bg = line.kind === "added" ? colors.diffAddBg : colors.diffRemoveBg;
+    const prefix = `   ${marker} `;
+    const prefixWidth = visibleWidth(prefix);
+    const contentWidth = Math.max(1, width - prefixWidth);
+    const wrapped = wrapTextWithAnsi(line.text || " ", contentWidth);
+    return wrapped.map((row, index) => {
+      const rowPrefix = index === 0 ? prefix : " ".repeat(prefixWidth);
+      return `${rowPrefix}${applyBackgroundToLine(row, contentWidth, bg)}`;
+    });
   });
 }
 

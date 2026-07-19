@@ -15,8 +15,9 @@ export class WorkspaceAutocompleteProvider implements AutocompleteProvider {
     commands: Array<AutocompleteItem | SlashCommand>,
     cwd: string,
     private readonly files: string[],
+    private readonly fdPath: string | null = null,
   ) {
-    this.fallback = new CombinedAutocompleteProvider(commands, cwd);
+    this.fallback = new CombinedAutocompleteProvider(commands, cwd, fdPath);
   }
 
   async getSuggestions(
@@ -28,6 +29,20 @@ export class WorkspaceAutocompleteProvider implements AutocompleteProvider {
     const prefix = extractMentionPrefix((lines[cursorLine] ?? "").slice(0, cursorCol));
     if (!prefix) return this.fallback.getSuggestions(lines, cursorLine, cursorCol, options);
     if (options.signal.aborted) return null;
+
+    // fd respects .gitignore and isn't bounded by a pre-scanned file list;
+    // only fall back to the in-memory scorer if it comes up empty (fd
+    // missing, killed, or a scattered-letter query it doesn't fuzzy-match).
+    if (this.fdPath) {
+      const fdSuggestions = await this.fallback.getSuggestions(
+        lines,
+        cursorLine,
+        cursorCol,
+        options,
+      );
+      if (fdSuggestions) return fdSuggestions;
+      if (options.signal.aborted) return null;
+    }
 
     const quoted = prefix.startsWith('@"');
     const query = prefix.slice(quoted ? 2 : 1).replace(/"$/, "").replace(/\\/g, "/").toLowerCase();

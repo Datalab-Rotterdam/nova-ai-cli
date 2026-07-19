@@ -8,6 +8,7 @@ import type { UIState } from "../../src/tui/state/types.js";
 function state(): UIState {
   return {
     messages: [],
+    plan: [],
     pendingPermission: null,
     pendingQuestion: null,
     inputHistory: [],

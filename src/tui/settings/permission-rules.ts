@@ -9,6 +9,17 @@ type PermissionTarget = {
   names: string[];
   value: string;
   path: boolean;
+  shell: boolean;
+};
+
+export type ShellCommandAnalysis = {
+  segments: string[];
+  /**
+   * Complex shell syntax can hide additional execution inside a single
+   * apparent segment. Broad allow rules must not approve it automatically;
+   * only an exact, argument-aware rule may do so.
+   */
+  complex: boolean;
 };
 
 export function evaluatePermissionRules(
@@ -17,8 +28,39 @@ export function evaluatePermissionRules(
   args: Record<string, unknown>,
 ): PermissionDecision {
   const target = permissionTarget(toolName, args);
-  if (matchingRule(rules?.deny, target)) return "deny";
-  if (matchingRule(rules?.allow, target)) return "allow";
+  if (!target.shell) {
+    if (matchingRule(rules?.deny, target)) return "deny";
+    if (matchingRule(rules?.allow, target)) return "allow";
+    return "ask";
+  }
+
+  const analysis = analyzeShellCommand(target.value);
+  const segmentTargets = analysis.segments.map((value) => ({
+    ...target,
+    value,
+  }));
+
+  // A deny applies to the submitted command as well as every executable
+  // segment. This prevents a safe-looking prefix from hiding a denied suffix.
+  if (
+    matchingRule(rules?.deny, target) ||
+    segmentTargets.some((segment) => matchingRule(rules?.deny, segment))
+  ) {
+    return "deny";
+  }
+
+  const exactWholeCommand = matchingExactRule(rules?.allow, target);
+  if (exactWholeCommand) return "allow";
+
+  // Empty or syntactically complex input cannot be authorized by a broad
+  // rule. Complex input includes nested shells, substitutions, grouping,
+  // heredocs, and malformed quoting; the user can still persist an exact rule
+  // after reviewing that specific invocation.
+  if (analysis.complex || segmentTargets.length === 0) return "ask";
+
+  if (segmentTargets.every((segment) => matchingRule(rules?.allow, segment))) {
+    return "allow";
+  }
   return "ask";
 }
 
@@ -58,6 +100,28 @@ function matchingRule(
   return null;
 }
 
+function matchingExactRule(
+  rules: string[] | undefined,
+  target: PermissionTarget,
+): string | null {
+  if (!Array.isArray(rules)) return null;
+  for (const rule of rules) {
+    const parsed = parseRule(rule);
+    if (
+      !parsed ||
+      parsed.pattern === null ||
+      !target.names.some(
+        (name) => name.toLowerCase() === parsed.name.toLowerCase(),
+      )
+    ) {
+      continue;
+    }
+    const literal = literalGlobValue(parsed.pattern);
+    if (literal !== null && literal === target.value) return rule;
+  }
+  return null;
+}
+
 function parseRule(
   rule: unknown,
 ): { name: string; pattern: string | null } | null {
@@ -82,6 +146,7 @@ function permissionTarget(
         names: ["Bash", toolName],
         value: stringArg(args.command),
         path: false,
+        shell: true,
       };
     case "run_package_script": {
       const script = stringArg(args.script);
@@ -96,6 +161,7 @@ function permissionTarget(
           .filter(Boolean)
           .join(" "),
         path: false,
+        shell: true,
       };
     }
     case "write_file":
@@ -103,16 +169,145 @@ function permissionTarget(
         names: ["Write", toolName],
         value: stringArg(args.path),
         path: true,
+        shell: false,
       };
     case "edit_file":
       return {
         names: ["Edit", toolName],
         value: stringArg(args.path),
         path: true,
+        shell: false,
       };
     default:
-      return { names: [toolName], value: stableJson(args), path: false };
+      return {
+        names: [toolName],
+        value: stableJson(args),
+        path: false,
+        shell: false,
+      };
   }
+}
+
+/**
+ * Split a shell command at top-level execution operators without interpreting
+ * operators inside ordinary quoted strings. The parser intentionally fails
+ * closed for constructs whose contents may execute independently.
+ *
+ * This is a permission parser, not a shell parser: marking a command complex
+ * is safe because it only disables broad auto-approval and falls back to an
+ * interactive decision.
+ */
+export function analyzeShellCommand(command: string): ShellCommandAnalysis {
+  const segments: string[] = [];
+  let current = "";
+  let quote: "single" | "double" | null = null;
+  let complex = false;
+
+  const push = () => {
+    const value = current.trim();
+    if (value) segments.push(value);
+    current = "";
+  };
+
+  for (let index = 0; index < command.length; index++) {
+    const character = command[index]!;
+    const next = command[index + 1] ?? "";
+    const previous = command[index - 1] ?? "";
+
+    if (quote === "single") {
+      current += character;
+      if (character === "'") {
+        // PowerShell represents a literal single quote as ''. POSIX closes and
+        // immediately reopens it; either way it is not an execution boundary.
+        if (next === "'") current += command[++index]!;
+        else quote = null;
+      }
+      continue;
+    }
+
+    if (quote === "double") {
+      current += character;
+      if (character === "\\" && next) {
+        current += command[++index]!;
+        continue;
+      }
+      // Command substitution executes even inside double quotes in POSIX and
+      // PowerShell shells, so broad prefix approval is not sufficient.
+      if (character === "$" && next === "(") complex = true;
+      if (character === "`") complex = true;
+      if (character === '"') quote = null;
+      continue;
+    }
+
+    if (character === "'") {
+      quote = "single";
+      current += character;
+      continue;
+    }
+    if (character === '"') {
+      quote = "double";
+      current += character;
+      continue;
+    }
+    if (character === "\\" && next) {
+      current += character + command[++index]!;
+      continue;
+    }
+    if (character === "`" || (character === "$" && next === "(")) {
+      complex = true;
+      current += character;
+      continue;
+    }
+    if (
+      character === "(" ||
+      character === ")" ||
+      character === "{" ||
+      character === "}" ||
+      (character === "<" && next === "<") ||
+      (character === "<" && next === "(")
+    ) {
+      complex = true;
+      current += character;
+      continue;
+    }
+
+    const twoCharacterOperator =
+      (character === "&" && next === "&") ||
+      (character === "|" && next === "|");
+    const singleCharacterOperator =
+      character === ";" ||
+      character === "\n" ||
+      character === "\r" ||
+      character === "|" ||
+      (character === "&" && previous !== ">" && previous !== "<");
+
+    if (twoCharacterOperator) {
+      push();
+      index++;
+      continue;
+    }
+    if (singleCharacterOperator) {
+      push();
+      // Treat CRLF as a single boundary.
+      if (character === "\r" && next === "\n") index++;
+      continue;
+    }
+
+    current += character;
+  }
+
+  if (quote !== null) complex = true;
+  push();
+
+  if (segments.some(isNestedShellOrControlSegment)) complex = true;
+  return { segments, complex };
+}
+
+function isNestedShellOrControlSegment(segment: string): boolean {
+  const normalized = segment.trimStart().toLowerCase();
+  return /^(?:cmd(?:\.exe)?\s+\/(?:c|k)\b|(?:powershell|pwsh)(?:\.exe)?\b[^\r\n]*\s-(?:command|encodedcommand)\b|(?:ba|z|k|c|fi)?sh\s+-c\b|(?:if|for|foreach|while|until|case|function|try|do)\b)/i.test(
+    normalized,
+  );
 }
 
 function globMatches(pattern: string, value: string): boolean {
@@ -143,6 +338,24 @@ function globMatches(pattern: string, value: string): boolean {
 
 function escapeGlob(value: string): string {
   return value.replace(/[?*]/g, "\\$&");
+}
+
+/** Return the literal represented by a wildcard-free glob, or null. */
+function literalGlobValue(pattern: string): string | null {
+  let result = "";
+  for (let index = 0; index < pattern.length; index++) {
+    const character = pattern[index]!;
+    const next = pattern[index + 1];
+    if (character === "\\" && (next === "*" || next === "?")) {
+      result += next;
+      index++;
+    } else if (character === "*" || character === "?") {
+      return null;
+    } else {
+      result += character;
+    }
+  }
+  return result;
 }
 
 function escapePathGlob(value: string): string {

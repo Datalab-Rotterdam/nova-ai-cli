@@ -155,3 +155,4 @@ ext
 .codex/
 .nova-ai/
 .claude/
+.mcp.json

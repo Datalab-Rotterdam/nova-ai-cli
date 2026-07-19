@@ -11,10 +11,16 @@ import {
 import { TuiAcpClient } from "../../src/tui/session/tui-acp-client.js";
 import { createStore } from "../../src/tui/state/store.js";
 import type { UIState } from "../../src/tui/state/types.js";
+import { installFakeAgentQueue } from "./fake-agent-queue.js";
+import {
+  appendSessionTurn,
+  deleteStoredSession,
+} from "../../src/acp/sessions.js";
 
 function state(): UIState {
   return {
     messages: [],
+    plan: [],
     pendingPermission: null,
     pendingQuestion: null,
     inputHistory: [],
@@ -67,6 +73,62 @@ test("restored sessions rebuild tool exchanges instead of giant user messages", 
   );
 });
 
+test("session runner rewinds persisted turns and rebuilds the visible transcript", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "nova-runner-rewind-workspace-"));
+  const sessionsDir = mkdtempSync(
+    join(tmpdir(), "nova-runner-rewind-sessions-"),
+  );
+  process.env.NOVA_AI_CLI_SESSIONS_DIR = sessionsDir;
+  let sessionId = "";
+  try {
+    const store = createStore({ ...state(), cwd });
+    const runner = new SessionRunner(
+      store,
+      { apiKey: "test", defaultModel: "test-model" },
+      cwd,
+    );
+    const internals = runner as unknown as {
+      ensureSession(): Promise<void>;
+      sessionReady: Promise<void>;
+    };
+    await internals.ensureSession();
+    sessionId = runner.sessionId;
+    appendSessionTurn(sessionId, { cwd, title: "first" }, [
+      { role: "user", content: "first" },
+      { role: "assistant", content: "one" },
+    ]);
+    appendSessionTurn(sessionId, { cwd, title: "first" }, [
+      { role: "user", content: "second" },
+      { role: "assistant", content: "two" },
+    ]);
+    assert.equal(runner.resumeFrom(sessionId), true);
+    await internals.sessionReady;
+
+    const result = await runner.rewind();
+
+    assert.deepEqual(
+      result.removedCheckpoints.map((checkpoint) => checkpoint.userText),
+      ["second"],
+    );
+    assert.deepEqual(
+      store
+        .getState()
+        .messages.flatMap((message) =>
+          message.role === "user" || message.role === "assistant"
+            ? [message.text]
+            : [],
+        ),
+      ["first", "one"],
+    );
+    await runner.close();
+  } finally {
+    if (sessionId) deleteStoredSession(sessionId);
+    delete process.env.NOVA_AI_CLI_SESSIONS_DIR;
+    rmSync(cwd, { recursive: true, force: true });
+    rmSync(sessionsDir, { recursive: true, force: true });
+  }
+});
+
 test("steering enters the active turn at a safe boundary before FIFO follow-ups", async () => {
   const store = createStore(state());
   const runner = new SessionRunner(
@@ -74,6 +136,7 @@ test("steering enters the active turn at a safe boundary before FIFO follow-ups"
     { apiKey: "test", defaultModel: "test-model" },
     process.cwd(),
   );
+  const queueAgent = installFakeAgentQueue(runner);
   let markFirstStarted!: () => void;
   let releaseTool!: () => void;
   const firstStarted = new Promise<void>((resolve) => {
@@ -86,29 +149,26 @@ test("steering enters the active turn at a safe boundary before FIFO follow-ups"
   let cancellations = 0;
 
   const internals = runner as unknown as {
-    ensureSession(): Promise<void>;
+    acpContext: import("@agentclientprotocol/sdk").AgentContext;
     agent: {
       prompt(
         params: {
           prompt: Array<{ type: string; text: string }>;
         },
         context?: unknown,
-        runtime?: {
-          takeSteeringMessages?(): Promise<
-            Array<{ role: string; content: unknown }>
-          >;
-        },
       ): Promise<{ stopReason: "cancelled" | "end_turn" }>;
       cancel(params: { sessionId: string }): void;
     };
   };
-  internals.ensureSession = async () => {};
-  internals.agent.prompt = async (params, _context, runtime) => {
+  internals.agent.prompt = async (params) => {
     prompts.push(params.prompt[0]?.text ?? "");
     if (prompts.length === 1) {
       markFirstStarted();
       await toolFinished;
-      const steered = await runtime?.takeSteeringMessages?.();
+      const steered = await queueAgent.takeSteeringMessages(
+        { sessionId: runner.sessionId },
+        internals.acpContext,
+      );
       prompts.push(
         ...(steered ?? []).map((message) => String(message.content ?? "")),
       );
@@ -173,6 +233,7 @@ test("queued messages can be inspected and cleared", async () => {
     { apiKey: "test", defaultModel: "test-model" },
     process.cwd(),
   );
+  installFakeAgentQueue(runner);
 
   await runner.submit("one");
   await runner.submit("two");
@@ -190,6 +251,7 @@ test("queued messages can be edited in place or removed before they run", async 
     { apiKey: "test", defaultModel: "test-model" },
     process.cwd(),
   );
+  installFakeAgentQueue(runner);
 
   await runner.submit("first");
   await runner.submit("second");
@@ -266,6 +328,51 @@ test("live agent output is inserted above visible queued messages", async () => 
   );
 });
 
+test("ACP plan updates replace the live checklist without a tool card", async () => {
+  const store = createStore(state());
+  const client = new TuiAcpClient(store, process.cwd());
+
+  await client.sessionUpdate({
+    sessionId: "test-session",
+    update: {
+      sessionUpdate: "tool_call",
+      toolCallId: "plan-tool",
+      title: "update_plan",
+      kind: "think",
+      status: "pending",
+      rawInput: {},
+    },
+  });
+  await client.sessionUpdate({
+    sessionId: "test-session",
+    update: {
+      sessionUpdate: "plan",
+      entries: [
+        {
+          content: "Implement live checklist",
+          priority: "medium",
+          status: "in_progress",
+        },
+      ],
+    },
+  });
+
+  assert.deepEqual(store.getState().messages, []);
+  assert.deepEqual(store.getState().plan, [
+    {
+      content: "Implement live checklist",
+      priority: "medium",
+      status: "in_progress",
+    },
+  ]);
+
+  await client.sessionUpdate({
+    sessionId: "test-session",
+    update: { sessionUpdate: "plan", entries: [] },
+  });
+  assert.deepEqual(store.getState().plan, []);
+});
+
 test("session runner sends clipboard images as ACP image blocks", async () => {
   const store = createStore(state());
   const runner = new SessionRunner(
@@ -273,6 +380,7 @@ test("session runner sends clipboard images as ACP image blocks", async () => {
     { apiKey: "test", defaultModel: "test-model" },
     process.cwd(),
   );
+  installFakeAgentQueue(runner);
   let prompt: Array<Record<string, unknown>> = [];
   const internals = runner as unknown as {
     ensureSession(): Promise<void>;
@@ -282,7 +390,6 @@ test("session runner sends clipboard images as ACP image blocks", async () => {
       }): Promise<{ stopReason: "end_turn" }>;
     };
   };
-  internals.ensureSession = async () => {};
   internals.agent.prompt = async (params) => {
     prompt = params.prompt;
     return { stopReason: "end_turn" };
@@ -357,6 +464,7 @@ test("queued clipboard text keeps its marker and expands when the prompt runs", 
     { apiKey: "test", defaultModel: "test-model" },
     process.cwd(),
   );
+  installFakeAgentQueue(runner);
   let markStarted!: () => void;
   let releasePrompt!: () => void;
   const started = new Promise<void>((resolve) => {
@@ -374,7 +482,6 @@ test("queued clipboard text keeps its marker and expands when the prompt runs", 
       }): Promise<{ stopReason: "end_turn" }>;
     };
   };
-  internals.ensureSession = async () => {};
   internals.agent.prompt = async (params) => {
     prompts.push(params.prompt[0]?.text ?? "");
     if (prompts.length === 1) {

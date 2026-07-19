@@ -3,9 +3,17 @@ import { runBrowserAuth } from "./acp/auth-server.js";
 import chat from "./tui/index.js";
 import web from "./webui/index.js";
 import acp from "./acp/index.js";
+import headless from "./headless/index.js";
 
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
+
+  const headlessIndex = args.indexOf("--headless");
+  if (headlessIndex >= 0) {
+    const headlessArgs = args.filter((_, index) => index !== headlessIndex);
+    process.exitCode = await headless(headlessArgs);
+    return;
+  }
 
   if (args.includes("--setup")) {
     await runBrowserAuth();
@@ -25,8 +33,7 @@ async function main(): Promise<void> {
   await chat(...args);
 }
 
-
 main().catch((err) => {
   console.error(err);
-  process.exit(1)
+  process.exit(1);
 });

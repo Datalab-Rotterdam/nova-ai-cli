@@ -1,18 +1,26 @@
 import assert from "node:assert/strict";
-import { describe, it, test } from "node:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { after, describe, it, test } from "node:test";
 import {
   appendSessionTurn,
   deleteStoredSession,
   deriveTitle,
   forkStoredSession,
+  listSessionCheckpoints,
   loadStoredSession,
   parseSessionFile,
+  rewindStoredSession,
 } from "../../src/acp/sessions.js";
 
-// loadStoredSession/appendSessionTurn/listStoredSessions resolve SESSIONS_DIR
-// from homedir() at module-load time, so they aren't unit-testable without
-// touching the real ~/.nova-ai directory. Only the pure deriveTitle logic
-// is covered here.
+const testSessionsDir = mkdtempSync(join(tmpdir(), "nova-sessions-test-"));
+process.env.NOVA_AI_CLI_SESSIONS_DIR = testSessionsDir;
+after(() => {
+  delete process.env.NOVA_AI_CLI_SESSIONS_DIR;
+  rmSync(testSessionsDir, { recursive: true, force: true });
+});
+
 describe("deriveTitle", () => {
   it("returns null when there is no user message", () => {
     assert.equal(deriveTitle([{ role: "assistant", content: "hi" }]), null);
@@ -175,5 +183,65 @@ describe("forkStoredSession", () => {
       { cwd: "/repo" },
     );
     assert.equal(result, null);
+  });
+});
+
+describe("rewindStoredSession", () => {
+  it("rewinds complete turns and keeps the append-only session readable", () => {
+    const sessionId = `test-rewind-${crypto.randomUUID()}`;
+    try {
+      appendSessionTurn(sessionId, { cwd: "/repo", title: "first" }, [
+        { role: "user", content: "first request" },
+        { role: "assistant", content: "first response" },
+      ]);
+      appendSessionTurn(sessionId, { cwd: "/repo", title: "first" }, [
+        { role: "user", content: "second request" },
+        { role: "assistant", content: "calling a tool" },
+        { role: "user", content: "Tool result: done" },
+        { role: "assistant", content: "second response" },
+      ]);
+
+      assert.deepEqual(
+        listSessionCheckpoints(sessionId).map(
+          (checkpoint) => checkpoint.userText,
+        ),
+        ["first request", "second request"],
+      );
+      const rewound = rewindStoredSession(sessionId);
+      assert.deepEqual(
+        rewound?.removedCheckpoints.map((item) => item.userText),
+        ["second request"],
+      );
+      assert.deepEqual(loadStoredSession(sessionId)?.messages, [
+        { role: "user", content: "first request" },
+        { role: "assistant", content: "first response" },
+      ]);
+      assert.equal(listSessionCheckpoints(sessionId).length, 1);
+
+      const rewoundAgain = rewindStoredSession(sessionId);
+      assert.deepEqual(rewoundAgain?.session.messages, []);
+      assert.deepEqual(listSessionCheckpoints(sessionId), []);
+    } finally {
+      deleteStoredSession(sessionId);
+    }
+  });
+
+  it("rejects invalid or unavailable rewind distances", () => {
+    const sessionId = `test-rewind-invalid-${crypto.randomUUID()}`;
+    try {
+      appendSessionTurn(sessionId, { cwd: "/repo", title: "one" }, [
+        { role: "user", content: "one" },
+      ]);
+      assert.throws(
+        () => rewindStoredSession(sessionId, 0),
+        /positive integer/,
+      );
+      assert.throws(
+        () => rewindStoredSession(sessionId, 2),
+        /only 1 checkpoint is available/,
+      );
+    } finally {
+      deleteStoredSession(sessionId);
+    }
   });
 });

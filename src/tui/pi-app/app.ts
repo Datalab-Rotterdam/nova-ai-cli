@@ -14,6 +14,7 @@ import {
   type SlashCommandContext,
 } from "../commands/index.js";
 import { readClipboardImage } from "../files/clipboard-image.js";
+import { resolveFdPath } from "../files/find-fd.js";
 import { listWorkspaceFiles } from "../files/list-workspace-files.js";
 import {
   DraftImageAttachments,
@@ -33,17 +34,18 @@ import {
   setPermissionMode as persistPermissionMode,
   readWorkspaceSettings,
 } from "../settings/workspace-settings.js";
-import { createStore } from "../state/store.js";
+import { createStore, type Store } from "../state/store.js";
 import type {
   InteractionMode,
   PermissionMode,
+  UpdateAvailable,
   UIState,
 } from "../state/types.js";
 import { checkForUpdate } from "../update-check.js";
 import {
   BorderedWindow,
+  ASSISTANT_MARKER,
   formatTokenCount,
-  formatToolCallDetails,
   FullscreenLayout,
   mouseWheelDelta,
   PermissionDialog,
@@ -52,21 +54,32 @@ import {
   SelectionDialog,
   type SelectionItem,
   StatusView,
+  ToolInspector,
   TranscriptView,
+  WORKING_FRAMES,
 } from "./components.js";
 import { FullscreenProcessTerminal } from "./fullscreen-terminal.js";
 import { PromptEditor } from "./prompt-editor.js";
 import { bindPromptSubmission } from "./prompt-submission.js";
 import { colors, editorTheme, selectListTheme } from "./theme.js";
 
+export type PiTuiRuntimeOptions = {
+  /** Test seam for exercising the complete terminal application without HTTP. */
+  createRunner?(store: Store<UIState>): SessionRunner;
+  terminal?: FullscreenProcessTerminal;
+  checkForUpdate?(): Promise<UpdateAvailable | null>;
+};
+
 export async function runPiTui(
   credentials: StoredCredentials,
   cwd: string,
   args: string[],
+  options: PiTuiRuntimeOptions = {},
 ): Promise<void> {
   const workspaceSettings = readWorkspaceSettings(cwd);
   const store = createStore<UIState>({
     messages: [],
+    plan: [],
     pendingPermission: null,
     pendingQuestion: null,
     inputHistory: [],
@@ -81,13 +94,14 @@ export async function runPiTui(
     contextUsage: null,
     updateAvailable: null,
   });
-  const runner = new SessionRunner(store, credentials, cwd);
+  const runner =
+    options.createRunner?.(store) ?? new SessionRunner(store, credentials, cwd);
   const resumeIndex = args.indexOf("--resume");
   const resumeId = resumeIndex >= 0 ? args[resumeIndex + 1] : undefined;
   if (resumeId) runner.resumeFrom(resumeId);
   else store.setState({ sessionId: runner.sessionId });
 
-  const terminal = new FullscreenProcessTerminal();
+  const terminal = options.terminal ?? new FullscreenProcessTerminal();
   const tui = new TUI(terminal, true);
   const transcript = new TranscriptView(store);
   const status = new StatusView(store, runner.model, mcpCounts(runner));
@@ -112,6 +126,7 @@ export async function runPiTui(
     const id = editor.editingQueuedMessage();
     if (id) runner.updateQueuedMessage(id, text);
   };
+  const fdPath = resolveFdPath();
   editor.setAutocompleteProvider(
     new WorkspaceAutocompleteProvider(
       allCommands().map((command) => ({
@@ -119,7 +134,10 @@ export async function runPiTui(
         description: command.description,
       })),
       cwd,
-      listWorkspaceFiles(cwd, 10_000),
+      // fd (when available) walks the tree itself and respects .gitignore;
+      // the pre-scanned list is only needed as its fallback.
+      fdPath ? [] : listWorkspaceFiles(cwd, 10_000),
+      fdPath,
     ),
   );
 
@@ -129,6 +147,9 @@ export async function runPiTui(
   let exitArmed = false;
   let exitTimer: ReturnType<typeof setTimeout> | undefined;
   let animationTimer: ReturnType<typeof setInterval> | undefined;
+  let windowTitleBusy = false;
+  let windowTitleFrame = 0;
+  let currentWindowTitle: string | undefined;
   let imagePasteActive = false;
   let stopped = false;
   let resolveExit: () => void = () => {};
@@ -137,6 +158,21 @@ export async function runPiTui(
   });
 
   const requestRender = () => tui.requestRender();
+  const syncWindowTitle = (advanceAnimation = false) => {
+    const busy = store.getState().busy;
+    if (busy !== windowTitleBusy) {
+      windowTitleBusy = busy;
+      windowTitleFrame = 0;
+    } else if (busy && advanceAnimation) {
+      windowTitleFrame = (windowTitleFrame + 1) % WORKING_FRAMES.length;
+    }
+
+    const marker = busy ? WORKING_FRAMES[windowTitleFrame]! : ASSISTANT_MARKER;
+    const title = `${marker} ${busy ? "Nova-AI" : "Nova AI"}`;
+    if (title === currentWindowTitle) return;
+    currentWindowTitle = title;
+    terminal.setTitle(title);
+  };
   const layout = new FullscreenLayout(
     transcript,
     status,
@@ -346,23 +382,26 @@ export async function runPiTui(
   };
 
   const openToolInspector = () => {
-    const tools = transcript.toolCalls();
-    showSelection(
+    if (transcript.toolCalls().length === 0) {
+      showText("Tool calls", "No tool calls yet.");
+      return;
+    }
+    const inspector = new ToolInspector(
       "Tool calls",
-      tools.map((call) => ({
-        value: call.toolCallId,
-        label: call.name,
-        description: `${call.status} · ${call.kind}${call.mutating ? " · changes" : ""}`,
-      })),
-      "chat",
-      (toolCallId) => {
-        const call = transcript
-          .toolCalls()
-          .find((item) => item.toolCallId === toolCallId);
-        if (call) showText(`Tool: ${call.name}`, formatToolCallDetails(call));
-      },
-      true,
+      () => transcript.toolCalls(),
+      selectListTheme,
+      () => Math.max(1, terminal.rows - 2),
+      () => tui.requestRender(true),
+      closeOverlay,
     );
+    activeOverlay?.hide();
+    activeOverlay = null;
+    layout.hideFullscreen();
+    store.setState({ mode: "chat" });
+    const surface = new BorderedWindow(inspector);
+    layout.showFullscreen(surface);
+    tui.setFocus(surface);
+    tui.requestRender(true);
   };
 
   const openMcpInspector = () => {
@@ -449,6 +488,7 @@ export async function runPiTui(
     stopped = true;
     if (exitTimer) clearTimeout(exitTimer);
     if (animationTimer) clearInterval(animationTimer);
+    terminal.setTitle(`${ASSISTANT_MARKER} Nova AI`);
     unsubscribeStore();
     process.off("SIGTERM", signalExit);
     await runner.close().catch(() => {});
@@ -484,11 +524,11 @@ export async function runPiTui(
     openMcpInspector,
     openSkillInspector,
     openUsageInspector,
-    queueMessage: (message) => void runner.submit(message),
     steerMessage: (message) => runner.steer(message),
     queuedMessages: () => runner.queuedMessages(),
     clearQueuedMessages: () => runner.clearQueuedMessages(),
     compactContext: () => runner.compactContext(),
+    rewind: (turns) => runner.rewind(turns),
     listModels: () => runner.listModels(),
     startBackgroundShell: (command) => runner.startBackgroundShell(command),
     startBackgroundAgent: (prompt) => runner.startBackgroundAgent(prompt),
@@ -662,6 +702,7 @@ export async function runPiTui(
 
   const unsubscribeStore = store.subscribe(() => {
     const state = store.getState();
+    syncWindowTitle();
     transcript.sync();
     status.update(state, runner.model, mcpCounts(runner));
     editor.borderColor = state.busy ? colors.warning : colors.primary;
@@ -696,10 +737,12 @@ export async function runPiTui(
   process.once("SIGTERM", signalExit);
 
   tui.start();
-  void checkForUpdate().then((updateAvailable) => {
+  syncWindowTitle();
+  void (options.checkForUpdate ?? checkForUpdate)().then((updateAvailable) => {
     if (!stopped && updateAvailable) store.setState({ updateAvailable });
   });
   animationTimer = setInterval(() => {
+    syncWindowTitle(true);
     if (
       !tui.hasOverlay() &&
       !layout.hasFullscreen() &&
