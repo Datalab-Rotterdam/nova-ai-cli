@@ -6,7 +6,6 @@ import type { AgentEvent } from "../core/agent-events.js";
 import { buildModeSystemPrompt } from "../core/agent/mode-prompt.js";
 import type { Session } from "../core/agent/session.js";
 import { buildSessionTools } from "../core/agent/session-tools.js";
-import { chatContentToText } from "../core/chat-content.js";
 import {
   calculateContextUsage,
   type ContextUsage,
@@ -30,7 +29,6 @@ import {
 } from "../core/mcp.js";
 import { buildMemorySystemPrompt, loadMemory } from "../core/memory.js";
 import { PromptQueue } from "../core/prompt-queue.js";
-import { stripReasoningTags } from "../core/reasoning-tags.js";
 import { runTurn } from "../core/run-turn.js";
 import {
   appendSessionCompaction,
@@ -51,7 +49,6 @@ import {
   type SkillDefinition,
 } from "../core/skills.js";
 import { detectToolEnvironment } from "../core/tools/environment.js";
-import { stripToolCallMarkup } from "../core/tools/marker.js";
 import {
   buildNativeToolsSystemPrompt,
   buildToolsSystemPrompt,
@@ -63,6 +60,8 @@ import {
 } from "../core/agent/tool-protocol.js";
 import type { ToolDefinition } from "../core/tools/types.js";
 import { AcpToolHost } from "./acp-tool-host.js";
+import { replayHistory, type ReplayItem } from "../core/history.js";
+import { describeToolCall, toolKindOf } from "../core/tools/describe.js";
 import { sessionNotFound, toAcpError } from "./errors.js";
 import {
   emitToAcp,
@@ -124,6 +123,47 @@ const AVAILABLE_COMMANDS: acp.AvailableCommand[] = [
     description: "Summarize older parts of the conversation to free context space",
   },
 ];
+
+const REPLAYED_OUTPUT_CHARS = 4_000;
+const SESSION_PAGE_SIZE = 50;
+
+function encodeCursor(offset: number): string {
+  return Buffer.from(JSON.stringify({ offset })).toString("base64url");
+}
+
+function decodeCursor(cursor: string | null | undefined): number {
+  if (!cursor) return 0;
+  try {
+    const { offset } = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
+    if (Number.isSafeInteger(offset) && offset >= 0) return offset;
+  } catch {
+    // fall through
+  }
+  throw acp.RequestError.invalidParams({ cursor }, "Invalid session list cursor.");
+}
+
+function replayedToolCall(
+  toolCallId: string,
+  item: Extract<ReplayItem, { kind: "tool" }>,
+  cwd: string,
+): acp.SessionUpdate {
+  const { title, locations } = describeToolCall(item.name, item.args, cwd);
+  const output =
+    item.output.length > REPLAYED_OUTPUT_CHARS
+      ? `${item.output.slice(0, REPLAYED_OUTPUT_CHARS)}\n[… output shortened in the replay …]`
+      : item.output;
+  return {
+    sessionUpdate: "tool_call",
+    toolCallId,
+    title,
+    kind: toolKindOf(item.name),
+    status: item.status,
+    rawInput: item.args,
+    ...(locations.length ? { locations } : {}),
+    ...(output ? { content: [{ type: "content", content: { type: "text", text: output } }] } : {}),
+    _meta: { "nova-ai-cli/tool": item.name, "nova-ai-cli/replayed": true },
+  };
+}
 
 /** The command name when the prompt is exactly one advertised slash command. */
 function slashCommandName(prompt: acp.PromptRequest["prompt"]): string | null {
@@ -314,30 +354,17 @@ export class NovaAgent implements AgentRuntime {
       stored.title,
     );
 
-    for (const message of stored.messages) {
-      const rawText = chatContentToText(message.content);
-      const text =
-        message.role === "assistant"
-          ? stripReasoningTags(stripToolCallMarkup(rawText))
-          : rawText;
-      if (!text) continue;
-      if (message.role === "user") {
-        await client.notify("session/update", {
-          sessionId: params.sessionId,
-          update: {
-            sessionUpdate: "user_message_chunk",
-            content: { type: "text", text },
-          },
-        });
-      } else if (message.role === "assistant") {
-        await client.notify("session/update", {
-          sessionId: params.sessionId,
-          update: {
-            sessionUpdate: "agent_message_chunk",
-            content: { type: "text", text },
-          },
-        });
-      }
+    // Replay what the user saw: text and tool calls with their final status,
+    // never tool results disguised as user messages.
+    const replay = replayHistory(stored.messages);
+    for (const [index, item] of replay.entries()) {
+      const update: acp.SessionUpdate =
+        item.kind === "user"
+          ? { sessionUpdate: "user_message_chunk", content: { type: "text", text: item.text } }
+          : item.kind === "agent"
+            ? { sessionUpdate: "agent_message_chunk", content: { type: "text", text: item.text } }
+            : replayedToolCall(`replay-${index}`, item, params.cwd);
+      await client.notify("session/update", { sessionId: params.sessionId, update });
     }
 
     this.announceSession(params.sessionId, client);
@@ -355,15 +382,23 @@ export class NovaAgent implements AgentRuntime {
     };
   }
 
+  /** Newest first, SESSION_PAGE_SIZE per page; the cursor is opaque to clients. */
   listSessions(params: acp.ListSessionsRequest): acp.ListSessionsResponse {
-    const sessions = listStoredSessions(params.cwd ?? undefined).map((s) => ({
+    const offset = decodeCursor(params.cursor);
+    const all = listStoredSessions(params.cwd ?? undefined);
+    const page = all.slice(offset, offset + SESSION_PAGE_SIZE).map((s) => ({
       sessionId: s.sessionId,
       cwd: s.cwd,
       title: s.title,
-      updatedAt: s.updatedAt,
+      updatedAt: s.updatedAt || null,
     }));
-    return { sessions };
+    const next = offset + SESSION_PAGE_SIZE;
+    return {
+      sessions: page,
+      ...(next < all.length ? { nextCursor: encodeCursor(next) } : {}),
+    };
   }
+
 
   listSessionCheckpoints(params: SessionIdParams): {
     checkpoints: ReturnType<typeof listStoredSessionCheckpoints>;

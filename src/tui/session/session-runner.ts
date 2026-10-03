@@ -7,13 +7,7 @@ import {
 } from "@datalabrotterdam/nova-sdk";
 import { createNovaClient } from "../../core/nova-client.js";
 import { NovaAgent } from "../../acp/agent.js";
-import {
-  assistantToolCalls,
-  assistantVisibleText,
-  legacyToolOutcomes,
-  toolOutcomeFromBody,
-  type ToolOutcome,
-} from "../../core/history.js";
+import { replayHistory } from "../../core/history.js";
 import type {
   BackgroundJobKind,
   BackgroundJobSummary,
@@ -92,90 +86,35 @@ const RESTORED_TOOL_METADATA: Record<string, RestoredToolMetadata> = {
 
 /** Rebuilds the live transcript shape from the model-facing stored history. */
 export function restoreSessionMessages(messages: ChatMessage[]): UIMessage[] {
-  const restored: UIMessage[] = [];
-  // Calls of the latest assistant message still waiting for their result,
-  // in call order. Native calls carry their id; legacy text calls do not.
-  let pending: Array<{ id: string | null; view: ToolCallView }> = [];
-
-  const settleMissingToolResults = () => {
-    for (const { view } of pending) {
-      view.status = "failed";
-      view.output = "Tool result was not persisted before the session ended.";
+  return replayHistory(messages).flatMap((item): UIMessage[] => {
+    if (item.kind === "user") return [{ id: uid(), role: "user", text: item.text }];
+    if (item.kind === "agent") {
+      return [{ id: uid(), role: "assistant", text: item.text, streaming: false }];
     }
-    pending = [];
-  };
-  const settle = (view: ToolCallView, outcome: ToolOutcome) => {
-    view.status = outcome.status;
-    view.output = outcome.output;
-  };
-
-  for (const message of messages) {
-    if (message.role === "assistant") {
-      settleMissingToolResults();
-      const visibleText = assistantVisibleText(message);
-      if (visibleText.trim()) {
-        restored.push({
-          id: uid(),
-          role: "assistant",
-          text: visibleText,
-          streaming: false,
-        });
-      }
-      for (const call of assistantToolCalls(message)) {
-        const metadata = RESTORED_TOOL_METADATA[call.name] ?? {
-          // Persisted ACP/MCP calls do not currently retain annotations. Keep
-          // unknown calls compact without falsely labelling them as changes.
-          kind: "execute",
-          mutating: false,
-        };
-        const view: ToolCallView = {
+    if (item.name === "update_plan") return [];
+    const metadata = RESTORED_TOOL_METADATA[item.name] ?? {
+      // Persisted ACP/MCP calls do not currently retain annotations. Keep
+      // unknown calls compact without falsely labelling them as changes.
+      kind: "execute",
+      mutating: false,
+    };
+    return [
+      {
+        id: uid(),
+        role: "tool",
+        call: {
           toolCallId: uid(),
-          name: call.name,
-          args: call.args,
+          name: item.name,
+          args: item.args,
           kind: metadata.kind,
           mutating: metadata.mutating,
-          status: "pending",
-          output: null,
+          status: item.status,
+          output: item.output,
           diff: null,
-        };
-        pending.push({ id: call.id, view });
-        if (call.name !== "update_plan") {
-          restored.push({ id: uid(), role: "tool", call: view });
-        }
-      }
-      continue;
-    }
-
-    if (message.role === "tool") {
-      const id = (message as { tool_call_id?: unknown }).tool_call_id;
-      const index = pending.findIndex((entry) => entry.id === id);
-      if (index >= 0) {
-        settle(pending[index]!.view, toolOutcomeFromBody(chatContentToText(message.content)));
-        pending.splice(index, 1);
-      }
-      continue;
-    }
-
-    if (message.role !== "user") continue;
-    const rawText = chatContentToText(message.content);
-    const outcomes = pending.length ? legacyToolOutcomes(rawText) : null;
-    if (outcomes) {
-      const forCalls = outcomes.filter((outcome) => outcome.name !== "(unparseable)");
-      forCalls.forEach((outcome, index) => {
-        const entry = pending[index];
-        if (entry) settle(entry.view, outcome);
-      });
-      pending = pending.slice(forCalls.length);
-      settleMissingToolResults();
-      continue;
-    }
-
-    settleMissingToolResults();
-    restored.push({ id: uid(), role: "user", text: rawText });
-  }
-
-  settleMissingToolResults();
-  return restored;
+        },
+      },
+    ];
+  });
 }
 
 export type McpSessionStatus = {

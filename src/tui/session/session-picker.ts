@@ -1,4 +1,4 @@
-import { listStoredSessions, type StoredSession } from "../../core/sessions.js";
+import { listStoredSessions, type SessionSummary } from "../../core/sessions.js";
 
 export type SessionPickerItem = {
   value: string;
@@ -11,7 +11,7 @@ export type SessionPickerItem = {
   };
 };
 
-export function listSessionsForCwd(cwd: string): StoredSession[] {
+export function listSessionsForCwd(cwd: string): SessionSummary[] {
   return listStoredSessions(cwd);
 }
 
@@ -25,7 +25,7 @@ export function listSessionPickerItems(
 }
 
 export function toSessionPickerItem(
-  session: StoredSession,
+  session: SessionSummary,
   now = Date.now(),
 ): SessionPickerItem {
   const age = formatTimeAgo(session.updatedAt, now);

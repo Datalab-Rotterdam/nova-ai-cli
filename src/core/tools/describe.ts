@@ -97,3 +97,34 @@ function clip(value: string): string {
   const single = value.replace(/\s+/g, " ");
   return single.length > MAX_TITLE_COMMAND_CHARS ? `${single.slice(0, MAX_TITLE_COMMAND_CHARS)}…` : single;
 }
+
+/** ACP kind of a tool by name, for calls replayed from history. */
+const TOOL_KINDS: Record<string, acp.ToolKind> = {
+  read_file: "read",
+  list_directory: "search",
+  search_text: "search",
+  inspect_environment: "read",
+  load_skill: "read",
+  memory_read: "read",
+  load_memory: "read",
+  list_background_jobs: "read",
+  read_background_output: "read",
+  wait_for_background_jobs: "think",
+  ask_user: "think",
+  update_plan: "think",
+  enter_plan_mode: "switch_mode",
+  write_file: "edit",
+  edit_file: "edit",
+  memory_write: "edit",
+  save_memory: "edit",
+  run_command: "execute",
+  run_package_script: "execute",
+  start_background_command: "execute",
+  start_background_agent: "think",
+  kill_background_job: "execute",
+  release_background_job: "execute",
+};
+
+export function toolKindOf(name: string): acp.ToolKind {
+  return TOOL_KINDS[name] ?? "other";
+}

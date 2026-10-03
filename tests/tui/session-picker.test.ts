@@ -16,7 +16,6 @@ test("session picker puts relative time first and normalizes the title to one li
       cwd: "/repo",
       title: "Investigate rendering\nthen fix the session picker",
       updatedAt: "2026-07-17T11:55:00.000Z",
-      messages: [],
     },
     NOW,
   );

@@ -282,3 +282,91 @@ export function messageTextWithToolCalls(message: ChatMessage): string {
   );
   return [text, ...rendered].filter(Boolean).join("\n");
 }
+
+export type ReplayItem =
+  | { kind: "user"; text: string }
+  | { kind: "agent"; text: string }
+  | {
+      kind: "tool";
+      name: string;
+      args: Record<string, unknown>;
+      status: "completed" | "failed";
+      output: string;
+    };
+
+const NOT_PERSISTED = "Tool result was not persisted before the session ended.";
+
+/**
+ * The conversation as a person saw it: user and agent text plus every tool
+ * call with its final status, rebuilt from history in either format. Tool
+ * results are never shown as user messages. Used to replay a loaded session
+ * to ACP clients and to restore the TUI transcript.
+ */
+export function replayHistory(messages: ChatMessage[]): ReplayItem[] {
+  const items: ReplayItem[] = [];
+  // Calls of the latest assistant message still waiting for their result.
+  let pending: Array<{ id: string | null; item: Extract<ReplayItem, { kind: "tool" }> }> = [];
+  const settleMissing = () => {
+    for (const { item } of pending) {
+      item.status = "failed";
+      item.output = NOT_PERSISTED;
+    }
+    pending = [];
+  };
+
+  for (const message of messages) {
+    if (message.role === "assistant") {
+      settleMissing();
+      const visible = assistantVisibleText(message);
+      if (visible.trim()) items.push({ kind: "agent", text: visible });
+      for (const call of assistantToolCalls(message)) {
+        const item = {
+          kind: "tool" as const,
+          name: call.name,
+          args: call.args,
+          status: "failed" as "completed" | "failed",
+          output: NOT_PERSISTED,
+        };
+        items.push(item);
+        pending.push({ id: call.id, item });
+      }
+      continue;
+    }
+
+    if (message.role === "tool") {
+      const id = (message as { tool_call_id?: unknown }).tool_call_id;
+      const index = pending.findIndex((entry) => entry.id === id);
+      if (index >= 0) {
+        const outcome = toolOutcomeFromBody(chatContentToText(message.content));
+        pending[index]!.item.status = outcome.status;
+        pending[index]!.item.output = outcome.output;
+        pending.splice(index, 1);
+      }
+      continue;
+    }
+
+    if (message.role !== "user") continue;
+    const text = chatContentToText(message.content);
+    const outcomes = pending.length ? legacyToolOutcomes(text) : null;
+    if (outcomes) {
+      const forCalls = outcomes.filter((outcome) => outcome.name !== "(unparseable)");
+      forCalls.forEach((outcome, index) => {
+        const entry = pending[index];
+        if (entry) {
+          entry.item.status = outcome.status;
+          entry.item.output = outcome.output;
+        }
+      });
+      pending = pending.slice(forCalls.length);
+      settleMissing();
+      continue;
+    }
+    settleMissing();
+    // A legacy tool result whose call was lost (e.g. compacted) is not user text.
+    if (LEGACY_TOOL_RESULT.test(text)) continue;
+    if (text.trim()) items.push({ kind: "user", text });
+  }
+
+  settleMissing();
+  return items;
+}

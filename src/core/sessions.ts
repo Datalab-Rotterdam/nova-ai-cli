@@ -351,8 +351,16 @@ export function appendSessionCompaction(
   appendFileSync(path, `${lines.join("\n")}\n`, { mode: FILE_MODE });
 }
 
-export function listStoredSessions(cwd?: string): StoredSession[] {
-  const sessions = new Map<string, StoredSession>();
+export type SessionSummary = {
+  sessionId: string;
+  cwd: string;
+  title: string | null;
+  updatedAt: string;
+};
+
+/** All stored sessions, newest first, without loading their messages. */
+export function listStoredSessions(cwd?: string): SessionSummary[] {
+  const sessions = new Map<string, SessionSummary>();
   for (const dir of sessionDirs()) {
     let files: string[];
     try {
@@ -365,14 +373,13 @@ export function listStoredSessions(cwd?: string): StoredSession[] {
       const sessionId = file.slice(0, -".jsonl".length);
       if (!isValidSessionId(sessionId) || sessions.has(sessionId)) continue;
       try {
-        const raw = readFileSync(join(dir, file), "utf8");
-        const session = parseSessionFile(raw);
-        if (!session) continue;
-        if (!cwd || session.cwd === cwd) {
-          sessions.set(sessionId, { ...session, sessionId });
+        const summary = readSessionSummary(readFileSync(join(dir, file), "utf8"));
+        if (!summary) continue;
+        if (!cwd || summary.cwd === cwd) {
+          sessions.set(sessionId, { ...summary, sessionId });
         }
       } catch {
-        // Skip corrupt/partial session files rather than failing the whole listing.
+        // Skip unreadable session files rather than failing the whole listing.
       }
     }
   }
@@ -380,6 +387,35 @@ export function listStoredSessions(cwd?: string): StoredSession[] {
   return [...sessions.values()].sort((a, b) =>
     b.updatedAt.localeCompare(a.updatedAt),
   );
+}
+
+/**
+ * Title, cwd and last activity of a session file, scanning from the end:
+ * only the last header line is parsed, and the timestamp is read from the
+ * start of the last record line (records can hold a whole turn of messages).
+ */
+export function readSessionSummary(
+  raw: string,
+): Omit<SessionSummary, "sessionId"> | null {
+  const lines = raw.split("\n");
+  let updatedAt: string | null = null;
+  for (let index = lines.length - 1; index >= 0; index--) {
+    const line = lines[index]!;
+    if (!line.trim()) continue;
+    if (line.startsWith('{"kind":"header"')) {
+      try {
+        const header = JSON.parse(line) as HeaderLine;
+        return { cwd: header.cwd, title: header.title, updatedAt: updatedAt ?? "" };
+      } catch {
+        continue; // a torn last line; an earlier header still describes the session
+      }
+    }
+    if (updatedAt === null) {
+      const match = /"updatedAt":"([^"]+)"/.exec(line.slice(0, 300));
+      if (match) updatedAt = match[1]!;
+    }
+  }
+  return null;
 }
 
 export function listSessionCheckpoints(sessionId: string): SessionCheckpoint[] {
