@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { connectMcpServers, listMcpTools } from "../../src/core/mcp.js";
+import { connectMcpServers, listMcpTools, type McpConnection } from "../../src/core/mcp.js";
 
 test("MCP connection failures are returned as status instead of written to the terminal", async () => {
   const result = await connectMcpServers([
@@ -218,4 +218,46 @@ test("workspace-root shaped MCP string properties get a cwd hint", async () => {
     /pass the workspace root/,
   );
   assert.equal(parameters?.properties?.query.description, undefined);
+});
+
+
+const stdioServer = (name: string, script: string) => ({
+  name,
+  command: process.execPath,
+  args: ["-e", script],
+  env: [],
+});
+
+test("a hung MCP server times out instead of blocking the session", async () => {
+  const started = Date.now();
+  const result = await connectMcpServers(
+    [stdioServer("hung-a", "setInterval(() => {}, 1000)"), stdioServer("hung-b", "setInterval(() => {}, 1000)")],
+    { timeoutMs: 300 },
+  );
+  assert.equal(result.connections.length, 0);
+  assert.deepEqual(result.failures.map((f) => f.serverName), ["hung-a", "hung-b"]);
+  assert.match(result.failures[0]!.message, /Timed out/);
+  // Parallel: both time out together, not one after the other.
+  assert.ok(Date.now() - started < 1_500, `took ${Date.now() - started}ms`);
+});
+
+test("a crashing MCP server reports its stderr", async () => {
+  const result = await connectMcpServers(
+    [stdioServer("broken", "console.error('missing DATABASE_URL'); process.exit(1)")],
+    { timeoutMs: 3_000 },
+  );
+  assert.equal(result.connections.length, 0);
+  assert.match(result.failures[0]!.message, /missing DATABASE_URL/);
+});
+
+test("tools whose sanitized names collide stay separately reachable", async () => {
+  const fake = (serverName: string, names: string[]): McpConnection => ({
+    serverName,
+    client: {
+      listTools: async () => ({ tools: names.map((name) => ({ name, inputSchema: { type: "object" } })) }),
+    } as unknown as McpConnection["client"],
+    close: async () => {},
+  });
+  const { tools } = await listMcpTools([fake("db", ["run.query", "run_query"])]);
+  assert.deepEqual(tools.map((t) => t.name), ["mcp__db__run_query", "mcp__db__run_query_2"]);
 });

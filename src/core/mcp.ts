@@ -46,7 +46,14 @@ function headersToRecord(headers: acp.HttpHeader[]): Record<string, string> {
   return Object.fromEntries(headers.map((h) => [h.name, h.value]));
 }
 
-function buildTransport(server: acp.McpServer): Transport {
+/** How long one MCP server may take to connect, and to list its tools. */
+export const MCP_TIMEOUT_MS = 10_000;
+const STDERR_TAIL_CHARS = 2_000;
+
+function buildTransport(
+  server: acp.McpServer,
+  stderrTail: { text: string },
+): Transport {
   if ("type" in server && server.type === "http") {
     return new StreamableHTTPClientTransport(new URL(server.url), {
       requestInit: { headers: headersToRecord(server.headers) },
@@ -68,7 +75,10 @@ function buildTransport(server: acp.McpServer): Transport {
     // status metadata instead.
     stderr: "pipe",
   });
-  transport.stderr?.on("data", () => {});
+  // Always drained (a full pipe would block the server); the tail explains failures.
+  transport.stderr?.on("data", (chunk: Buffer) => {
+    stderrTail.text = (stderrTail.text + chunk.toString("utf8")).slice(-STDERR_TAIL_CHARS);
+  });
   return transport;
 }
 
@@ -88,31 +98,59 @@ export type McpConnectionResult = {
   failures: McpConnectionFailure[];
 };
 
+/**
+ * Connects all servers in parallel; each gets `timeoutMs`, so one slow or
+ * hung server cannot hold up the session. Failures are reported, never thrown.
+ */
 export async function connectMcpServers(
   servers: acp.McpServer[],
+  options: { timeoutMs?: number } = {},
 ): Promise<McpConnectionResult> {
-  const connections: McpConnection[] = [];
-  const failures: McpConnectionFailure[] = [];
-  for (const server of servers) {
-    if ("type" in server && server.type === "acp") continue; // experimental ACP-transport MCP, not yet supported
-
-    const client = new Client({ name: "nova-ai-cli", version: "1.0.0" });
-    try {
-      const transport = buildTransport(server);
-      await client.connect(transport);
-      connections.push({
-        serverName: server.name,
-        client,
-        close: () => client.close(),
-      });
-    } catch (err) {
-      failures.push({
-        serverName: server.name,
-        message: err instanceof Error ? err.message : "Connection failed.",
-      });
-    }
-  }
+  const timeoutMs = options.timeoutMs ?? MCP_TIMEOUT_MS;
+  const attempts = await Promise.all(
+    servers
+      // experimental ACP-transport MCP, not yet supported
+      .filter((server) => !("type" in server && server.type === "acp"))
+      .map(async (server): Promise<McpConnection | McpConnectionFailure> => {
+        const client = new Client({ name: "nova-ai-cli", version: "1.0.0" });
+        const stderrTail = { text: "" };
+        try {
+          const transport = buildTransport(server, stderrTail);
+          await withTimeout(client.connect(transport), timeoutMs, () => client.close());
+          return { serverName: server.name, client, close: () => client.close() };
+        } catch (err) {
+          await client.close().catch(() => {});
+          const reason = err instanceof Error ? err.message : "Connection failed.";
+          const stderr = stderrTail.text.trim();
+          return {
+            serverName: server.name,
+            message: stderr ? `${reason}\n${stderr}` : reason,
+          };
+        }
+      }),
+  );
+  const connections = attempts.filter((a): a is McpConnection => "client" in a);
+  const failures = attempts.filter((a): a is McpConnectionFailure => !("client" in a));
   return { connections, failures };
+}
+
+async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  onTimeout: () => Promise<unknown> | void,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      void Promise.resolve(onTimeout()).catch(() => {});
+      reject(new Error(`Timed out after ${Math.round(timeoutMs / 1000)}s.`));
+    }, timeoutMs);
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export async function closeMcpConnections(
@@ -147,7 +185,10 @@ function toToolResult(result: {
   return { output: text };
 }
 
-export async function listMcpTools(connections: McpConnection[]): Promise<{
+export async function listMcpTools(
+  connections: McpConnection[],
+  options: { timeoutMs?: number } = {},
+): Promise<{
   tools: ToolDefinition[];
   connections: McpConnection[];
   failures: McpConnectionFailure[];
@@ -156,12 +197,23 @@ export async function listMcpTools(connections: McpConnection[]): Promise<{
   const readyConnections: McpConnection[] = [];
   const failures: McpConnectionFailure[] = [];
 
-  for (const connection of connections) {
+  const timeoutMs = options.timeoutMs ?? MCP_TIMEOUT_MS;
+  const listed = await Promise.all(
+    connections.map((connection) =>
+      withTimeout(connection.client.listTools(), timeoutMs, () => connection.close()).then(
+        (result) => ({ connection, result, error: null as unknown }),
+        (error: unknown) => ({ connection, result: null, error }),
+      ),
+    ),
+  );
+  const usedNames = new Set<string>();
+
+  for (const { connection, result, error } of listed) {
     let serverTools;
-    try {
-      ({ tools: serverTools } = await connection.client.listTools());
+    if (result) {
+      serverTools = result.tools;
       readyConnections.push(connection);
-    } catch (error) {
+    } else {
       failures.push({
         serverName: connection.serverName,
         message:
@@ -173,7 +225,13 @@ export async function listMcpTools(connections: McpConnection[]): Promise<{
       continue;
     }
     for (const tool of serverTools) {
-      const qualifiedName = `${TOOL_NAME_PREFIX}${sanitize(connection.serverName)}__${sanitize(tool.name)}`;
+      // Sanitizing can map different names to one; keep every tool reachable.
+      const baseName = `${TOOL_NAME_PREFIX}${sanitize(connection.serverName)}__${sanitize(tool.name)}`;
+      let qualifiedName = baseName;
+      for (let suffix = 2; usedNames.has(qualifiedName); suffix++) {
+        qualifiedName = `${baseName}_${suffix}`;
+      }
+      usedNames.add(qualifiedName);
       const parameters = toToolParameters(tool.inputSchema);
       // Only an explicit readOnlyHint skips the permission prompt; absent
       // annotations stay mutating (conservative default).
@@ -184,12 +242,13 @@ export async function listMcpTools(connections: McpConnection[]): Promise<{
         parameters: parameters && annotateWorkspacePathHints(parameters),
         mutating: !readOnly,
         kind: readOnly ? "fetch" : "execute",
-        async execute(_ctx, args) {
+        async execute(ctx, args) {
           try {
-            const result = await connection.client.callTool({
-              name: tool.name,
-              arguments: args,
-            });
+            const result = await connection.client.callTool(
+              { name: tool.name, arguments: args },
+              undefined,
+              { signal: ctx.signal },
+            );
             return toToolResult(
               result as { content?: unknown; isError?: boolean },
             );
