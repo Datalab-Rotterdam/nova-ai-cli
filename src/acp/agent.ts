@@ -1,4 +1,5 @@
 import * as acp from "@agentclientprotocol/sdk";
+import { NOVA_NOTIFICATIONS, novaExtensionsMeta } from "./extensions.js";
 import { NovaAI, type ChatMessage } from "@datalabrotterdam/nova-sdk";
 import { createNovaClient } from "../core/nova-client.js";
 import type { AgentEvent } from "../core/agent-events.js";
@@ -174,6 +175,7 @@ export class NovaAgent implements AgentRuntime {
           },
         },
         positionEncoding: this.positionEncoding,
+        _meta: { "nova-ai-cli": novaExtensionsMeta() },
       },
       authMethods: [
         {
@@ -354,7 +356,7 @@ export class NovaAgent implements AgentRuntime {
     session.promptQueue.clear();
     await this.queue.notifyPromptQueue(params.sessionId, [], client);
     await client
-      ?.notify("session/rewound", {
+      ?.notify(NOVA_NOTIFICATIONS.sessionRewound, {
         sessionId: params.sessionId,
         removedCheckpoints: result.removedCheckpoints,
         remainingCheckpoints: result.remainingCheckpoints,

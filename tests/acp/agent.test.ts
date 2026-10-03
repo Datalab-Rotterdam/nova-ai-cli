@@ -360,7 +360,7 @@ describe("NovaAgent.rewindSession", () => {
       ["second"],
     );
     assert.deepEqual(agent.listPromptQueue({ sessionId }).entries, []);
-    assert.deepEqual(notifications, ["queue/changed", "session/rewound"]);
+    assert.deepEqual(notifications, ["_nova/queue/changed", "_nova/session/rewound"]);
     assert.equal(
       agent.listSessionCheckpoints({ sessionId }).checkpoints.length,
       1,

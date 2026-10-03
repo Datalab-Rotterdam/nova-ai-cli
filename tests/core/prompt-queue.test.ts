@@ -116,7 +116,7 @@ test("NovaAgent drains steering from its session queue and notifies the client",
   );
   assert.deepEqual(
     notifications.map((notification) => notification.method),
-    ["queue/changed", "session/update"],
+    ["_nova/queue/changed", "session/update"],
   );
 });
 

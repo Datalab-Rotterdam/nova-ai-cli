@@ -1,4 +1,5 @@
 import * as acp from "@agentclientprotocol/sdk";
+import { NOVA_NOTIFICATIONS } from "./extensions.js";
 import type { AgentEvent } from "../core/agent-events.js";
 import type { BackgroundJobSummary } from "../core/background.js";
 import type { McpConnection, McpConnectionFailure } from "../core/mcp.js";
@@ -127,7 +128,7 @@ export async function emitBackgroundUpdate(
   job: BackgroundJobSummary,
   extra: Record<string, unknown> = {},
 ): Promise<void> {
-  await client.notify("background/update", { event, job, ...extra });
+  await client.notify(NOVA_NOTIFICATIONS.backgroundUpdate, { event, job, ...extra });
 }
 
 export function sessionStatusMeta(

@@ -1,6 +1,7 @@
 import { Readable, Writable } from "node:stream";
 import * as acp from "@agentclientprotocol/sdk";
 import { NovaAgent } from "./agent.js";
+import { NOVA_METHODS } from "./extensions.js";
 import {
   parseJobIdParams,
   parseListParams,
@@ -37,10 +38,10 @@ async function runAcp(...args: string[]): Promise<void> {
     .onRequest("session/delete", (ctx) => agentImpl.deleteSession(ctx.params))
     .onRequest("session/fork", (ctx) => agentImpl.forkSession(ctx.params))
     .onRequest("session/resume", (ctx) => agentImpl.resumeSession(ctx.params))
-    .onRequest("session/checkpoints", parseSessionIdParams, (ctx) =>
+    .onRequest(NOVA_METHODS.sessionCheckpoints, parseSessionIdParams, (ctx) =>
       agentImpl.listSessionCheckpoints(ctx.params),
     )
-    .onRequest("session/rewind", parseRewindSessionParams, (ctx) =>
+    .onRequest(NOVA_METHODS.sessionRewind, parseRewindSessionParams, (ctx) =>
       agentImpl.rewindSession(ctx.params, ctx.client),
     )
     .onRequest("session/set_config_option", (ctx) =>
@@ -67,32 +68,32 @@ async function runAcp(...args: string[]): Promise<void> {
     )
     .onNotification("nes/accept", (ctx) => agentImpl.acceptNes(ctx.params))
     .onNotification("nes/reject", (ctx) => agentImpl.rejectNes(ctx.params))
-    .onRequest("background/start_terminal", parseStartTerminalParams, (ctx) =>
+    .onRequest(NOVA_METHODS.backgroundStartTerminal, parseStartTerminalParams, (ctx) =>
       agentImpl.startBackgroundTerminal(ctx.params, ctx.client),
     )
-    .onRequest("background/start_prompt", parseStartPromptParams, (ctx) =>
+    .onRequest(NOVA_METHODS.backgroundStartPrompt, parseStartPromptParams, (ctx) =>
       agentImpl.startBackgroundPrompt(ctx.params, ctx.client),
     )
-    .onRequest("background/list", parseListParams, (ctx) => agentImpl.listBackgroundJobs(ctx.params))
-    .onRequest("background/output", parseJobIdParams, (ctx) => agentImpl.backgroundOutput(ctx.params, ctx.client))
-    .onRequest("background/kill", parseJobIdParams, (ctx) => agentImpl.killBackgroundJob(ctx.params, ctx.client))
-    .onRequest("background/release", parseJobIdParams, (ctx) => agentImpl.releaseBackgroundJob(ctx.params, ctx.client))
-    .onRequest("queue/enqueue", parseEnqueuePromptParams, (ctx) =>
+    .onRequest(NOVA_METHODS.backgroundList, parseListParams, (ctx) => agentImpl.listBackgroundJobs(ctx.params))
+    .onRequest(NOVA_METHODS.backgroundOutput, parseJobIdParams, (ctx) => agentImpl.backgroundOutput(ctx.params, ctx.client))
+    .onRequest(NOVA_METHODS.backgroundKill, parseJobIdParams, (ctx) => agentImpl.killBackgroundJob(ctx.params, ctx.client))
+    .onRequest(NOVA_METHODS.backgroundRelease, parseJobIdParams, (ctx) => agentImpl.releaseBackgroundJob(ctx.params, ctx.client))
+    .onRequest(NOVA_METHODS.queueEnqueue, parseEnqueuePromptParams, (ctx) =>
       agentImpl.queuePrompt(ctx.params, ctx.client),
     )
-    .onRequest("queue/list", parseQueueSessionParams, (ctx) =>
+    .onRequest(NOVA_METHODS.queueList, parseQueueSessionParams, (ctx) =>
       agentImpl.listPromptQueue(ctx.params),
     )
-    .onRequest("queue/edit_begin", parseQueueEntryParams, (ctx) =>
+    .onRequest(NOVA_METHODS.queueEditBegin, parseQueueEntryParams, (ctx) =>
       agentImpl.beginQueuedPromptEdit(ctx.params, ctx.client),
     )
-    .onRequest("queue/update", parseUpdateQueuedPromptParams, (ctx) =>
+    .onRequest(NOVA_METHODS.queueUpdate, parseUpdateQueuedPromptParams, (ctx) =>
       agentImpl.updateQueuedPrompt(ctx.params, ctx.client),
     )
-    .onRequest("queue/remove", parseQueueEntryParams, (ctx) =>
+    .onRequest(NOVA_METHODS.queueRemove, parseQueueEntryParams, (ctx) =>
       agentImpl.removeQueuedPrompt(ctx.params, ctx.client),
     )
-    .onRequest("queue/clear", parseQueueSessionParams, (ctx) =>
+    .onRequest(NOVA_METHODS.queueClear, parseQueueSessionParams, (ctx) =>
       agentImpl.clearPromptQueue(ctx.params, ctx.client),
     )
     .onNotification("session/cancel", (ctx) => agentImpl.cancel(ctx.params))

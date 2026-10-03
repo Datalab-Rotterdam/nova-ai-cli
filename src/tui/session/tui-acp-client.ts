@@ -1,4 +1,5 @@
 import type { ChildProcess } from "node:child_process";
+import { NOVA_NOTIFICATIONS } from "../../acp/extensions.js";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import type * as acp from "@agentclientprotocol/sdk";
@@ -497,9 +498,9 @@ export class TuiAcpClient {
     switch (method) {
       case "session/update":
         return this.sessionUpdate(params as SessionNotification);
-      case "background/update":
+      case NOVA_NOTIFICATIONS.backgroundUpdate:
         return this.backgroundUpdate(params);
-      case "queue/changed":
+      case NOVA_NOTIFICATIONS.queueChanged:
         return this.queueChanged(params);
       default:
         return;

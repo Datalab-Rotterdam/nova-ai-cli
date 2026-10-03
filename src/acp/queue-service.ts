@@ -1,4 +1,5 @@
 import * as acp from "@agentclientprotocol/sdk";
+import { NOVA_NOTIFICATIONS } from "./extensions.js";
 import { type ChatMessage } from "@datalabrotterdam/nova-sdk";
 import type { AgentRuntime } from "./agent-runtime.js";
 import {
@@ -146,7 +147,7 @@ export class QueueService {
     client?: acp.AgentContext,
   ): Promise<void> {
     if (!client) return Promise.resolve();
-    return client.notify("queue/changed", { sessionId, entries }).catch(() => {
+    return client.notify(NOVA_NOTIFICATIONS.queueChanged, { sessionId, entries }).catch(() => {
       // Queue ownership and ordering remain valid if a client disconnects or
       // does not understand this Nova extension notification.
     });

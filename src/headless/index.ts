@@ -1,4 +1,5 @@
 import { resolve } from "node:path";
+import { NOVA_NOTIFICATIONS } from "../acp/extensions.js";
 import * as acp from "@agentclientprotocol/sdk";
 import { NovaAgent } from "../acp/agent.js";
 import type { PermissionMode } from "../core/policy/settings.js";
@@ -321,10 +322,10 @@ function notificationRecord(
   method: string,
   params: unknown,
 ): Record<string, unknown> | null {
-  if (method === "background/update") {
+  if (method === NOVA_NOTIFICATIONS.backgroundUpdate) {
     return { type: "background.update", ...(toRecord(params) ?? {}) };
   }
-  if (method === "queue/changed") {
+  if (method === NOVA_NOTIFICATIONS.queueChanged) {
     return { type: "queue.changed", ...(toRecord(params) ?? {}) };
   }
   if (method !== "session/update") {

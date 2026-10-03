@@ -123,7 +123,7 @@ export function installFakeAgentQueue(runner: SessionRunner): QueueAgent {
     while (entries[count]?.kind === "steer" && !entries[count]?.editing)
       count++;
     const steering = entries.splice(0, count);
-    await client.notify("queue/changed", { sessionId, entries: snapshot() });
+    await client.notify("_nova/queue/changed", { sessionId, entries: snapshot() });
     for (const entry of steering) {
       await client.notify("session/update", {
         sessionId,
