@@ -1,54 +1,24 @@
 {
-  "name": "@datalabrotterdam/nova-ai-cli",
-  "version": "1.2.0-alpha.1",
-  "description": "CLI for DataLab Rotterdam's Nova AI, with an Agent Client Protocol mode for editors/IDEs, backed by @datalabrotterdam/nova-sdk",
+  "name": "nova-ai-monorepo",
+  "private": true,
+  "description": "Nova AI agent (ACP) and CLI",
   "license": "Apache-2.0",
-  "author": "DataLab Rotterdam",
   "type": "module",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
-  "bin": {
-    "nova-ai-cli": "dist/index.js",
-    "nova-ai": "dist/index.js"
-  },
-  "files": [
-    "dist",
-    "src/acp/web/dist",
-    "LICENSE"
+  "workspaces": [
+    "packages/agent",
+    "packages/cli"
   ],
   "engines": {
     "node": ">=22.19"
   },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/Datalab-Rotterdam/nova-ai-cli.git"
-  },
-  "bugs": {
-    "url": "https://github.com/Datalab-Rotterdam/nova-ai-cli/issues"
-  },
-  "homepage": "https://github.com/Datalab-Rotterdam/nova-ai-cli#readme",
-  "publishConfig": {
-    "access": "public"
-  },
   "scripts": {
-    "build": "npm install --prefix src/acp/web && npm run build --prefix src/acp/web && tsup",
-    "dev": "tsx watch src/index.ts",
-    "test": "tsc -p tsconfig.json --noEmit && npm run test:unit && npm run test:pty",
-    "test:unit": "node -e \"require('fs').rmSync('dist-test',{recursive:true,force:true})\" && tsc -p tsconfig.test.json && node --import ./dist-test/tests/setup-env.js --test --test-timeout=30000 \"dist-test/tests/**/*.test.js\"",
-    "test:pty": "tsx tests/tui/pty-runtime-runner.ts"
-  },
-  "dependencies": {
-    "@agentclientprotocol/sdk": "^0.29.0",
-    "@datalabrotterdam/nova-sdk": "^1.3.2",
-    "@modelcontextprotocol/sdk": "^1.29.0",
-    "@sourceregistry/node-webserver": "^1.8.0",
-    "chalk": "^5.3.0",
-    "cli-highlight": "^2.1.11",
-    "diff": "^9.0.0",
-    "ink": "^7.1.1",
-    "marked": "^18.0.14",
-    "react": "^19.3.0",
-    "string-width": "^8.3.0"
+    "build": "npm run build -w @datalabrotterdam/nova-ai-agent && npm run build -w @datalabrotterdam/nova-ai-cli",
+    "build:lib": "npm run build:lib -w @datalabrotterdam/nova-ai-agent",
+    "typecheck": "npm run build:lib && npm run typecheck --workspaces",
+    "test": "npm run build:lib && npm test --workspaces",
+    "test:unit": "npm run build:lib && npm run test:unit --workspaces",
+    "test:pty": "npm run build:lib && npm run test:pty -w @datalabrotterdam/nova-ai-cli",
+    "dev": "npm run build:lib && npm run dev -w @datalabrotterdam/nova-ai-cli"
   },
   "devDependencies": {
     "@semantic-release/changelog": "^6.0.3",
@@ -61,36 +31,13 @@
     "@xterm/headless": "^6.0.0",
     "ink-testing-library": "^4.0.0",
     "node-pty": "^1.1.0",
+    "semantic-release": "^25.0.9",
+    "semantic-release-monorepo": "^8.0.2",
     "tsup": "^8.3.0",
     "tsx": "^4.19.0",
     "typescript": "^5.6.0"
   },
   "overrides": {
     "esbuild": "^0.28.1"
-  },
-  "release": {
-    "branches": [
-      "main",
-      {
-        "name": "alpha",
-        "prerelease": true
-      }
-    ],
-    "plugins": [
-      "@semantic-release/commit-analyzer",
-      "@semantic-release/release-notes-generator",
-      "@semantic-release/changelog",
-      "@semantic-release/npm",
-      [
-        "@semantic-release/git",
-        {
-          "assets": [
-            "package.json",
-            "CHANGELOG.md"
-          ],
-          "message": "nova-ai-cli(release): 🚀 v${nextRelease.version}\n\n${nextRelease.notes}"
-        }
-      ]
-    ]
   }
 }

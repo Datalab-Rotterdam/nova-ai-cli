@@ -1,7 +1,9 @@
 # Nova over the Agent Client Protocol
 
-`nova-ai --acp` is an [Agent Client Protocol](https://agentclientprotocol.com)
-agent: JSON-RPC 2.0 as newline-delimited JSON over stdin/stdout. This page is
+`nova-ai-agent --acp` (package `@datalabrotterdam/nova-ai-agent`) is an
+[Agent Client Protocol](https://agentclientprotocol.com) agent: JSON-RPC 2.0 as
+newline-delimited JSON over stdin/stdout. `nova-ai --acp` from the CLI package
+runs the same agent. This page is
 the reference for clients that embed it (editors, IDEs, custom hosts). The
 terminal UI and `nova-ai -p` use exactly this protocol in-process, so
 everything below is exercised by Nova's own front ends.
@@ -19,12 +21,13 @@ everything below is exercised by Nova's own front ends.
 // Zed: settings.json
 {
   "agent_servers": {
-    "Nova AI": { "command": "npx", "args": ["-y", "@datalabrotterdam/nova-ai-cli", "--acp"] }
+    "Nova AI": { "command": "npx", "args": ["-y", "@datalabrotterdam/nova-ai-agent", "--acp"] }
   }
 }
 ```
 
-Run `nova-ai login` once, or let the client run one of the auth methods below.
+Run `nova-ai-agent login` (or `nova-ai login`) once, or let the client run one
+of the auth methods below.
 
 ## initialize
 
@@ -32,7 +35,7 @@ The agent answers with:
 
 | Field | Value |
 |---|---|
-| `agentInfo` | `{ name: "nova-ai-cli", title: "Nova AI", version }` |
+| `agentInfo` | `{ name: "nova-ai-cli", title: "Nova AI", version }` (the agent package's version; the name is kept for existing clients) |
 | `loadSession` | `true` |
 | `promptCapabilities` | `image`, `embeddedContext` |
 | `mcpCapabilities` | `http`, `sse` (stdio is always supported) |
@@ -46,7 +49,7 @@ The agent answers with:
 |---|---|---|
 | `nova-api-key` | agent | `authenticate` opens a local page in the browser; resolves once a valid key is stored |
 | `nova-api-key-env` | `env_var` | Start the agent with `NOVA_API_KEY` (and optionally `NOVA_MODEL`) |
-| `nova-login-terminal` | `terminal` | The client runs `nova-ai login --no-browser` in a terminal (hidden key input) |
+| `nova-login-terminal` | `terminal` | The client runs the agent's command with `login --no-browser` in a terminal (hidden key input) |
 
 Keys are stored in `~/.nova-ai/credentials.json` (mode 0600). A request that
 needs Nova without credentials fails with `authRequired`.
@@ -232,5 +235,5 @@ Gateway errors include the request id that Nova returned.
 ## Testing a client
 
 `NOVA_BASE_URL` points the agent at another OpenAI-compatible gateway, which
-is how Nova's own conformance test (`tests/acp/conformance.test.ts`) runs
+is how Nova's own conformance test (`packages/agent/tests/acp/conformance.test.ts`) runs
 the real process against a local fake server.
