@@ -1,0 +1,573 @@
+import type { NovaAI, ChatMessage } from "@datalabrotterdam/nova-sdk";
+import {
+  hasIncompleteToolCall,
+  hasMalformedToolCall,
+  hasPendingFence,
+  scanToolCalls,
+  stripToolCallMarkup,
+  tailMayContinueToolCalls,
+  type ToolCallScan,
+} from "./tools/marker.js";
+import type { BackgroundToolApi } from "./background.js";
+import type { ToolEnvironment } from "./tools/environment.js";
+import type { ToolDefinition } from "./tools/types.js";
+import type { AgentEvent } from "./agent-events.js";
+import {
+  isContextLimitError,
+  type ContextCompactionResult,
+} from "./context-compaction.js";
+import { estimateMessagesTokens } from "./context-usage.js";
+import { ReasoningTagFilter, stripReasoningTags } from "./reasoning-tags.js";
+import type { ToolHost } from "./tool-host.js";
+import { toLegacyMessages } from "./history.js";
+import { runNativeTurn } from "./native-turn.js";
+import {
+  formatBatchResults,
+  runToolBatch,
+  type ToolBatchContext,
+} from "./tool-batch.js";
+
+const DEFAULT_MAX_TOOL_ROUNDS = 64;
+const MAX_EMPTY_COMPLETION_RETRIES = 2;
+const MAX_TRUNCATED_COMPLETION_RETRIES = 2;
+const PROACTIVE_COMPACTION_THRESHOLD = 0.8;
+const EMPTY_COMPLETION_INSTRUCTION =
+  "The previous completion contained no visible assistant response. Continue the task now with either the next required tool call or a final answer.";
+const TRUNCATED_COMPLETION_INSTRUCTION =
+  "Your previous response was cut off. Continue exactly where it stopped. Do not restart, repeat the preamble, or claim completion without providing the actual result.";
+const INCOMPLETE_TOOL_CALL_INSTRUCTION =
+  "Your tool_call block was cut off. Continue exactly at the next character and finish the JSON plus its closing marker. Emit only the missing suffix: do not restart the tool call, repeat its existing JSON, or turn any file content into ordinary assistant text.";
+const ABANDON_INCOMPLETE_TOOL_CALL_INSTRUCTION =
+  "The attempted tool call was too large to finish after multiple streamed continuations and was not executed. Do not retry the same large call. Split the work into smaller tool calls, or return a final answer using the results already gathered.";
+const FINAL_RESPONSE_INSTRUCTION =
+  "The tool-use safety limit has been reached. Do not call any more tools. Return a final answer now using the results already gathered, and clearly mention anything that remains unverified.";
+
+export type RunTurnDeps = {
+  host: ToolHost;
+  sessionId: string;
+  cwd: string;
+  environment: ToolEnvironment;
+  background?: BackgroundToolApi;
+  tools: ToolDefinition[];
+  requestPermission(
+    toolCallId: string,
+    tool: ToolDefinition,
+    args: Record<string, unknown>,
+  ): Promise<boolean>;
+  /** See ToolBatchContext.authorize; the agent passes its permission policy here. */
+  authorize?: ToolBatchContext["authorize"];
+  compactContext?(
+    messages: ChatMessage[],
+    /** null when compaction is proactive rather than error-driven. */
+    error: unknown,
+  ): Promise<ContextCompactionResult>;
+  /** Enables proactive compaction before the estimate exceeds the window. */
+  contextWindow?: number | null;
+  /**
+   * Drains user guidance that arrived while a tool round was running. The
+   * callback is only read between model requests, never during a stream or
+   * tool execution, so callers can steer an active turn without cancelling it.
+   */
+  takeSteeringMessages?(): ChatMessage[] | Promise<ChatMessage[]>;
+  emit(event: AgentEvent): void | Promise<void>;
+  novaClient: NovaAI;
+  model: string;
+  /** Primarily injectable for focused tests; production uses the safety cap. */
+  maxToolRounds?: number;
+  /**
+   * "native" sends tools in the request and expects tool_calls (see
+   * native-turn.ts); "text" (default) teaches the ```tool_call protocol in
+   * the system prompt. The caller picks the matching system prompt.
+   */
+  toolProtocol?: "native" | "text";
+};
+
+export type RunTurnResult = {
+  stopReason: "end_turn" | "max_turn_requests" | "cancelled";
+  turnMessages: ChatMessage[];
+};
+
+/**
+ * Transport-agnostic streaming + tool-call loop. `messages` is the full
+ * request context (system prompt + history + the new user message); it is
+ * mutated in place as rounds progress so subsequent rounds see prior tool
+ * results, mirroring the original inline loop in NovaAgent.prompt().
+ * `turnMessages` in the result holds only what this call generated (the
+ * caller already owns the user message and appends these on top of it).
+ */
+export async function runTurn(
+  messages: ChatMessage[],
+  signal: AbortSignal,
+  deps: RunTurnDeps,
+): Promise<RunTurnResult> {
+  if (deps.toolProtocol === "native") {
+    return runNativeTurn(messages, signal, deps);
+  }
+  const {
+    host,
+    sessionId,
+    cwd,
+    environment,
+    background,
+    tools,
+    requestPermission,
+    compactContext,
+    takeSteeringMessages,
+    emit,
+    novaClient,
+    model,
+  } = deps;
+  const maxToolRounds = Math.max(
+    1,
+    deps.maxToolRounds ?? DEFAULT_MAX_TOOL_ROUNDS,
+  );
+  let toolsEnabled = true;
+  const findTool = (name: string) =>
+    toolsEnabled ? tools.find((tool) => tool.name === name) : undefined;
+  const turnMessages: ChatMessage[] = [];
+  let contextCompactionUsed = false;
+  let proactiveCompactionUsed = false;
+  let toolRounds = 0;
+  let emptyCompletionRetries = 0;
+  let truncatedCompletionRetries = 0;
+  let continuationPrefix = "";
+  let incompleteToolCallBuffer = "";
+  let forceFinalResponse = false;
+  let hasCompletedRound = false;
+
+  const pushTurn = (message: ChatMessage) => {
+    messages.push(message);
+    turnMessages.push(message);
+  };
+
+  while (true) {
+    if (signal.aborted) {
+      return { stopReason: "cancelled", turnMessages };
+    }
+
+    if (hasCompletedRound && takeSteeringMessages) {
+      const steeringMessages = await takeSteeringMessages();
+      for (const message of steeringMessages) pushTurn(message);
+    }
+    hasCompletedRound = false;
+
+    // Compact before the request when the estimate nears the window instead
+    // of waiting for the API to reject it. The reactive error path below
+    // stays independent as a backstop for a bad estimate.
+    if (
+      !proactiveCompactionUsed &&
+      compactContext &&
+      typeof deps.contextWindow === "number" &&
+      deps.contextWindow > 0 &&
+      estimateMessagesTokens(messages) >
+        deps.contextWindow * PROACTIVE_COMPACTION_THRESHOLD
+    ) {
+      proactiveCompactionUsed = true;
+      try {
+        const result = await compactContext(messages, null);
+        if (result.compacted) {
+          await emit({
+            type: "context_compacted",
+            removedMessages: result.removedMessages,
+            keptMessages: result.keptMessages,
+          });
+        }
+      } catch (compactionError) {
+        // Proactive compaction is an optimization, not a requirement — a
+        // failed summary (e.g. an empty completion) must not fail the turn.
+        // The reactive path below stays available if the request actually
+        // overflows.
+        await emit({
+          type: "context_compaction_failed",
+          reason:
+            compactionError instanceof Error
+              ? compactionError.message
+              : "Unknown compaction error.",
+        });
+      }
+    }
+
+    let buffer = "";
+    let flushed = 0;
+    let scanned: ToolCallScan | null = null;
+    let finishReason: string | null = null;
+    let streamDone = false;
+    const reasoningFilter = new ReasoningTagFilter();
+    let deferredVisibleText = "";
+    const emitVisibleText = async (text: string) => {
+      const visible = reasoningFilter.push(text);
+      if (!visible) return;
+      if (forceFinalResponse) deferredVisibleText += visible;
+      else await emit({ type: "text", text: visible });
+    };
+    const finishVisibleText = async () => {
+      const visible = reasoningFilter.finish();
+      if (visible) {
+        if (forceFinalResponse) deferredVisibleText += visible;
+        else await emit({ type: "text", text: visible });
+      }
+    };
+
+    while (true) {
+      const toolCallContinuation = incompleteToolCallBuffer;
+      let responseBuffer = "";
+      let restartedToolCall = false;
+      buffer = toolCallContinuation;
+      flushed = buffer.length;
+      scanned = null;
+      finishReason = null;
+      streamDone = false;
+      try {
+        const retryInstruction = incompleteToolCallBuffer
+          ? INCOMPLETE_TOOL_CALL_INSTRUCTION
+          : continuationPrefix
+            ? forceFinalResponse
+              ? `${TRUNCATED_COMPLETION_INSTRUCTION} ${FINAL_RESPONSE_INSTRUCTION}`
+              : TRUNCATED_COMPLETION_INSTRUCTION
+            : forceFinalResponse
+              ? FINAL_RESPONSE_INSTRUCTION
+              : emptyCompletionRetries > 0
+                ? EMPTY_COMPLETION_INSTRUCTION
+                : null;
+        const requestMessages = incompleteToolCallBuffer
+          ? [
+              ...messages,
+              {
+                role: "assistant" as const,
+                content: continuationPrefix + incompleteToolCallBuffer,
+              },
+              { role: "user" as const, content: retryInstruction! },
+            ]
+          : continuationPrefix
+            ? [
+                ...messages,
+                { role: "assistant" as const, content: continuationPrefix },
+                { role: "user" as const, content: retryInstruction! },
+              ]
+            : retryInstruction
+              ? [
+                  ...messages,
+                  { role: "user" as const, content: retryInstruction },
+                ]
+              : messages;
+        for await (const event of novaClient.chat.completions.stream(
+          // History may hold native tool exchanges from before this model
+          // fell back to the text protocol; render them as text.
+          { model, messages: toLegacyMessages(requestMessages) },
+          { signal },
+        )) {
+          if (event.type === "done") {
+            streamDone = true;
+            continue;
+          }
+          if (event.type !== "chunk") continue;
+
+          const choice = event.data.choices?.[0];
+          if (typeof choice?.finish_reason === "string") {
+            finishReason = choice.finish_reason;
+          }
+          const text = choice?.delta?.content;
+          if (typeof text !== "string" || text.length === 0) continue;
+
+          responseBuffer += text;
+          // Prefer a fresh call when the model ignored the suffix-only
+          // instruction and restarted at an opening marker. Otherwise append
+          // the response to the partial call so payloads larger than one model
+          // completion can make progress instead of repeating the same cutoff.
+          if (
+            toolCallContinuation &&
+            !restartedToolCall &&
+            /^\s*(?:```tool_call|<\|tool_call>)/.test(responseBuffer)
+          ) {
+            restartedToolCall = true;
+            flushed = 0;
+          }
+          buffer = restartedToolCall
+            ? responseBuffer
+            : toolCallContinuation + responseBuffer;
+
+          if (!hasPendingFence(buffer)) {
+            const toFlush = buffer.slice(flushed);
+            if (toFlush) {
+              await emitVisibleText(toFlush);
+              flushed = buffer.length;
+            }
+            continue;
+          }
+
+          // Once at least one complete block has arrived, keep consuming only
+          // while the tail could still grow into another back-to-back block
+          // (whitespace or a marker prefix). Anything else after the blocks is
+          // fabricated "results" prose — cut the stream and discard it rather
+          // than dumping it into history as unexecuted, user-visible markup.
+          const scan = scanToolCalls(buffer);
+          if (scan.blocks.length > 0) {
+            const tail = buffer.slice(scan.lastMatchEnd);
+            if (!tailMayContinueToolCalls(tail)) {
+              const beforeTool = buffer.slice(
+                flushed,
+                scan.blocks[0]!.matchStart,
+              );
+              if (beforeTool) await emitVisibleText(beforeTool);
+              buffer = buffer.slice(0, scan.lastMatchEnd);
+              scanned = scanToolCalls(buffer);
+              break;
+            }
+          }
+        }
+      } catch (error) {
+        if (
+          !contextCompactionUsed &&
+          buffer.length === 0 &&
+          compactContext &&
+          isContextLimitError(error)
+        ) {
+          contextCompactionUsed = true;
+          let result: ContextCompactionResult | null = null;
+          try {
+            result = await compactContext(messages, error);
+          } catch (compactionError) {
+            // The recovery attempt itself failed — surface the original
+            // context-limit error, not this secondary failure, since that's
+            // what actually explains the request outcome to the caller.
+            await emit({
+              type: "context_compaction_failed",
+              reason:
+                compactionError instanceof Error
+                  ? compactionError.message
+                  : "Unknown compaction error.",
+            });
+          }
+          if (result?.compacted) {
+            await emit({
+              type: "context_compacted",
+              removedMessages: result.removedMessages,
+              keptMessages: result.keptMessages,
+            });
+            continue;
+          }
+        }
+        throw error;
+      }
+      break;
+    }
+
+    const scan = scanned ?? scanToolCalls(buffer);
+    const hasValidCall = scan.blocks.some((block) => block.kind === "call");
+
+    if (!hasValidCall) {
+      if (!forceFinalResponse && hasMalformedToolCall(buffer)) {
+        await finishVisibleText();
+        pushTurn({
+          role: "assistant",
+          content: continuationPrefix + stripReasoningTags(buffer),
+        });
+        continuationPrefix = "";
+        incompleteToolCallBuffer = "";
+        pushTurn({
+          role: "user",
+          content:
+            "Your tool_call block could not be parsed as JSON (e.g. unbalanced braces). " +
+            'Re-emit exactly one valid tool call: ```tool_call\n{"name": "<tool name>", "args": { ... }}\n```',
+        });
+        emptyCompletionRetries = 0;
+        truncatedCompletionRetries = 0;
+        toolRounds++;
+        if (toolRounds >= maxToolRounds) forceFinalResponse = true;
+        hasCompletedRound = true;
+        continue;
+      }
+
+      if (hasIncompleteToolCall(buffer)) {
+        await finishVisibleText();
+        if (truncatedCompletionRetries < MAX_TRUNCATED_COMPLETION_RETRIES) {
+          const visiblePreamble = stripToolCallMarkup(buffer);
+          continuationPrefix += stripReasoningTags(visiblePreamble);
+          incompleteToolCallBuffer = buffer.slice(visiblePreamble.length);
+          truncatedCompletionRetries++;
+          emptyCompletionRetries = 0;
+          deferredVisibleText = "";
+          continue;
+        }
+        const visiblePreamble = stripToolCallMarkup(
+          continuationPrefix + stripReasoningTags(buffer),
+        );
+        if (visiblePreamble.trim()) {
+          pushTurn({ role: "assistant", content: visiblePreamble });
+        }
+        pushTurn({
+          role: "user",
+          content: ABANDON_INCOMPLETE_TOOL_CALL_INSTRUCTION,
+        });
+        continuationPrefix = "";
+        incompleteToolCallBuffer = "";
+        emptyCompletionRetries = 0;
+        truncatedCompletionRetries = 0;
+        toolRounds++;
+        if (toolRounds >= maxToolRounds) forceFinalResponse = true;
+        hasCompletedRound = true;
+        continue;
+      }
+      incompleteToolCallBuffer = "";
+
+      const remaining = buffer.slice(flushed);
+      if (remaining) await emitVisibleText(remaining);
+      await finishVisibleText();
+      const cleanedBuffer = stripReasoningTags(buffer);
+      if (!cleanedBuffer.trim()) {
+        deferredVisibleText = "";
+        if (emptyCompletionRetries < MAX_EMPTY_COMPLETION_RETRIES) {
+          emptyCompletionRetries++;
+          continue;
+        }
+        throw new Error(
+          forceFinalResponse
+            ? "The model did not provide a final response after reaching the tool-use safety limit."
+            : `The model returned no visible assistant content after ${MAX_EMPTY_COMPLETION_RETRIES + 1} attempts.`,
+        );
+      }
+
+      const completedAssistant = continuationPrefix + cleanedBuffer;
+      const truncation = completionTruncationReason(
+        completedAssistant,
+        finishReason,
+        streamDone,
+      );
+      if (truncation) {
+        if (truncatedCompletionRetries < MAX_TRUNCATED_COMPLETION_RETRIES) {
+          continuationPrefix = completedAssistant;
+          truncatedCompletionRetries++;
+          emptyCompletionRetries = 0;
+          deferredVisibleText = "";
+          continue;
+        }
+        throw new Error(
+          `The model response remained incomplete after ${MAX_TRUNCATED_COMPLETION_RETRIES + 1} attempts (${truncation}).`,
+        );
+      }
+      if (forceFinalResponse) {
+        await emit({ type: "text", text: completedAssistant });
+      }
+      pushTurn({ role: "assistant", content: completedAssistant });
+      return {
+        stopReason: forceFinalResponse ? "max_turn_requests" : "end_turn",
+        turnMessages,
+      };
+    }
+
+    await finishVisibleText();
+    if (forceFinalResponse) {
+      deferredVisibleText = "";
+      if (emptyCompletionRetries < MAX_EMPTY_COMPLETION_RETRIES) {
+        emptyCompletionRetries++;
+        hasCompletedRound = true;
+        continue;
+      }
+      throw new Error(
+        "The model kept requesting tools after reaching the tool-use safety limit and did not provide a final response.",
+      );
+    }
+
+    let batchBuffer = buffer;
+    let batchScan = scan;
+    if (hasIncompleteToolCall(batchBuffer)) {
+      // A trailing block is still cut off behind the complete ones. Retry as
+      // an incomplete round rather than executing a partial batch; at the
+      // retry cap, drop the unfinished tail and run what did arrive.
+      if (truncatedCompletionRetries < MAX_TRUNCATED_COMPLETION_RETRIES) {
+        const visiblePreamble = stripToolCallMarkup(batchBuffer);
+        continuationPrefix += stripReasoningTags(visiblePreamble);
+        incompleteToolCallBuffer = batchBuffer.slice(visiblePreamble.length);
+        truncatedCompletionRetries++;
+        emptyCompletionRetries = 0;
+        deferredVisibleText = "";
+        continue;
+      }
+      batchBuffer = batchBuffer.slice(0, batchScan.lastMatchEnd);
+      batchScan = scanToolCalls(batchBuffer);
+    }
+
+    const blocks = batchScan.blocks;
+    const firstBlockStart = blocks[0]!.matchStart;
+    pushTurn({
+      role: "assistant",
+      content:
+        continuationPrefix +
+        stripReasoningTags(batchBuffer.slice(0, firstBlockStart)) +
+        batchBuffer.slice(firstBlockStart, batchScan.lastMatchEnd),
+    });
+    continuationPrefix = "";
+    incompleteToolCallBuffer = "";
+    emptyCompletionRetries = 0;
+    truncatedCompletionRetries = 0;
+    toolRounds++;
+    if (toolRounds >= maxToolRounds) forceFinalResponse = true;
+
+    const entries = await runToolBatch(
+      blocks.map((block) =>
+        block.kind === "call"
+          ? { kind: "call" as const, name: block.call.name, args: block.call.args }
+          : { kind: "malformed" as const },
+      ),
+      {
+        host,
+        sessionId,
+        cwd,
+        environment,
+        background,
+        signal,
+        findTool,
+        requestPermission,
+        authorize: deps.authorize,
+        emit,
+        disableTools: () => {
+          toolsEnabled = false;
+        },
+      },
+    );
+
+    pushTurn({ role: "user", content: formatBatchResults(entries) });
+    hasCompletedRound = true;
+  }
+}
+
+function completionTruncationReason(
+  text: string,
+  finishReason: string | null,
+  streamDone: boolean,
+): string | null {
+  const normalizedReason = finishReason?.toLowerCase();
+  if (
+    normalizedReason &&
+    ["length", "max_tokens", "max_output_tokens"].includes(normalizedReason)
+  ) {
+    return `finish reason ${finishReason}`;
+  }
+  if (looksObviouslyIncomplete(text)) {
+    return streamDone || finishReason
+      ? "response ended mid-sentence"
+      : "response ended mid-sentence without a terminal stream event";
+  }
+  return null;
+}
+
+function looksObviouslyIncomplete(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed) return true;
+  if ((trimmed.match(/```/g)?.length ?? 0) % 2 !== 0) return true;
+  const lastLine = trimmed.split(/\r?\n/).at(-1)?.trim() ?? "";
+  if (lastLine.startsWith("|") && !lastLine.endsWith("|")) return true;
+
+  // A nominal `stop` can still arrive in the middle of formatted output. Check
+  // the accumulated response (not just the latest continuation suffix), while
+  // ignoring markers inside complete code blocks/spans and Markdown rules.
+  const markdown = trimmed
+    .replace(/```[\s\S]*?```/g, "")
+    .replace(/`[^`\r\n]*`/g, "")
+    .replace(/^\s*\*{3,}\s*$/gm, "");
+  if ((markdown.match(/\*\*/g)?.length ?? 0) % 2 !== 0) return true;
+  if (/[:,\[(\-]$/.test(trimmed)) return true;
+  return /\b(?:(?:i|we)(?:'ve| have) completed|and|or|but|because|including|the|an?|to|of|for|with|from|by)$/i.test(
+    trimmed,
+  );
+}
