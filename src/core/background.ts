@@ -112,6 +112,13 @@ export class BackgroundJobManager {
       defaultBackgroundJobsDir();
   }
 
+  /** Stops every running background agent (shutdown). Terminal jobs belong to the client. */
+  abortAll(): void {
+    for (const job of this.jobs.values()) {
+      if (job.kind === "prompt" && job.status === "running") job.abortController.abort();
+    }
+  }
+
   createPromptJob(params: {
     sessionId: string;
     title: string;

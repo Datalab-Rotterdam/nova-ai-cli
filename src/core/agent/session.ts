@@ -10,7 +10,12 @@ import type { ToolDefinition } from "../tools/types.js";
 
 /** In-memory state of one agent session, shared by every front end. */
 export type Session = {
+  /** The turn currently running, for operations that must not overlap it. */
   pendingPrompt: AbortController | null;
+  /** Every turn that is running or waiting to run; aborted on cancel. */
+  activeTurns: Set<AbortController>;
+  /** Settles when the last enqueued turn is done; turns run one at a time. */
+  turnQueue: Promise<void>;
   promptQueue: PromptQueue;
   cwd: string;
   history: ChatMessage[];

@@ -1,5 +1,6 @@
 import * as acp from "@agentclientprotocol/sdk";
 import { NovaAI, type ChatMessage } from "@datalabrotterdam/nova-sdk";
+import { createNovaClient } from "../core/nova-client.js";
 import type { AgentEvent } from "../core/agent-events.js";
 import { buildModeSystemPrompt } from "../core/agent/mode-prompt.js";
 import type { Session } from "../core/agent/session.js";
@@ -148,7 +149,7 @@ export class BackgroundService {
 
     // Fail the request before a job exists rather than emitting a phantom
     // started→failed job for an unsupported prompt.
-    const novaClient = new NovaAI({ apiKey: credentials.apiKey });
+    const novaClient = createNovaClient(credentials.apiKey);
     await this.runtime.models.assertImageInputSupported(novaClient, model, params.prompt);
 
     const abortController = new AbortController();

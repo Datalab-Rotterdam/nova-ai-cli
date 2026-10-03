@@ -5,6 +5,7 @@ import {
   NovaAIError,
   type ChatMessage,
 } from "@datalabrotterdam/nova-sdk";
+import { createNovaClient } from "../../core/nova-client.js";
 import { NovaAgent } from "../../acp/agent.js";
 import {
   assistantToolCalls,
@@ -261,7 +262,7 @@ export class SessionRunner {
       protocolVersion: acp.PROTOCOL_VERSION,
       clientCapabilities: this.acpClient.capabilities,
     });
-    this.novaClient = new NovaAI({ apiKey: credentials.apiKey });
+    this.novaClient = createNovaClient(credentials.apiKey);
     const model = credentials.defaultModel ?? process.env.NOVA_MODEL;
     if (!model)
       throw new Error(

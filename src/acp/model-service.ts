@@ -1,5 +1,6 @@
 import * as acp from "@agentclientprotocol/sdk";
 import { NovaAI } from "@datalabrotterdam/nova-sdk";
+import { createNovaClient } from "../core/nova-client.js";
 import type { Session } from "../core/agent/session.js";
 import { ToolSupportStore } from "../core/model/tool-support.js";
 import { readCredentials } from "../core/credentials.js";
@@ -26,7 +27,7 @@ export class ModelService {
     if (!credentials) return [];
     let models: JoinedModel[];
     try {
-      const novaClient = new NovaAI({ apiKey: credentials.apiKey });
+      const novaClient = createNovaClient(credentials.apiKey);
       models = await listJoinedModels(novaClient, this.disabledProviders);
     } catch {
       // The model selector is supplementary info on fork/resume/set_config_option
@@ -49,7 +50,7 @@ export class ModelService {
   async listProviders(): Promise<acp.ListProvidersResponse> {
     const credentials = readCredentials();
     if (!credentials) throw acp.RequestError.authRequired();
-    const novaClient = new NovaAI({ apiKey: credentials.apiKey });
+    const novaClient = createNovaClient(credentials.apiKey);
     const providers = await novaClient.providers.list();
     const models = await listJoinedModels(novaClient, this.disabledProviders);
     return {
@@ -63,7 +64,7 @@ export class ModelService {
   ): Promise<acp.SetProviderResponse> {
     const credentials = readCredentials();
     if (!credentials) throw acp.RequestError.authRequired();
-    const novaClient = new NovaAI({ apiKey: credentials.apiKey });
+    const novaClient = createNovaClient(credentials.apiKey);
     const providers = await novaClient.providers.list();
     if (!providers.data.some((p) => p.id === params.id)) {
       throw acp.RequestError.invalidParams(

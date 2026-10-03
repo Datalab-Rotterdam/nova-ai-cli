@@ -1,5 +1,6 @@
 import * as acp from "@agentclientprotocol/sdk";
 import { NovaAI } from "@datalabrotterdam/nova-sdk";
+import { createNovaClient } from "../core/nova-client.js";
 import { readCredentials } from "../core/credentials.js";
 import type { AgentRuntime } from "./agent-runtime.js";
 import {
@@ -64,7 +65,7 @@ export class NesService {
       );
       if (!document || signal.aborted) return { suggestions: [] };
 
-      const novaClient = new NovaAI({ apiKey: credentials.apiKey });
+      const novaClient = createNovaClient(credentials.apiKey);
       const prompt = buildSuggestPrompt({
         document,
         position: params.position,

@@ -1,9 +1,6 @@
 import * as acp from "@agentclientprotocol/sdk";
-import {
-  NovaAI,
-  NovaAIError,
-  type ChatMessage,
-} from "@datalabrotterdam/nova-sdk";
+import { NovaAI, type ChatMessage } from "@datalabrotterdam/nova-sdk";
+import { createNovaClient } from "../core/nova-client.js";
 import type { AgentEvent } from "../core/agent-events.js";
 import { buildModeSystemPrompt } from "../core/agent/mode-prompt.js";
 import type { Session } from "../core/agent/session.js";
@@ -65,6 +62,7 @@ import {
 } from "../core/agent/tool-protocol.js";
 import type { ToolDefinition } from "../core/tools/types.js";
 import { AcpToolHost } from "./acp-tool-host.js";
+import { sessionNotFound, toAcpError } from "./errors.js";
 import {
   emitToAcp,
   notifyPlanUpdate,
@@ -117,6 +115,8 @@ export {
 } from "./prompt-content.js";
 
 const AUTH_METHOD_ID = "nova-api-key";
+/** How long closing a session waits for its turn to save its history. */
+const SHUTDOWN_GRACE_MS = 2_000;
 
 export type PromptRuntimeOptions = {
   /** @deprecated Queue steering through queue/enqueue or queuePrompt instead. */
@@ -238,6 +238,8 @@ export class NovaAgent implements AgentRuntime {
     const memory = loadMemory(params.cwd);
     this.sessions.set(sessionId, {
       pendingPrompt: null,
+      activeTurns: new Set(),
+      turnQueue: Promise.resolve(),
       promptQueue: new PromptQueue(),
       cwd: params.cwd,
       history,
@@ -262,10 +264,7 @@ export class NovaAgent implements AgentRuntime {
   ): Promise<acp.LoadSessionResponse> {
     const stored = loadStoredSession(params.sessionId);
     if (!stored) {
-      throw acp.RequestError.internalError(
-        undefined,
-        `Session ${params.sessionId} not found`,
-      );
+      throw sessionNotFound(params.sessionId);
     }
 
     const { mcpConnections, mcpFailures, skills } = await this.setupSession(
@@ -387,11 +386,9 @@ export class NovaAgent implements AgentRuntime {
     params: acp.DeleteSessionRequest,
   ): Promise<acp.DeleteSessionResponse> {
     const session = this.sessions.get(params.sessionId);
-    if (session) {
-      session.pendingPrompt?.abort();
-      await closeMcpConnections(session.mcpConnections);
-      this.sessions.delete(params.sessionId);
-    }
+    // Wait for a running turn first: its final save would otherwise
+    // re-create the file right after it was deleted.
+    if (session) await this.disposeSession(params.sessionId, session);
     deleteStoredSession(params.sessionId);
     return {};
   }
@@ -404,10 +401,7 @@ export class NovaAgent implements AgentRuntime {
       cwd: params.cwd,
     });
     if (!forked) {
-      throw acp.RequestError.internalError(
-        undefined,
-        `Session ${params.sessionId} not found`,
-      );
+      throw sessionNotFound(params.sessionId);
     }
     await this.setupSession(
       newSessionId,
@@ -429,10 +423,7 @@ export class NovaAgent implements AgentRuntime {
   ): Promise<acp.ResumeSessionResponse> {
     const stored = loadStoredSession(params.sessionId);
     if (!stored) {
-      throw acp.RequestError.internalError(
-        undefined,
-        `Session ${params.sessionId} not found`,
-      );
+      throw sessionNotFound(params.sessionId);
     }
     await this.setupSession(
       params.sessionId,
@@ -515,7 +506,10 @@ export class NovaAgent implements AgentRuntime {
     params: acp.AuthenticateRequest,
   ): Promise<acp.AuthenticateResponse> {
     if (params.methodId !== AUTH_METHOD_ID) {
-      throw new Error(`Unknown auth method: ${params.methodId}`);
+      throw acp.RequestError.invalidParams(
+        { methodId: params.methodId },
+        `Unknown auth method: ${params.methodId}`,
+      );
     }
     await runBrowserAuth();
     return {};
@@ -538,7 +532,7 @@ export class NovaAgent implements AgentRuntime {
         "No Nova model configured. Re-run authentication or set NOVA_MODEL.",
       );
 
-    const novaClient = new NovaAI({ apiKey: credentials.apiKey });
+    const novaClient = createNovaClient(credentials.apiKey);
     const contextWindow = await this.models.resolveContextWindow(novaClient, model);
     const result = await compactConversation(
       session.history,
@@ -558,27 +552,53 @@ export class NovaAgent implements AgentRuntime {
     return result;
   }
 
+  /**
+   * Turns of one session run one after another, so history and the session
+   * file are only ever written by one turn. A new prompt cancels every
+   * earlier one (running or still waiting), so the latest request wins; a
+   * cancelled waiting prompt answers "cancelled" without starting.
+   */
   async prompt(
     params: acp.PromptRequest,
     client: acp.AgentContext,
     runtime: PromptRuntimeOptions = {},
   ): Promise<acp.PromptResponse> {
-    const session = this.sessions.get(params.sessionId);
-    if (!session) {
-      throw new Error(`Session ${params.sessionId} not found`);
+    const session = this.requireSession(params.sessionId);
+    for (const earlier of session.activeTurns) earlier.abort();
+    const abortController = new AbortController();
+    session.activeTurns.add(abortController);
+    const run = session.turnQueue.then(() =>
+      abortController.signal.aborted
+        ? { stopReason: "cancelled" as const }
+        : this.runPrompt(session, params, client, runtime, abortController),
+    );
+    session.turnQueue = run.then(
+      () => {},
+      () => {},
+    );
+    try {
+      return await run;
+    } finally {
+      session.activeTurns.delete(abortController);
     }
+  }
 
+  private async runPrompt(
+    session: Session,
+    params: acp.PromptRequest,
+    client: acp.AgentContext,
+    runtime: PromptRuntimeOptions,
+    abortController: AbortController,
+  ): Promise<acp.PromptResponse> {
     const credentials = readCredentials();
     if (!credentials) {
       throw acp.RequestError.authRequired();
     }
     await notifyPlanUpdate(client, params.sessionId, []);
 
-    session.pendingPrompt?.abort();
-    const abortController = new AbortController();
     session.pendingPrompt = abortController;
 
-    const novaClient = new NovaAI({ apiKey: credentials.apiKey });
+    const novaClient = createNovaClient(credentials.apiKey);
     const model =
       getPromptModel(params) ??
       session.model ??
@@ -741,14 +761,9 @@ export class NovaAgent implements AgentRuntime {
       if (abortController.signal.aborted) {
         return { stopReason: "cancelled" };
       }
-      if (err instanceof NovaAIError) {
-        throw new Error(
-          `Nova AI request failed (status ${err.status}, requestId ${err.requestId}): ${err.message}`,
-        );
-      }
-      throw err;
+      throw toAcpError(err);
     } finally {
-      session.pendingPrompt = null;
+      if (session.pendingPrompt === abortController) session.pendingPrompt = null;
       if (contextCompacted) {
         session.history = messages.slice(systemMessageCount);
         session.title ??= deriveTitle(session.history);
@@ -770,24 +785,43 @@ export class NovaAgent implements AgentRuntime {
   }
 
   cancel(params: acp.CancelNotification): void {
-    this.sessions.get(params.sessionId)?.pendingPrompt?.abort();
+    const session = this.sessions.get(params.sessionId);
+    for (const turn of session?.activeTurns ?? []) turn.abort();
   }
 
   async closeSession(
     params: acp.CloseSessionRequest,
   ): Promise<acp.CloseSessionResponse> {
     const session = this.sessions.get(params.sessionId);
-    if (session) {
-      session.pendingPrompt?.abort();
-      await closeMcpConnections(session.mcpConnections);
-      this.sessions.delete(params.sessionId);
-    }
+    if (session) await this.disposeSession(params.sessionId, session);
     return {};
+  }
+
+  /**
+   * Cancels the session's turns, lets them finish writing their history
+   * (bounded), then closes its MCP connections.
+   */
+  private async disposeSession(sessionId: string, session: Session): Promise<void> {
+    this.sessions.delete(sessionId);
+    for (const turn of session.activeTurns) turn.abort();
+    await Promise.race([
+      session.turnQueue,
+      new Promise((resolve) => setTimeout(resolve, SHUTDOWN_GRACE_MS)),
+    ]);
+    await closeMcpConnections(session.mcpConnections);
+  }
+
+  /** Ends every session: cancels turns and background agents, closes MCP. */
+  async shutdown(): Promise<void> {
+    this.background.backgroundJobs.abortAll();
+    await Promise.all(
+      [...this.sessions].map(([id, session]) => this.disposeSession(id, session)),
+    );
   }
 
   requireSession(sessionId: string): Session {
     const session = this.sessions.get(sessionId);
-    if (!session) throw new Error(`Session ${sessionId} not found`);
+    if (!session) throw sessionNotFound(sessionId);
     return session;
   }
 

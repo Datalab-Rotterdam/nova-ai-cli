@@ -9,6 +9,8 @@ import { FULL_CAPABILITIES, makeEnvironment } from "./tools/test-helpers.js";
 function session(): Session {
   return {
     pendingPrompt: null,
+    activeTurns: new Set(),
+    turnQueue: Promise.resolve(),
     promptQueue: new PromptQueue(),
     cwd: process.cwd(),
     history: [],

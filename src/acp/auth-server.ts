@@ -4,6 +4,7 @@ import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { NovaAI, NovaAIError } from "@datalabrotterdam/nova-sdk";
+import { createNovaClient } from "../core/nova-client.js";
 import { dir, json, WebServer } from "@sourceregistry/node-webserver";
 import {
   credentialsPath,
@@ -56,7 +57,7 @@ function openBrowser(url: string): void {
 }
 
 async function validateApiKey(apiKey: string): Promise<StoredCredentials> {
-  const client = new NovaAI({ apiKey });
+  const client = createNovaClient(apiKey);
   const { data: models } = await client.models.list();
   const defaultModel = (models.find((m) => m.enabled !== false) ?? models[0])
     ?.id;
