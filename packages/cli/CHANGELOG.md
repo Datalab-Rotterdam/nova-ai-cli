@@ -1,3 +1,10 @@
+# [@datalabrotterdam/nova-ai-cli-v1.2.0-alpha.2](https://github.com/Datalab-Rotterdam/nova-ai-cli/compare/@datalabrotterdam/nova-ai-cli@1.2.0-alpha.1...@datalabrotterdam/nova-ai-cli@1.2.0-alpha.2) (2026-10-03)
+
+
+### Features
+
+* release the agent separately as @datalabrotterdam/nova-ai-agent ([32ecfc0](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/32ecfc0faa99bd5bb80cb2eaf2363abc050978f0))
+
 # [1.2.0-alpha.1](https://github.com/Datalab-Rotterdam/nova-ai-cli/compare/v1.1.0...v1.2.0-alpha.1) (2026-10-03)
 
 
