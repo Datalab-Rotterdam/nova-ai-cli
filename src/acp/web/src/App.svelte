@@ -44,6 +44,22 @@
     return () => media.removeEventListener("change", onChange);
   });
 
+  // The CLI opens this page with a one-time token in the URL fragment. It is
+  // moved out of the address bar right away and sent back as a header, so the
+  // local server can tell this page apart from any other site in the browser.
+  const SETUP_TOKEN_KEY = "nova-setup-token";
+  const setupToken = readSetupToken();
+
+  function readSetupToken(): string {
+    const fromHash = new URLSearchParams(window.location.hash.slice(1)).get("token");
+    if (fromHash) {
+      sessionStorage.setItem(SETUP_TOKEN_KEY, fromHash);
+      history.replaceState(null, "", window.location.pathname + window.location.search);
+      return fromHash;
+    }
+    return sessionStorage.getItem(SETUP_TOKEN_KEY) ?? "";
+  }
+
   let apiKey = "";
   let status: "idle" | "submitting" | "success" | "error" = "idle";
   let errorMessage = "";
@@ -55,7 +71,10 @@
     try {
       const res = await fetch("/api/authenticate", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "X-Nova-Setup-Token": setupToken,
+        },
         body: JSON.stringify({ apiKey }),
       });
 

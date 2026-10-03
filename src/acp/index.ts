@@ -14,8 +14,10 @@ import {
   parseUpdateQueuedPromptParams,
 } from "./prompt-queue.js";
 import { parseRewindSessionParams, parseSessionIdParams } from "./sessions.js";
+import { redirectConsoleToStderr } from "./stdio-guard.js";
 
 async function runAcp(...args: string[]): Promise<void> {
+  redirectConsoleToStderr();
   const agentImpl = new NovaAgent();
 
   const output = Writable.toWeb(process.stdout) as WritableStream<Uint8Array>;

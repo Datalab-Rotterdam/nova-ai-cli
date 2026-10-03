@@ -5,7 +5,7 @@ import type { ToolHost } from "../../../src/core/tool-host.js";
 import { makeToolContext } from "./test-helpers.js";
 
 function makeContext(writeTextFile: ToolHost["writeTextFile"]) {
-  return makeToolContext({ host: { writeTextFile } });
+  return makeToolContext({ host: { writeTextFile }, cwd: "/tmp" });
 }
 
 describe("writeFileTool", () => {

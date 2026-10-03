@@ -700,3 +700,37 @@ async function waitFor(
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
 }
+
+test("the TUI client refuses file access outside its workspace", async () => {
+  const base = mkdtempSync(join(tmpdir(), "nova-client-fs-"));
+  const workspace = join(base, "workspace");
+  const outsideFile = join(base, "secret.txt");
+  writeFileSync(outsideFile, "secret");
+  try {
+    const client = new TuiAcpClient(createStore(state()), workspace);
+    await assert.rejects(
+      client.readTextFile({ sessionId: "test-session", path: outsideFile }),
+      /outside the workspace/,
+    );
+    await assert.rejects(
+      client.writeTextFile({
+        sessionId: "test-session",
+        path: join(workspace, "..", "planted.txt"),
+        content: "x",
+      }),
+      /outside the workspace/,
+    );
+    await client.writeTextFile({
+      sessionId: "test-session",
+      path: join(workspace, "dir", "ok.txt"),
+      content: "inside",
+    });
+    const { content } = await client.readTextFile({
+      sessionId: "test-session",
+      path: join(workspace, "dir", "ok.txt"),
+    });
+    assert.equal(content, "inside");
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});

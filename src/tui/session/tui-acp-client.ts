@@ -1,4 +1,4 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import type * as acp from "@agentclientprotocol/sdk";
@@ -20,7 +20,12 @@ import type {
   WaitForTerminalExitResponse,
   WriteTextFileRequest,
 } from "@agentclientprotocol/sdk";
+import {
+  spawnCommand,
+  terminateProcessTree,
+} from "../../core/process-tree.js";
 import type { UserInputResponse } from "../../core/user-questions.js";
+import { resolveWorkspaceFile } from "../../acp/tools/workspace-paths.js";
 import type { PromptQueueEntryView } from "../../acp/prompt-queue.js";
 import {
   isInteractionMode,
@@ -59,7 +64,7 @@ function uid(): string {
 }
 
 type TerminalRecord = {
-  child: ChildProcessWithoutNullStreams;
+  child: ChildProcess;
   command: string;
   toolCallId: string | null;
   output: string;
@@ -166,7 +171,7 @@ export class TuiAcpClient {
   async readTextFile(
     params: ReadTextFileRequest,
   ): Promise<ReadTextFileResponse> {
-    let content = await readFile(params.path, "utf8");
+    let content = await readFile(await this.confine(params.path), "utf8");
     if (params.line || params.limit) {
       const start = Math.max((params.line ?? 1) - 1, 0);
       const end = params.limit ? start + params.limit : undefined;
@@ -176,8 +181,19 @@ export class TuiAcpClient {
   }
 
   async writeTextFile(params: WriteTextFileRequest): Promise<void> {
-    await mkdir(dirname(params.path), { recursive: true });
-    await writeFile(params.path, params.content, "utf8");
+    const path = await this.confine(params.path);
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, params.content, "utf8");
+  }
+
+  /**
+   * Second line of defence behind the agent's own path checks: this client
+   * only touches files inside its workspace, whatever the agent asks for.
+   */
+  private async confine(path: string): Promise<string> {
+    const resolved = await resolveWorkspaceFile(this.cwd, path);
+    if ("error" in resolved) throw new Error(resolved.error);
+    return resolved.path;
   }
 
   async createTerminal(
@@ -189,13 +205,11 @@ export class TuiAcpClient {
     for (const variable of params.env ?? [])
       env[variable.name] = variable.value;
 
-    const child = params.args?.length
-      ? spawn(params.command, params.args, { cwd: params.cwd ?? this.cwd, env })
-      : spawn(params.command, {
-          cwd: params.cwd ?? this.cwd,
-          env,
-          shell: true,
-        });
+    const child = spawnCommand(params.command, {
+      cwd: params.cwd ?? this.cwd,
+      env,
+      args: params.args,
+    });
 
     const record: TerminalRecord = {
       child,
@@ -220,8 +234,8 @@ export class TuiAcpClient {
       this.scheduleTerminalPreview(record);
     };
 
-    child.stdout.on("data", append);
-    child.stderr.on("data", append);
+    child.stdout?.on("data", append);
+    child.stderr?.on("data", append);
     record.exitPromise = new Promise((resolve) => {
       child.on("error", (err) => {
         record.output += `\n${err.message}`;
@@ -259,15 +273,15 @@ export class TuiAcpClient {
 
   async killTerminal(params: KillTerminalRequest): Promise<void> {
     const record = this.requireTerminal(params.terminalId);
-    if (!record.exitStatus) record.child.kill();
+    if (!record.exitStatus) await terminateProcessTree(record.child);
   }
 
   async releaseTerminal(params: ReleaseTerminalRequest): Promise<void> {
     const record = this.terminals.get(params.terminalId);
     if (!record) return;
     if (record.previewTimer) clearTimeout(record.previewTimer);
-    if (!record.exitStatus) record.child.kill();
     this.terminals.delete(params.terminalId);
+    if (!record.exitStatus) await terminateProcessTree(record.child);
   }
 
   async requestPermission(

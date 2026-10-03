@@ -1,4 +1,5 @@
 import type { ToolDefinition } from "./types.js";
+import { resolveWorkspaceFile } from "./workspace-paths.js";
 
 const MAX_HINT_FILE_BYTES = 2_000_000;
 const MAX_HINT_SNIPPET_LINES = 30;
@@ -10,7 +11,7 @@ export const editFileTool: ToolDefinition = {
   parameters: {
     type: "object",
     properties: {
-      path: { type: "string", description: "absolute path" },
+      path: { type: "string", description: "path inside the workspace (absolute or relative to the workspace root)" },
       old_string: { type: "string", description: "exact text to replace" },
       new_string: { type: "string", description: "replacement text" },
       replace_all: {
@@ -24,13 +25,16 @@ export const editFileTool: ToolDefinition = {
   requiredCapability: (caps) => !!caps?.fs?.readTextFile && !!caps?.fs?.writeTextFile,
   mutating: true,
   kind: "edit",
-  async execute({ host, signal }, args) {
-    const path = typeof args.path === "string" ? args.path : "";
+  async execute({ host, cwd, signal }, args) {
+    const requestedPath = typeof args.path === "string" ? args.path : "";
     const oldString = typeof args.old_string === "string" ? args.old_string : "";
     const newString = typeof args.new_string === "string" ? args.new_string : "";
     const replaceAll = args.replace_all === true;
-    if (!path) return { error: "edit_file requires a 'path' argument." };
+    if (!requestedPath) return { error: "edit_file requires a 'path' argument." };
     if (!oldString) return { error: "edit_file requires a non-empty 'old_string' argument." };
+    const resolved = await resolveWorkspaceFile(cwd, requestedPath);
+    if ("error" in resolved) return resolved;
+    const { path } = resolved;
 
     let content: string;
     try {

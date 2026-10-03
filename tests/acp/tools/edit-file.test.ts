@@ -5,7 +5,7 @@ import type { ToolHost } from "../../../src/core/tool-host.js";
 import { makeToolContext } from "./test-helpers.js";
 
 function makeContext(overrides: Partial<Pick<ToolHost, "readTextFile" | "writeTextFile">> = {}) {
-  return makeToolContext({ host: overrides });
+  return makeToolContext({ host: overrides, cwd: "/tmp" });
 }
 
 describe("editFileTool", () => {

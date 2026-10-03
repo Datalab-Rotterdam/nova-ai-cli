@@ -6,7 +6,7 @@ import {
   unlinkSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import type { ChatMessage } from "@datalabrotterdam/nova-sdk";
 import { chatContentToText } from "../core/chat-content.js";
 import { truncateStoredToolMessage } from "../core/tool-output.js";
@@ -68,8 +68,36 @@ function sessionsDir(): string {
   );
 }
 
+/**
+ * Session ids arrive from ACP clients (session/load, resume, fork, rewind,
+ * delete) and become file names, so only a plain token is accepted: no path
+ * separators, dots, or Windows device names that could escape or alias the
+ * sessions directory.
+ */
+const SESSION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+const WINDOWS_RESERVED_NAME = /^(?:con|prn|aux|nul|com\d|lpt\d)$/i;
+
+export class InvalidSessionIdError extends Error {
+  constructor() {
+    super("Invalid session id.");
+    this.name = "InvalidSessionIdError";
+  }
+}
+
+export function isValidSessionId(sessionId: unknown): sessionId is string {
+  return (
+    typeof sessionId === "string" &&
+    SESSION_ID_PATTERN.test(sessionId) &&
+    !WINDOWS_RESERVED_NAME.test(sessionId)
+  );
+}
+
 function sessionFilePath(sessionId: string): string {
-  return join(sessionsDir(), `${sessionId}.jsonl`);
+  if (!isValidSessionId(sessionId)) throw new InvalidSessionIdError();
+  const dir = resolve(sessionsDir());
+  const path = resolve(dir, `${sessionId}.jsonl`);
+  if (dirname(path) !== dir) throw new InvalidSessionIdError();
+  return path;
 }
 
 export function parseSessionFile(raw: string): StoredSession | null {
@@ -395,7 +423,7 @@ export function deriveTitle(messages: ChatMessage[]): string | null {
 
 export function parseSessionIdParams(params: unknown): SessionIdParams {
   const value = requireRecord(params);
-  return { sessionId: requireNonEmptyString(value.sessionId, "sessionId") };
+  return { sessionId: requireSessionId(value.sessionId) };
 }
 
 export function parseRewindSessionParams(params: unknown): RewindSessionParams {
@@ -408,7 +436,7 @@ export function parseRewindSessionParams(params: unknown): RewindSessionParams {
     throw new Error("turns must be a positive integer");
   }
   return {
-    sessionId: requireNonEmptyString(value.sessionId, "sessionId"),
+    sessionId: requireSessionId(value.sessionId),
     turns: turns === undefined ? undefined : Number(turns),
   };
 }
@@ -462,9 +490,8 @@ function requireRecord(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-function requireNonEmptyString(value: unknown, name: string): string {
-  if (typeof value !== "string" || !value.trim()) {
-    throw new Error(`${name} must be a non-empty string`);
-  }
+function requireSessionId(value: unknown): string {
+  if (!isValidSessionId(value)) throw new InvalidSessionIdError();
   return value;
 }
+

@@ -17,7 +17,7 @@ import type {
 } from "../../acp/background.js";
 import type { StoredCredentials } from "../../acp/credentials.js";
 import type { PromptQueueEntryView } from "../../acp/prompt-queue.js";
-import { writeCredentials } from "../../acp/credentials.js";
+import { saveDefaultModel } from "../../acp/credentials.js";
 import { loadStoredSession } from "../../acp/sessions.js";
 import type { SessionCheckpoint } from "../../acp/sessions.js";
 import { discoverSkills } from "../../acp/skills.js";
@@ -499,7 +499,7 @@ export class SessionRunner {
     this.contextWindow = null;
     this.contextWindowModel = null;
     this.contextWindowRequest++;
-    writeCredentials({ ...this.credentials, defaultModel: model });
+    saveDefaultModel(model);
     if (this.agentSessionLoaded) this.updateContextUsage();
     void this.refreshContextUsage().catch(() => {});
   }

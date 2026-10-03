@@ -1,16 +1,20 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { after, describe, it, test } from "node:test";
 import {
   appendSessionTurn,
   deleteStoredSession,
   deriveTitle,
   forkStoredSession,
+  InvalidSessionIdError,
+  isValidSessionId,
   listSessionCheckpoints,
   loadStoredSession,
+  parseRewindSessionParams,
   parseSessionFile,
+  parseSessionIdParams,
   rewindStoredSession,
 } from "../../src/acp/sessions.js";
 
@@ -243,5 +247,71 @@ describe("rewindStoredSession", () => {
     } finally {
       deleteStoredSession(sessionId);
     }
+  });
+});
+
+describe("session id validation", () => {
+  const traversalIds = [
+    "../victim",
+    "..",
+    "a/b",
+    "a\\b",
+    "/etc/passwd",
+    "C:evil",
+    "name.with.dots",
+    "",
+    " leading-space",
+    "-leading-dash",
+    "con",
+    "NUL",
+    "x".repeat(129),
+  ];
+
+  it("accepts generated and prefixed ids", () => {
+    assert.ok(isValidSessionId(crypto.randomUUID()));
+    assert.ok(isValidSessionId(`test-delete-${crypto.randomUUID()}`));
+  });
+
+  it("rejects ids that could escape or alias the sessions directory", () => {
+    for (const id of traversalIds) {
+      assert.equal(isValidSessionId(id), false, id);
+    }
+    assert.equal(isValidSessionId(undefined), false);
+    assert.equal(isValidSessionId(42), false);
+  });
+
+  it("never reads, appends to, or deletes files outside the sessions directory", () => {
+    const victim = join(dirname(testSessionsDir), `${"victim"}-${crypto.randomUUID()}.jsonl`);
+    const victimId = `../${victim.slice(dirname(testSessionsDir).length + 1, -".jsonl".length)}`;
+    writeFileSync(
+      victim,
+      `${JSON.stringify({ kind: "header", cwd: "/repo", title: "secret" })}\n`,
+    );
+    try {
+      assert.equal(loadStoredSession(victimId), null);
+      assert.deepEqual(listSessionCheckpoints(victimId), []);
+      assert.equal(rewindStoredSession(victimId), null);
+      assert.throws(() => deleteStoredSession(victimId), InvalidSessionIdError);
+      assert.throws(
+        () => appendSessionTurn(victimId, { cwd: "/repo", title: null }, []),
+        InvalidSessionIdError,
+      );
+      assert.ok(existsSync(victim), "victim file must survive");
+    } finally {
+      rmSync(victim, { force: true });
+    }
+  });
+
+  it("rejects invalid ids in ACP request params", () => {
+    assert.throws(
+      () => parseSessionIdParams({ sessionId: "../x" }),
+      InvalidSessionIdError,
+    );
+    assert.throws(
+      () => parseRewindSessionParams({ sessionId: "../x", turns: 1 }),
+      InvalidSessionIdError,
+    );
+    const id = crypto.randomUUID();
+    assert.deepEqual(parseSessionIdParams({ sessionId: id }), { sessionId: id });
   });
 });

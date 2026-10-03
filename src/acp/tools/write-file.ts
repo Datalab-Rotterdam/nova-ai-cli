@@ -1,4 +1,5 @@
 import type { ToolDefinition } from "./types.js";
+import { resolveWorkspaceFile } from "./workspace-paths.js";
 
 export const writeFileTool: ToolDefinition = {
   name: "write_file",
@@ -6,7 +7,7 @@ export const writeFileTool: ToolDefinition = {
   parameters: {
     type: "object",
     properties: {
-      path: { type: "string", description: "absolute path" },
+      path: { type: "string", description: "path inside the workspace (absolute or relative to the workspace root)" },
       content: { type: "string", description: "full file content" },
     },
     required: ["path", "content"],
@@ -14,10 +15,14 @@ export const writeFileTool: ToolDefinition = {
   requiredCapability: (caps) => !!caps?.fs?.writeTextFile,
   mutating: true,
   kind: "edit",
-  async execute({ host, signal }, args) {
-    const path = typeof args.path === "string" ? args.path : "";
+  async execute({ host, cwd, signal }, args) {
     const content = typeof args.content === "string" ? args.content : "";
-    if (!path) return { error: "write_file requires a 'path' argument." };
+    if (typeof args.path !== "string" || !args.path) {
+      return { error: "write_file requires a 'path' argument." };
+    }
+    const resolved = await resolveWorkspaceFile(cwd, args.path);
+    if ("error" in resolved) return resolved;
+    const { path } = resolved;
 
     let oldText: string | null = null;
     try {

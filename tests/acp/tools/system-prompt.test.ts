@@ -20,7 +20,7 @@ describe("buildToolsSystemPrompt", () => {
     const prompt = buildToolsSystemPrompt([readFileTool], "/workspace");
     assert.ok(prompt);
     assert.match(prompt, /- read_file: read a text file in the workspace\./);
-    assert.match(prompt, /\n {2}args: \{"path": <string, required — absolute path>\}/);
+    assert.match(prompt, /\n {2}args: \{"path": <string, required — path inside the workspace \(absolute or relative to the workspace root\)>\}/);
   });
 
   it("falls back to the plain description for a schema-less tool", () => {
