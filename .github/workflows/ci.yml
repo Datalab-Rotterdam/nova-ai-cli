@@ -9,6 +9,11 @@ on:
       - main
       - alpha
   workflow_dispatch:
+    inputs:
+      release_dry_run:
+        description: "Only show what would be released (main/alpha)"
+        type: boolean
+        default: false
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -44,21 +49,30 @@ jobs:
       - name: Prepare node-pty (macOS)
         if: runner.os == 'macOS'
         run: chmod +x node_modules/node-pty/prebuilds/*/spawn-helper
+      # The CLI type-checks and runs against the agent's compiled output.
+      - name: Build the agent library
+        run: npm run build:lib
       - name: Type check
-        run: npx tsc -p tsconfig.json --noEmit
+        run: npm run typecheck --workspaces
       - name: Unit and ACP conformance tests
-        run: npm run test:unit
+        run: npm run test:unit --workspaces
       # The real-terminal scenario; not yet verified on Windows (ConPTY).
       - name: PTY scenario
         if: runner.os != 'Windows'
-        run: npm run test:pty
-      - name: Build the package
+        run: npm run test:pty -w @datalabrotterdam/nova-ai-cli
+      - name: Build the packages
         if: matrix.os == 'ubuntu-latest' && matrix.node == 24
         run: npm run build
 
   release:
     name: Release
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/alpha')
+    # Each package is released on its own, from the commits that touch its
+    # folder (semantic-release-monorepo): an agent-only change releases only
+    # the agent. The agent goes first, so a CLI release can depend on it.
+    # A manual run with release_dry_run only reports.
+    if: >-
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+      (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/alpha')
     needs:
       - test
     runs-on: ubuntu-latest
@@ -80,12 +94,16 @@ jobs:
           node-version: 24
           registry-url: "https://registry.npmjs.org/"
       - name: Install dependencies
-        run: npm install
-      - name: Restore tracked files
-        run: git restore .
+        run: npm ci
       - name: Update npm for trusted publishing support
         run: npm install -g npm@latest
-      - name: Build the package
+      - name: Build the packages
         run: npm run build
-      - name: Run semantic-release
-        run: npx semantic-release
+      - name: Restore tracked files
+        run: git restore .
+      - name: Release the agent
+        working-directory: packages/agent
+        run: npx semantic-release ${{ inputs.release_dry_run && '--dry-run' || '' }}
+      - name: Release the CLI
+        working-directory: packages/cli
+        run: npx semantic-release ${{ inputs.release_dry_run && '--dry-run' || '' }}

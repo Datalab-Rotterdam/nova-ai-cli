@@ -1,0 +1,17 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "../..",
+    "outDir": "dist-test",
+    "noEmit": false,
+    "declaration": false
+  },
+  "include": [
+    "src",
+    "tests",
+    "../../test-support"
+  ],
+  "exclude": [
+    "src/acp/web"
+  ]
+}
