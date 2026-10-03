@@ -845,3 +845,25 @@ describe("NovaAgent background prompt isolation", () => {
     }
   });
 });
+
+describe("NovaAgent.authenticate with the env_var method", () => {
+  it("succeeds only when NOVA_API_KEY is set", async () => {
+    const previous = process.env.NOVA_API_KEY;
+    try {
+      delete process.env.NOVA_API_KEY;
+      await assert.rejects(
+        new NovaAgent().authenticate({ methodId: "nova-api-key-env" }),
+        (error: unknown) => (error as acp.RequestError).code === acp.RequestError.authRequired().code,
+      );
+      process.env.NOVA_API_KEY = "k";
+      assert.deepEqual(await new NovaAgent().authenticate({ methodId: "nova-api-key-env" }), {});
+      await assert.rejects(
+        new NovaAgent().authenticate({ methodId: "unknown" }),
+        (error: unknown) => (error as acp.RequestError).code === -32602,
+      );
+    } finally {
+      if (previous === undefined) delete process.env.NOVA_API_KEY;
+      else process.env.NOVA_API_KEY = previous;
+    }
+  });
+});

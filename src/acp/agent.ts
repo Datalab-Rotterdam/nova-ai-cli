@@ -60,6 +60,7 @@ import {
 } from "../core/agent/tool-protocol.js";
 import type { ToolDefinition } from "../core/tools/types.js";
 import { AcpToolHost } from "./acp-tool-host.js";
+import { readPackageVersion } from "../core/version.js";
 import { replayHistory, type ReplayItem } from "../core/history.js";
 import { describeToolCall, toolKindOf } from "../core/tools/describe.js";
 import { sessionNotFound, toAcpError } from "./errors.js";
@@ -115,6 +116,7 @@ export {
 } from "./prompt-content.js";
 
 const AUTH_METHOD_ID = "nova-api-key";
+const ENV_AUTH_METHOD_ID = "nova-api-key-env";
 
 /** Slash commands the agent itself handles in session/prompt. */
 const AVAILABLE_COMMANDS: acp.AvailableCommand[] = [
@@ -203,19 +205,31 @@ export type PromptRuntimeOptions = {
 export class NovaAgent implements AgentRuntime {
   private readonly sessions = new Map<string, Session>();
   clientCapabilities: acp.ClientCapabilities | undefined;
+  /** Name and version of the connected client, for diagnostics. */
+  clientInfo: acp.Implementation | null = null;
   positionEncoding: acp.PositionEncodingKind = "utf-16";
   readonly models = new ModelService();
   private readonly nes = new NesService(this);
   private readonly queue = new QueueService(this);
   private readonly background = new BackgroundService(this);
 
+  /**
+   * Nova speaks ACP protocol version 1 and answers with it whatever the client
+   * asked for; per the spec the client then decides whether it can continue.
+   */
   initialize(params: acp.InitializeRequest): acp.InitializeResponse {
     this.clientCapabilities = params.clientCapabilities;
+    this.clientInfo = params.clientInfo ?? null;
     this.positionEncoding = selectPositionEncoding(
       params.clientCapabilities?.positionEncodings,
     );
     return {
       protocolVersion: acp.PROTOCOL_VERSION,
+      agentInfo: {
+        name: "nova-ai-cli",
+        title: "Nova AI",
+        version: readPackageVersion() ?? "0.0.0",
+      },
       agentCapabilities: {
         loadSession: true,
         promptCapabilities: {
@@ -259,6 +273,17 @@ export class NovaAgent implements AgentRuntime {
           name: "Nova API Key",
           description:
             "Opens a local page in your browser to connect your DataLab Rotterdam Nova AI account.",
+        },
+        {
+          type: "env_var",
+          id: ENV_AUTH_METHOD_ID,
+          name: "Nova API key from the environment",
+          description: "Start the agent with NOVA_API_KEY set (and optionally NOVA_MODEL).",
+          vars: [
+            { name: "NOVA_API_KEY", label: "Nova API key", secret: true },
+            { name: "NOVA_MODEL", label: "Default model", secret: false, optional: true },
+          ],
+          link: "https://platform.nova.datalabrotterdam.nl/dashboard/api-keys",
         },
       ],
     };
@@ -585,6 +610,16 @@ export class NovaAgent implements AgentRuntime {
   async authenticate(
     params: acp.AuthenticateRequest,
   ): Promise<acp.AuthenticateResponse> {
+    if (params.methodId === ENV_AUTH_METHOD_ID) {
+      // The client restarts us with the variables set; nothing to do but check.
+      if (!process.env.NOVA_API_KEY?.trim()) {
+        throw acp.RequestError.authRequired(
+          { methodId: params.methodId },
+          "NOVA_API_KEY is not set in the agent's environment.",
+        );
+      }
+      return {};
+    }
     if (params.methodId !== AUTH_METHOD_ID) {
       throw acp.RequestError.invalidParams(
         { methodId: params.methodId },

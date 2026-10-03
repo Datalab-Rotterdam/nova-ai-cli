@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 import * as acp from "@agentclientprotocol/sdk";
 import { startAcpProcess } from "./acp-process.js";
@@ -11,6 +12,13 @@ describe("nova-ai --acp as a process", () => {
         protocolVersion: acp.PROTOCOL_VERSION,
         clientCapabilities: {},
       });
+      const pkg = JSON.parse(readFileSync(new URL("../../../package.json", import.meta.url), "utf8"));
+      assert.deepEqual(init.agentInfo, { name: "nova-ai-cli", title: "Nova AI", version: pkg.version });
+      assert.equal(init.protocolVersion, 1);
+      assert.deepEqual(
+        init.authMethods?.map((method) => ("type" in method && method.type ? method.type : "agent")),
+        ["agent", "env_var"],
+      );
       const meta = init.agentCapabilities?._meta?.["nova-ai-cli"] as { methods: string[]; notifications: string[] };
       assert.ok(meta.methods.every((name) => name.startsWith("_nova/")));
       assert.ok(meta.notifications.every((name) => name.startsWith("_nova/")));

@@ -1,4 +1,4 @@
-import { createRequire } from "node:module";
+import { readPackageVersion } from "../core/version.js";
 import type { UpdateAvailable } from "./state/types.js";
 
 const PACKAGE_NAME = "@datalabrotterdam/nova-ai-cli";
@@ -46,20 +46,7 @@ export async function checkForUpdate(
 
 /** Reads package metadata at runtime so semantic-release's final version wins. */
 export function readInstalledVersion(): string | null {
-  const require = createRequire(import.meta.url);
-  for (const path of [
-    "../package.json",
-    "../../package.json",
-    "../../../package.json",
-  ]) {
-    try {
-      const metadata: unknown = require(path);
-      if (isVersionPayload(metadata)) return metadata.version;
-    } catch {
-      // Source, compiled tests, and the bundled CLI have different depths.
-    }
-  }
-  return process.env.npm_package_version ?? null;
+  return readPackageVersion();
 }
 
 export function isNewerVersion(candidate: string, current: string): boolean {
