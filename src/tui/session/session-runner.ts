@@ -32,7 +32,11 @@ import {
   type ContextCompactionResult,
 } from "../../core/context-compaction.js";
 import type { ContextUsage } from "../../core/context-usage.js";
-import { resolveModelSupportsImageInput } from "../../core/model-capabilities.js";
+import {
+  chatModels,
+  resolveDefaultModel,
+  resolveModelSupportsImageInput,
+} from "../../core/model-capabilities.js";
 import { findWorkspaceFileMentions } from "../files/file-mentions.js";
 import type { PromptImageAttachment } from "../files/prompt-images.js";
 import {
@@ -180,6 +184,7 @@ export class SessionRunner {
   private contextWindowModel: string | null = null;
   private contextWindowRequest = 0;
   private contextUsageRequest = 0;
+  private modelCheck: Promise<void> | null = null;
 
   constructor(
     private readonly store: Store<UIState>,
@@ -544,15 +549,36 @@ export class SessionRunner {
     });
   }
 
+  /** Chat models only: embedding, speech and transcription models can't run a session. */
   async listModels(): Promise<Array<{ id: string; name?: string | null }>> {
-    const { data } = await this.novaClient.models.list();
-    return data
-      .filter(
-        (model) =>
-          Array.isArray(model.capabilities) &&
-          model.capabilities.includes("tools"),
-      )
-      .map((model) => ({ id: model.id, name: model.name ?? null }));
+    const { data } = await this.novaClient.models.list({ limit: 100 });
+    return chatModels(data).map((model) => ({
+      id: model.id,
+      name: model.name ?? null,
+    }));
+  }
+
+  /**
+   * Replaces a saved model that cannot chat (older logins saved the first
+   * model of the list, e.g. an embedding model) and saves the replacement.
+   * Runs once; a failed lookup keeps the model and the prompt reports errors.
+   */
+  ensureUsableModel(): Promise<void> {
+    this.modelCheck ??= (async () => {
+      try {
+        const { data } = await this.novaClient.models.list({ limit: 100 });
+        const model = resolveDefaultModel(data, this.model);
+        if (!model || model === this.model) return;
+        const previous = this.model;
+        this.setModel(model);
+        this.store.setState({
+          statusLine: `${previous} is not a chat model; switched to ${model} (Ctrl+P to pick another).`,
+        });
+      } catch {
+        // Keep the model; a real problem surfaces with the first prompt.
+      }
+    })();
+    return this.modelCheck;
   }
 
   async supportsImageInput(model = this.model): Promise<boolean> {
@@ -1013,6 +1039,7 @@ export class SessionRunner {
   }
 
   private async ensureSession(): Promise<void> {
+    await this.ensureUsableModel();
     await this.sessionReady;
     if (!this.agentSessionLoaded) {
       this.sessionReady = this.createSession();

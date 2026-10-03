@@ -654,7 +654,7 @@ export class NovaAgent implements AgentRuntime {
     const credentials = readCredentials();
     if (!credentials) throw acp.RequestError.authRequired();
     const model =
-      params.model ?? credentials.defaultModel ?? process.env.NOVA_MODEL;
+      params.model ?? session.model ?? (await this.models.defaultModel(credentials));
     if (!model)
       throw new Error(
         "No Nova model configured. Re-run authentication or set NOVA_MODEL.",
@@ -731,8 +731,7 @@ export class NovaAgent implements AgentRuntime {
     const model =
       getPromptModel(params) ??
       session.model ??
-      credentials.defaultModel ??
-      process.env.NOVA_MODEL;
+      (await this.models.defaultModel(credentials));
     if (!model) {
       throw new Error(
         "No Nova model configured. Re-run authentication or set NOVA_MODEL.",

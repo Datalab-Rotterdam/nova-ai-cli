@@ -142,7 +142,7 @@ export class BackgroundService {
     }
 
     const model =
-      session.model ?? credentials.defaultModel ?? process.env.NOVA_MODEL;
+      session.model ?? (await this.runtime.models.defaultModel(credentials));
     if (!model) {
       throw new Error(
         "No Nova model configured. Re-run authentication or set NOVA_MODEL.",

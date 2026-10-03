@@ -130,6 +130,8 @@ export class TuiController {
   getView = (): ViewState => this.view;
 
   start(): void {
+    // Fix a saved model that can't chat before the first prompt needs it.
+    void this.runner.ensureUsableModel().then(() => this.refresh());
     this.syncWindowTitle();
     this.animationTimer = setInterval(() => this.syncWindowTitle(true), 120);
     this.animationTimer.unref?.();

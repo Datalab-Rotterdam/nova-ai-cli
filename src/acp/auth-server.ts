@@ -4,6 +4,7 @@ import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { NovaAI, NovaAIError } from "@datalabrotterdam/nova-sdk";
+import { chooseDefaultModel } from "../core/model-capabilities.js";
 import { createNovaClient } from "../core/nova-client.js";
 import { dir, json, WebServer } from "@sourceregistry/node-webserver";
 import {
@@ -56,13 +57,14 @@ function openBrowser(url: string): void {
   }
 }
 
-/** Checks a key against Nova and picks the default model (first enabled one). */
+/**
+ * Checks a key against Nova and picks the default model: a chat model, with
+ * native tool calls when there is one (never an embedding or speech model).
+ */
 export async function validateApiKey(apiKey: string): Promise<StoredCredentials> {
   const client = createNovaClient(apiKey);
-  const { data: models } = await client.models.list();
-  const defaultModel = (models.find((m) => m.enabled !== false) ?? models[0])
-    ?.id;
-  return { apiKey, defaultModel };
+  const { data: models } = await client.models.list({ limit: 100 });
+  return { apiKey, defaultModel: chooseDefaultModel(models) };
 }
 
 export type AuthServerOptions = {

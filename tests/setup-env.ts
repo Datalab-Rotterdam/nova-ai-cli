@@ -15,3 +15,7 @@ if (!process.env.NOVA_TEST_HOME) {
   process.env.USERPROFILE = home;
   process.env.NOVA_AI_HOME = join(home, ".nova-ai");
 }
+
+// Nothing in the unit tests may reach the real Nova gateway: point clients at
+// a closed local port unless a test starts its own fake server.
+process.env.NOVA_BASE_URL ??= "http://127.0.0.1:9";

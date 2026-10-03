@@ -26,16 +26,17 @@ export async function startFakeNovaServer(script: ScriptedReply[]): Promise<{
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify(value));
     };
-    if (req.url?.endsWith("/models")) {
+    const path = new URL(req.url ?? "/", "http://fake").pathname;
+    if (path.endsWith("/models")) {
       return json({
         object: "list",
         data: [{ id: "fake-model", object: "model", created: 0, owned_by: "x", context_window: 100000 }],
       });
     }
-    if (req.url?.endsWith("/providers")) {
+    if (path.endsWith("/providers")) {
       return json({ object: "list", data: [{ id: "x", object: "provider", name: "Fake" }] });
     }
-    if (!req.url?.endsWith("/chat/completions")) {
+    if (!path.endsWith("/chat/completions")) {
       res.writeHead(404).end();
       return;
     }

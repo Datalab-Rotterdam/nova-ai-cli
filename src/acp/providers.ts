@@ -1,5 +1,6 @@
 import type * as acp from "@agentclientprotocol/sdk";
 import type { NovaAI, ProviderResponse } from "@datalabrotterdam/nova-sdk";
+import { chatModels } from "../core/model-capabilities.js";
 
 export type JoinedModel = {
   id: string;
@@ -9,28 +10,27 @@ export type JoinedModel = {
   enabled: boolean;
 };
 
+/** The chat models an agent session can use, with their provider. */
 export async function listJoinedModels(
   novaClient: NovaAI,
   disabledProviderIds: ReadonlySet<string>,
 ): Promise<JoinedModel[]> {
   const [providers, models] = await Promise.all([
     novaClient.providers.list(),
-    novaClient.models.list(),
+    novaClient.models.list({ limit: 100 }),
   ]);
   const providerById = new Map(providers.data.map((p) => [p.id, p]));
-  return models.data
-    .filter((m) => m.enabled !== false)
-    .map((m) => {
-      const provider = providerById.get(m.owned_by);
-      const providerName = provider?.name ?? m.owned_by;
-      return {
-        id: m.id,
-        label: `${m.name ?? m.id} (${m.id}) [${providerName}]`,
-        providerId: m.owned_by,
-        providerName,
-        enabled: !disabledProviderIds.has(m.owned_by),
-      };
-    });
+  return chatModels(models.data).map((m) => {
+    const provider = providerById.get(m.owned_by);
+    const providerName = provider?.name ?? m.owned_by;
+    return {
+      id: m.id,
+      label: `${m.name ?? m.id} (${m.id}) [${providerName}]`,
+      providerId: m.owned_by,
+      providerName,
+      enabled: !disabledProviderIds.has(m.owned_by),
+    };
+  });
 }
 
 /**

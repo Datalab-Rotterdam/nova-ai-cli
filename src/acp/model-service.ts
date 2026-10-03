@@ -1,11 +1,14 @@
 import * as acp from "@agentclientprotocol/sdk";
-import { NovaAI } from "@datalabrotterdam/nova-sdk";
+import { NovaAI, type ModelResponse } from "@datalabrotterdam/nova-sdk";
 import { createNovaClient } from "../core/nova-client.js";
 import type { Session } from "../core/agent/session.js";
 import { ToolSupportStore } from "../core/model/tool-support.js";
-import { readCredentials } from "../core/credentials.js";
+import { readCredentials, type StoredCredentials } from "../core/credentials.js";
 import { resolveModelContextWindow } from "../core/context-compaction.js";
-import { resolveModelSupportsImageInput } from "../core/model-capabilities.js";
+import {
+  resolveDefaultModel,
+  resolveModelSupportsImageInput,
+} from "../core/model-capabilities.js";
 import {
   buildProviderInfos,
   listJoinedModels,
@@ -19,6 +22,34 @@ export class ModelService {
   private readonly imageSupportByModel = new Map<string, boolean>();
   private readonly contextWindowByModel = new Map<string, number>();
   private readonly disabledProviders = new Set<string>();
+  private catalog: { apiKey: string; models: Promise<ModelResponse[]> } | null = null;
+
+  /**
+   * The model for a session that chose none (see resolveDefaultModel).
+   * When the catalog can't be read, the saved default is used as is.
+   */
+  async defaultModel(credentials: StoredCredentials): Promise<string | undefined> {
+    const preferred = credentials.defaultModel ?? process.env.NOVA_MODEL;
+    try {
+      return resolveDefaultModel(await this.modelCatalog(credentials.apiKey), preferred);
+    } catch {
+      return preferred;
+    }
+  }
+
+  private modelCatalog(apiKey: string): Promise<ModelResponse[]> {
+    if (this.catalog?.apiKey !== apiKey) {
+      const models = createNovaClient(apiKey)
+        .models.list({ limit: 100 })
+        .then((response) => response.data);
+      // A failed lookup is retried next time instead of being cached.
+      models.catch(() => {
+        if (this.catalog?.models === models) this.catalog = null;
+      });
+      this.catalog = { apiKey, models };
+    }
+    return this.catalog.models;
+  }
 
   async buildConfigOptions(
     session: Session,
@@ -41,7 +72,10 @@ export class ModelService {
         name: "Model",
         category: "model",
         type: "select",
-        currentValue: session.model ?? models[0].id,
+        currentValue:
+          session.model ??
+          (await this.defaultModel(credentials)) ??
+          models[0].id,
         options: models.map((m) => ({ value: m.id, name: m.label })),
       },
     ];
