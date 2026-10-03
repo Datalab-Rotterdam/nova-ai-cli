@@ -57,6 +57,12 @@ export async function withFakeNova(
   const requests: FakeRequest[] = [];
   globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input instanceof Request ? input.url : input);
+    if (url.includes("/providers")) {
+      return new Response(
+        JSON.stringify({ object: "list", data: [{ id: "x", object: "provider", name: "Fake" }] }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
     if (url.includes("/models")) {
       return new Response(
         JSON.stringify({ object: "list", data: [{ id: "fake-model", object: "model", created: 0, owned_by: "x", context_window: 100000 }] }),

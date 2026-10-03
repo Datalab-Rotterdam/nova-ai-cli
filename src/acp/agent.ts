@@ -116,6 +116,42 @@ export {
 } from "./prompt-content.js";
 
 const AUTH_METHOD_ID = "nova-api-key";
+
+/** Slash commands the agent itself handles in session/prompt. */
+const AVAILABLE_COMMANDS: acp.AvailableCommand[] = [
+  {
+    name: "compact",
+    description: "Summarize older parts of the conversation to free context space",
+  },
+];
+
+/** The command name when the prompt is exactly one advertised slash command. */
+function slashCommandName(prompt: acp.PromptRequest["prompt"]): string | null {
+  if (prompt.length !== 1 || prompt[0]!.type !== "text") return null;
+  const match = /^\/([a-z][a-z0-9-]*)\s*$/.exec(prompt[0]!.text.trim());
+  const name = match?.[1];
+  return name && AVAILABLE_COMMANDS.some((command) => command.name === name) ? name : null;
+}
+
+async function notifyUsage(
+  client: acp.AgentContext,
+  sessionId: string,
+  used: number,
+  size: number,
+  estimated = false,
+): Promise<void> {
+  await client
+    .notify("session/update", {
+      sessionId,
+      update: {
+        sessionUpdate: "usage_update",
+        used,
+        size,
+        ...(estimated ? { _meta: { "nova-ai-cli/estimated": true } } : {}),
+      },
+    })
+    .catch(() => {});
+}
 /** How long closing a session waits for its turn to save its history. */
 const SHUTDOWN_GRACE_MS = 2_000;
 
@@ -190,6 +226,7 @@ export class NovaAgent implements AgentRuntime {
 
   async newSession(
     params: acp.NewSessionRequest,
+    client?: acp.AgentContext,
   ): Promise<acp.NewSessionResponse> {
     const sessionId = crypto.randomUUID();
     const { mcpConnections, mcpFailures, skills } = await this.setupSession(
@@ -198,6 +235,7 @@ export class NovaAgent implements AgentRuntime {
       [],
       null,
     );
+    this.announceSession(sessionId, client);
     return {
       sessionId,
       modes: sessionModeState("agent"),
@@ -302,6 +340,7 @@ export class NovaAgent implements AgentRuntime {
       }
     }
 
+    this.announceSession(params.sessionId, client);
     return {
       modes: sessionModeState("agent"),
       configOptions: [
@@ -397,6 +436,7 @@ export class NovaAgent implements AgentRuntime {
 
   async forkSession(
     params: acp.ForkSessionRequest,
+    client?: acp.AgentContext,
   ): Promise<acp.ForkSessionResponse> {
     const newSessionId = crypto.randomUUID();
     const forked = forkStoredSession(params.sessionId, newSessionId, {
@@ -411,6 +451,7 @@ export class NovaAgent implements AgentRuntime {
       forked.messages,
       forked.title,
     );
+    this.announceSession(newSessionId, client);
     return {
       sessionId: newSessionId,
       modes: sessionModeState("agent"),
@@ -422,6 +463,7 @@ export class NovaAgent implements AgentRuntime {
 
   async resumeSession(
     params: acp.ResumeSessionRequest,
+    client?: acp.AgentContext,
   ): Promise<acp.ResumeSessionResponse> {
     const stored = loadStoredSession(params.sessionId);
     if (!stored) {
@@ -433,6 +475,7 @@ export class NovaAgent implements AgentRuntime {
       stored.messages,
       stored.title,
     );
+    this.announceSession(params.sessionId, client);
     return {
       modes: sessionModeState("agent"),
       configOptions: await this.configOptions(
@@ -592,6 +635,9 @@ export class NovaAgent implements AgentRuntime {
     runtime: PromptRuntimeOptions,
     abortController: AbortController,
   ): Promise<acp.PromptResponse> {
+    if (slashCommandName(params.prompt) === "compact") {
+      return this.runCompactCommand(session, params.sessionId, client);
+    }
     const credentials = readCredentials();
     if (!credentials) {
       throw acp.RequestError.authRequired();
@@ -674,8 +720,20 @@ export class NovaAgent implements AgentRuntime {
     const systemMessageCount = systemPrompt ? 1 : 0;
 
     const host = new AcpToolHost(client, params.sessionId);
-    const emit = (event: AgentEvent) =>
-      emitToAcp(client, params.sessionId, event, session.cwd);
+    let reportedUsage = false;
+    const emit = async (event: AgentEvent) => {
+      if (event.type === "usage") {
+        reportedUsage = true;
+        await notifyUsage(
+          client,
+          params.sessionId,
+          event.promptTokens + event.completionTokens,
+          contextWindow,
+        );
+        return;
+      }
+      await emitToAcp(client, params.sessionId, event, session.cwd);
+    };
     const authorize = (
       toolCallId: string,
       tool: ToolDefinition,
@@ -783,7 +841,100 @@ export class NovaAgent implements AgentRuntime {
           [...backgroundHandoffs, userMessage, ...turnMessages],
         );
       }
+      await this.announceTurnEnd(params.sessionId, session, client, {
+        contextWindow,
+        reportedUsage,
+      });
     }
+  }
+
+  /** `/compact` sent as a prompt (advertised in available_commands_update). */
+  private async runCompactCommand(
+    session: Session,
+    sessionId: string,
+    client: acp.AgentContext,
+  ): Promise<acp.PromptResponse> {
+    let message: string;
+    try {
+      const result = await this.compactSession({ sessionId, model: session.model ?? undefined });
+      message = result.compacted
+        ? `Compacted the conversation: summarized ${result.removedMessages} older messages and kept ${result.keptMessages}.`
+        : "Nothing to compact yet.";
+    } catch (error) {
+      if (error instanceof acp.RequestError) throw error;
+      message = `Could not compact the conversation: ${error instanceof Error ? error.message : String(error)}`;
+    }
+    await client
+      .notify("session/update", {
+        sessionId,
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: message },
+        },
+      })
+      .catch(() => {});
+    return { stopReason: "end_turn" };
+  }
+
+  /** Title, last activity and (when the server reported none) estimated context use. */
+  private async announceTurnEnd(
+    sessionId: string,
+    session: Session,
+    client: acp.AgentContext,
+    options: { contextWindow: number; reportedUsage: boolean },
+  ): Promise<void> {
+    if (!this.sessions.has(sessionId)) return;
+    await client
+      .notify("session/update", {
+        sessionId,
+        update: {
+          sessionUpdate: "session_info_update",
+          title: session.title,
+          updatedAt: new Date().toISOString(),
+        },
+      })
+      .catch(() => {});
+    if (!options.reportedUsage) {
+      try {
+        const usage = this.contextUsage({ sessionId, contextWindow: options.contextWindow });
+        await notifyUsage(client, sessionId, usage.totalTokens, options.contextWindow, true);
+      } catch {
+        // Informational only; never fails the turn.
+      }
+    }
+  }
+
+  /**
+   * After session/new or session/load has been answered: the commands this
+   * agent understands, and the model choice once the model list has loaded
+   * (fetching it inside the request would slow every session start).
+   */
+  private announceSession(sessionId: string, client: acp.AgentContext | undefined): void {
+    if (!client) return;
+    setTimeout(() => {
+      void (async () => {
+        await client
+          .notify("session/update", {
+            sessionId,
+            update: {
+              sessionUpdate: "available_commands_update",
+              availableCommands: AVAILABLE_COMMANDS,
+            },
+          })
+          .catch(() => {});
+        const session = this.sessions.get(sessionId);
+        if (!session) return;
+        const options = await this.configOptions(session).catch(() => []);
+        if (options.length > 1 && this.sessions.has(sessionId)) {
+          await client
+            .notify("session/update", {
+              sessionId,
+              update: { sessionUpdate: "config_option_update", configOptions: options },
+            })
+            .catch(() => {});
+        }
+      })();
+    }, 0);
   }
 
   cancel(params: acp.CancelNotification): void {

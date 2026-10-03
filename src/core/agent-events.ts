@@ -5,6 +5,8 @@ export type AgentEvent =
   | { type: "text"; text: string }
   /** Model reasoning (reasoning_content or <think> blocks), never part of the answer. */
   | { type: "thought"; text: string }
+  /** Token counts the server reported for one request. */
+  | { type: "usage"; promptTokens: number; completionTokens: number }
   | { type: "context_compacted"; removedMessages: number; keptMessages: number }
   | { type: "context_compaction_failed"; reason: string }
   | {

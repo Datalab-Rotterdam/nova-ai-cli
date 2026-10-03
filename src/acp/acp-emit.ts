@@ -116,6 +116,7 @@ export async function emitToAcp(
         },
       });
       return;
+    case "usage": // reported by the agent, which knows the context window
     case "end_turn":
     case "error":
       return;

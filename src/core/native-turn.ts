@@ -111,6 +111,7 @@ export async function runNativeTurn(
     let text = "";
     const calls: StreamedCall[] = [];
     let finishReason: string | null = null;
+    let reportedUsage: { promptTokens: number; completionTokens: number } | null = null;
     // Parser callbacks are synchronous; their emits are awaited per chunk so
     // client notifications keep the stream's order and backpressure.
     let pending: Array<void | Promise<void>> = [];
@@ -155,6 +156,13 @@ export async function runNativeTurn(
         { signal },
       )) {
         if (event.type !== "chunk") continue;
+        const usage = event.data.usage;
+        if (usage && typeof usage.prompt_tokens === "number") {
+          reportedUsage = {
+            promptTokens: usage.prompt_tokens,
+            completionTokens: typeof usage.completion_tokens === "number" ? usage.completion_tokens : 0,
+          };
+        }
         for (const choice of event.data.choices ?? []) {
           if (typeof choice.finish_reason === "string") {
             finishReason = choice.finish_reason;
@@ -165,6 +173,7 @@ export async function runNativeTurn(
       }
       parser.end();
       await flush();
+      if (reportedUsage) await emit({ type: "usage", ...reportedUsage });
     } catch (error) {
       await flush().catch(() => {});
       if (signal.aborted) return { stopReason: "cancelled", turnMessages };

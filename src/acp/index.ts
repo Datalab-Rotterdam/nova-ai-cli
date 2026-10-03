@@ -28,7 +28,7 @@ async function runAcp(...args: string[]): Promise<void> {
   const connection = acp
     .agent({ name: "nova-ai-cli" })
     .onRequest("initialize", (ctx) => agentImpl.initialize(ctx.params))
-    .onRequest("session/new", (ctx) => agentImpl.newSession(ctx.params))
+    .onRequest("session/new", (ctx) => agentImpl.newSession(ctx.params, ctx.client))
     .onRequest("session/load", (ctx) => agentImpl.loadSession(ctx.params, ctx.client))
     .onRequest("session/list", (ctx) => agentImpl.listSessions(ctx.params))
     .onRequest("session/set_mode", (ctx) =>
@@ -36,8 +36,10 @@ async function runAcp(...args: string[]): Promise<void> {
     )
     .onRequest("session/close", (ctx) => agentImpl.closeSession(ctx.params))
     .onRequest("session/delete", (ctx) => agentImpl.deleteSession(ctx.params))
-    .onRequest("session/fork", (ctx) => agentImpl.forkSession(ctx.params))
-    .onRequest("session/resume", (ctx) => agentImpl.resumeSession(ctx.params))
+    .onRequest("session/fork", (ctx) => agentImpl.forkSession(ctx.params, ctx.client))
+    .onRequest("session/resume", (ctx) =>
+      agentImpl.resumeSession(ctx.params, ctx.client),
+    )
     .onRequest(NOVA_METHODS.sessionCheckpoints, parseSessionIdParams, (ctx) =>
       agentImpl.listSessionCheckpoints(ctx.params),
     )
