@@ -1,6 +1,6 @@
 {
   "name": "@datalabrotterdam/nova-ai-cli",
-  "version": "1.1.0",
+  "version": "1.2.0-alpha.1",
   "description": "Agentic coding with DataLab Rotterdam's Nova AI in your terminal: interactive TUI, headless mode, and an ACP agent for editors",
   "license": "Apache-2.0",
   "author": "DataLab Rotterdam",
