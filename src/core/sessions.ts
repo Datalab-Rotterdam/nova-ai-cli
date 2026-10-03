@@ -197,7 +197,10 @@ function parseSessionTimeline(raw: string): {
 }
 
 function normalizeStoredMessage(message: ChatMessage): ChatMessage {
-  if (message.role !== "user" || typeof message.content !== "string") {
+  if (
+    (message.role !== "user" && message.role !== "tool") ||
+    typeof message.content !== "string"
+  ) {
     return message;
   }
   const content = truncateStoredToolMessage(message.content);

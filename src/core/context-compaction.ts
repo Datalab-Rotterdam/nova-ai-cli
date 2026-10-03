@@ -1,5 +1,5 @@
 import type { ChatMessage, NovaAI } from "@datalabrotterdam/nova-sdk";
-import { chatContentToText } from "./chat-content.js";
+import { isToolResultMessage, messageTextWithToolCalls } from "./history.js";
 import { resolveModelMetadata } from "./model-capabilities.js";
 import { stripReasoningTags } from "./reasoning-tags.js";
 
@@ -114,6 +114,13 @@ export async function compactConversation(
     splitIndex--;
     recentCount++;
     recentChars += candidate.length;
+  }
+
+  // Never start the kept tail with a tool result: its call would be
+  // summarized away, leaving an orphan result (rejected by native tool APIs
+  // and meaningless in the text protocol). Keep the calling turn as well.
+  while (splitIndex > 0 && splitIndex < history.length && isToolResultMessage(history[splitIndex]!)) {
+    splitIndex--;
   }
 
   if (splitIndex <= 0) {
@@ -249,8 +256,7 @@ async function summarizeChunk(
 }
 
 function serializeMessage(message: ChatMessage): string {
-  const content = chatContentToText(message.content);
-  return `${message.role.toUpperCase()}:\n${content}`;
+  return `${message.role.toUpperCase()}:\n${messageTextWithToolCalls(message)}`;
 }
 
 function splitText(value: string, maximum: number): string[] {

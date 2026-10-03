@@ -33,3 +33,9 @@ test("src/core does not import from acp, tui, headless or webui", () => {
   }
   assert.deepEqual(violations, []);
 });
+
+test("the suite runs against a throwaway home directory", async () => {
+  const { homedir } = await import("node:os");
+  assert.ok(process.env.NOVA_TEST_HOME, "tests must be started with --import setup-env");
+  assert.equal(homedir(), process.env.NOVA_TEST_HOME);
+});

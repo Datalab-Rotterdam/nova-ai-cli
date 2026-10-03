@@ -7,9 +7,12 @@ import {
 } from "@datalabrotterdam/nova-sdk";
 import { NovaAgent } from "../../acp/agent.js";
 import {
-  extractToolCall,
-  stripToolCallMarkup,
-} from "../../core/tools/marker.js";
+  assistantToolCalls,
+  assistantVisibleText,
+  legacyToolOutcomes,
+  toolOutcomeFromBody,
+  type ToolOutcome,
+} from "../../core/history.js";
 import type {
   BackgroundJobKind,
   BackgroundJobSummary,
@@ -28,7 +31,6 @@ import {
 } from "../../core/context-compaction.js";
 import type { ContextUsage } from "../../core/context-usage.js";
 import { resolveModelSupportsImageInput } from "../../core/model-capabilities.js";
-import { stripReasoningTags } from "../../core/reasoning-tags.js";
 import { findWorkspaceFileMentions } from "../files/file-mentions.js";
 import type { PromptImageAttachment } from "../files/prompt-images.js";
 import {
@@ -83,22 +85,26 @@ const RESTORED_TOOL_METADATA: Record<string, RestoredToolMetadata> = {
 /** Rebuilds the live transcript shape from the model-facing stored history. */
 export function restoreSessionMessages(messages: ChatMessage[]): UIMessage[] {
   const restored: UIMessage[] = [];
-  let pendingTool: ToolCallView | null = null;
+  // Calls of the latest assistant message still waiting for their result,
+  // in call order. Native calls carry their id; legacy text calls do not.
+  let pending: Array<{ id: string | null; view: ToolCallView }> = [];
 
-  const settleMissingToolResult = () => {
-    if (!pendingTool) return;
-    pendingTool.status = "failed";
-    pendingTool.output =
-      "Tool result was not persisted before the session ended.";
-    pendingTool = null;
+  const settleMissingToolResults = () => {
+    for (const { view } of pending) {
+      view.status = "failed";
+      view.output = "Tool result was not persisted before the session ended.";
+    }
+    pending = [];
+  };
+  const settle = (view: ToolCallView, outcome: ToolOutcome) => {
+    view.status = outcome.status;
+    view.output = outcome.output;
   };
 
   for (const message of messages) {
-    const rawText = chatContentToText(message.content);
     if (message.role === "assistant") {
-      settleMissingToolResult();
-      const toolCall = extractToolCall(rawText);
-      const visibleText = stripReasoningTags(stripToolCallMarkup(rawText));
+      settleMissingToolResults();
+      const visibleText = assistantVisibleText(message);
       if (visibleText.trim()) {
         restored.push({
           id: uid(),
@@ -107,70 +113,61 @@ export function restoreSessionMessages(messages: ChatMessage[]): UIMessage[] {
           streaming: false,
         });
       }
-      if (toolCall) {
-        const metadata = RESTORED_TOOL_METADATA[toolCall.name] ?? {
+      for (const call of assistantToolCalls(message)) {
+        const metadata = RESTORED_TOOL_METADATA[call.name] ?? {
           // Persisted ACP/MCP calls do not currently retain annotations. Keep
           // unknown calls compact without falsely labelling them as changes.
           kind: "execute",
           mutating: false,
         };
-        pendingTool = {
+        const view: ToolCallView = {
           toolCallId: uid(),
-          name: toolCall.name,
-          args: toolCall.args,
+          name: call.name,
+          args: call.args,
           kind: metadata.kind,
           mutating: metadata.mutating,
           status: "pending",
           output: null,
           diff: null,
         };
-        if (toolCall.name !== "update_plan") {
-          restored.push({ id: uid(), role: "tool", call: pendingTool });
+        pending.push({ id: call.id, view });
+        if (call.name !== "update_plan") {
+          restored.push({ id: uid(), role: "tool", call: view });
         }
       }
       continue;
     }
 
-    if (message.role !== "user") continue;
-    const outcome = pendingTool ? storedToolOutcome(rawText) : null;
-    if (pendingTool && outcome) {
-      pendingTool.status = outcome.status;
-      pendingTool.output = outcome.output;
-      pendingTool = null;
+    if (message.role === "tool") {
+      const id = (message as { tool_call_id?: unknown }).tool_call_id;
+      const index = pending.findIndex((entry) => entry.id === id);
+      if (index >= 0) {
+        settle(pending[index]!.view, toolOutcomeFromBody(chatContentToText(message.content)));
+        pending.splice(index, 1);
+      }
       continue;
     }
 
-    settleMissingToolResult();
+    if (message.role !== "user") continue;
+    const rawText = chatContentToText(message.content);
+    const outcomes = pending.length ? legacyToolOutcomes(rawText) : null;
+    if (outcomes) {
+      const forCalls = outcomes.filter((outcome) => outcome.name !== "(unparseable)");
+      forCalls.forEach((outcome, index) => {
+        const entry = pending[index];
+        if (entry) settle(entry.view, outcome);
+      });
+      pending = pending.slice(forCalls.length);
+      settleMissingToolResults();
+      continue;
+    }
+
+    settleMissingToolResults();
     restored.push({ id: uid(), role: "user", text: rawText });
   }
 
-  settleMissingToolResult();
+  settleMissingToolResults();
   return restored;
-}
-
-function storedToolOutcome(
-  text: string,
-): Pick<ToolCallView, "status" | "output"> | null {
-  if (text.startsWith("Tool result:")) {
-    return {
-      status: "completed",
-      output: text.slice("Tool result:".length).trimStart(),
-    };
-  }
-  if (text.startsWith("Tool error:")) {
-    return {
-      status: "failed",
-      output: text.slice("Tool error:".length).trimStart(),
-    };
-  }
-  if (
-    text === "Tool call rejected by user." ||
-    /^Tool "[^"]+" is not available\.$/.test(text) ||
-    /^Tool call "[^"]+" has invalid arguments:/.test(text)
-  ) {
-    return { status: "failed", output: text };
-  }
-  return null;
 }
 
 export type McpSessionStatus = {

@@ -1,6 +1,7 @@
 import type { ChatMessage } from "@datalabrotterdam/nova-sdk";
 import { extractToolCall } from "./tools/marker.js";
 import { chatContentToText } from "./chat-content.js";
+import { messageTextWithToolCalls, nativeToolCalls } from "./history.js";
 
 export type ContextUsageCategory =
   | "system"
@@ -58,6 +59,21 @@ export function calculateContextUsage(input: ContextUsageInput): ContextUsage {
 
   let pendingToolCategory: ContextUsageCategory | null = null;
   for (const message of input.history) {
+    const calls = nativeToolCalls(message);
+    if (calls.length) {
+      add("thinking", chatContentToText(message.content));
+      const category = toolCategory(calls[0]!.function.name);
+      for (const call of calls) {
+        add(toolCategory(call.function.name), JSON.stringify(call));
+      }
+      pendingToolCategory = category;
+      continue;
+    }
+    if (message.role === "tool") {
+      add(pendingToolCategory ?? "tools", chatContentToText(message.content));
+      continue;
+    }
+
     const content = messageText(message);
     if (!content) continue;
 
@@ -140,5 +156,6 @@ function toolCategory(name: string): ContextUsageCategory {
 }
 
 function messageText(message: ChatMessage): string {
-  return chatContentToText(message.content);
+  // Native tool-call arguments (e.g. a whole file for write_file) count too.
+  return messageTextWithToolCalls(message);
 }

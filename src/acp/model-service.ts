@@ -1,6 +1,7 @@
 import * as acp from "@agentclientprotocol/sdk";
 import { NovaAI } from "@datalabrotterdam/nova-sdk";
 import type { Session } from "../core/agent/session.js";
+import { ToolSupportStore } from "../core/model/tool-support.js";
 import { readCredentials } from "../core/credentials.js";
 import { resolveModelContextWindow } from "../core/context-compaction.js";
 import { resolveModelSupportsImageInput } from "../core/model-capabilities.js";
@@ -12,6 +13,8 @@ import {
 
 /** Model discovery, per-model capability caches and the providers/* surface. */
 export class ModelService {
+  /** Learned native tool-calling support per model, persisted across runs. */
+  readonly toolSupport = new ToolSupportStore();
   private readonly imageSupportByModel = new Map<string, boolean>();
   private readonly contextWindowByModel = new Map<string, number>();
   private readonly disabledProviders = new Set<string>();

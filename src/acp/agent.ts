@@ -54,7 +54,15 @@ import {
 } from "../core/skills.js";
 import { detectToolEnvironment } from "../core/tools/environment.js";
 import { stripToolCallMarkup } from "../core/tools/marker.js";
-import { buildToolsSystemPrompt } from "../core/tools/system-prompt.js";
+import {
+  buildNativeToolsSystemPrompt,
+  buildToolsSystemPrompt,
+} from "../core/tools/system-prompt.js";
+import {
+  chooseToolProtocol,
+  runWithToolProtocol,
+  type ToolProtocol,
+} from "../core/agent/tool-protocol.js";
 import type { ToolDefinition } from "../core/tools/types.js";
 import { AcpToolHost } from "./acp-tool-host.js";
 import {
@@ -574,14 +582,20 @@ export class NovaAgent implements AgentRuntime {
           });
       },
     });
-    const systemPrompt = [
-      buildModeSystemPrompt(session.mode),
-      buildSkillsSystemPrompt(session.skills),
-      buildMemorySystemPrompt(session.memory),
-      buildToolsSystemPrompt(tools, session.cwd),
-    ]
-      .filter(Boolean)
-      .join("\n\n");
+    const systemPromptFor = (protocol: ToolProtocol) =>
+      [
+        buildModeSystemPrompt(session.mode),
+        buildSkillsSystemPrompt(session.skills),
+        buildMemorySystemPrompt(session.memory),
+        protocol === "native"
+          ? buildNativeToolsSystemPrompt(tools, session.cwd)
+          : buildToolsSystemPrompt(tools, session.cwd),
+      ]
+        .filter(Boolean)
+        .join("\n\n");
+    const systemPrompt = systemPromptFor(
+      chooseToolProtocol(model, this.models.toolSupport, tools.length > 0),
+    );
 
     const userMessage: ChatMessage = {
       role: "user",
@@ -620,45 +634,58 @@ export class NovaAgent implements AgentRuntime {
     let turnMessages: ChatMessage[] = [];
     let contextCompacted = false;
     try {
-      const result = await runTurn(messages, abortController.signal, {
-        host,
-        sessionId: params.sessionId,
-        cwd: session.cwd,
-        environment: session.environment,
-        background,
-        tools,
-        requestPermission,
-        compactContext: async (currentMessages, error) => {
-          const compaction = await compactConversation(
-            currentMessages.slice(systemMessageCount),
+      const result = await runWithToolProtocol({
+        model,
+        support: this.models.toolSupport,
+        hasTools: tools.length > 0,
+        run: (toolProtocol) => {
+          // Both protocols produce a system prompt whenever there are tools,
+          // so only its content changes between attempts.
+          if (systemMessageCount) {
+            messages[0] = { role: "system", content: systemPromptFor(toolProtocol) };
+          }
+          return runTurn(messages, abortController.signal, {
+            toolProtocol,
+            host,
+            sessionId: params.sessionId,
+            cwd: session.cwd,
+            environment: session.environment,
+            background,
+            tools,
+            requestPermission,
+            compactContext: async (currentMessages, error) => {
+              const compaction = await compactConversation(
+                currentMessages.slice(systemMessageCount),
+                novaClient,
+                model,
+                {
+                  signal: abortController.signal,
+                  contextWindow: contextWindowFromError(error) ?? contextWindow,
+                },
+              );
+              if (compaction.compacted) {
+                currentMessages.splice(
+                  systemMessageCount,
+                  currentMessages.length - systemMessageCount,
+                  ...compaction.history,
+                );
+                contextCompacted = true;
+              }
+              return compaction;
+            },
+            contextWindow,
+            takeSteeringMessages: async () => [
+              ...(await this.takeSteeringMessages(
+                { sessionId: params.sessionId },
+                client,
+              )),
+              ...((await runtime.takeSteeringMessages?.()) ?? []),
+            ],
+            emit,
             novaClient,
             model,
-            {
-              signal: abortController.signal,
-              contextWindow: contextWindowFromError(error) ?? contextWindow,
-            },
-          );
-          if (compaction.compacted) {
-            currentMessages.splice(
-              systemMessageCount,
-              currentMessages.length - systemMessageCount,
-              ...compaction.history,
-            );
-            contextCompacted = true;
-          }
-          return compaction;
+          });
         },
-        contextWindow,
-        takeSteeringMessages: async () => [
-          ...(await this.takeSteeringMessages(
-            { sessionId: params.sessionId },
-            client,
-          )),
-          ...((await runtime.takeSteeringMessages?.()) ?? []),
-        ],
-        emit,
-        novaClient,
-        model,
       });
       turnMessages = result.turnMessages;
       return { stopReason: result.stopReason };

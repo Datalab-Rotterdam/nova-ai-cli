@@ -37,6 +37,15 @@ export async function emitToAcp(
         },
       });
       return;
+    case "thought":
+      await client.notify("session/update", {
+        sessionId,
+        update: {
+          sessionUpdate: "agent_thought_chunk",
+          content: { type: "text", text: event.text },
+        },
+      });
+      return;
     case "context_compacted":
       await client.notify("session/update", {
         sessionId,

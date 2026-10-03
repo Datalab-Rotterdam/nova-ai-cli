@@ -10,7 +10,6 @@ import {
 } from "./tools/marker.js";
 import type { BackgroundToolApi } from "./background.js";
 import type { ToolEnvironment } from "./tools/environment.js";
-import { formatArgIssues, validateToolArgs } from "./tools/schema.js";
 import type { ToolDefinition } from "./tools/types.js";
 import type { AgentEvent } from "./agent-events.js";
 import {
@@ -20,13 +19,14 @@ import {
 import { estimateMessagesTokens } from "./context-usage.js";
 import { ReasoningTagFilter, stripReasoningTags } from "./reasoning-tags.js";
 import type { ToolHost } from "./tool-host.js";
-import { truncateToolOutput } from "./tool-output.js";
+import { toLegacyMessages } from "./history.js";
+import { runNativeTurn } from "./native-turn.js";
+import { formatBatchResults, runToolBatch } from "./tool-batch.js";
 
 const DEFAULT_MAX_TOOL_ROUNDS = 64;
 const MAX_EMPTY_COMPLETION_RETRIES = 2;
 const MAX_TRUNCATED_COMPLETION_RETRIES = 2;
 const PROACTIVE_COMPACTION_THRESHOLD = 0.8;
-const MAX_TOOL_CALLS_PER_ROUND = 8;
 const EMPTY_COMPLETION_INSTRUCTION =
   "The previous completion contained no visible assistant response. Continue the task now with either the next required tool call or a final answer.";
 const TRUNCATED_COMPLETION_INSTRUCTION =
@@ -68,6 +68,12 @@ export type RunTurnDeps = {
   model: string;
   /** Primarily injectable for focused tests; production uses the safety cap. */
   maxToolRounds?: number;
+  /**
+   * "native" sends tools in the request and expects tool_calls (see
+   * native-turn.ts); "text" (default) teaches the ```tool_call protocol in
+   * the system prompt. The caller picks the matching system prompt.
+   */
+  toolProtocol?: "native" | "text";
 };
 
 export type RunTurnResult = {
@@ -88,6 +94,9 @@ export async function runTurn(
   signal: AbortSignal,
   deps: RunTurnDeps,
 ): Promise<RunTurnResult> {
+  if (deps.toolProtocol === "native") {
+    return runNativeTurn(messages, signal, deps);
+  }
   const {
     host,
     sessionId,
@@ -236,7 +245,9 @@ export async function runTurn(
                 ]
               : messages;
         for await (const event of novaClient.chat.completions.stream(
-          { model, messages: requestMessages },
+          // History may hold native tool exchanges from before this model
+          // fell back to the text protocol; render them as text.
+          { model, messages: toLegacyMessages(requestMessages) },
           { signal },
         )) {
           if (event.type === "done") {
@@ -486,197 +497,31 @@ export async function runTurn(
     toolRounds++;
     if (toolRounds >= maxToolRounds) forceFinalResponse = true;
 
-    type BatchEntry = { name: string; status: string; body: string };
-    const entries: BatchEntry[] = [];
-    let skipReason: string | null = null;
-
-    for (let index = 0; index < blocks.length; index++) {
-      const block = blocks[index]!;
-      const blockName =
-        block.kind === "call" ? block.call.name : "(unparseable)";
-
-      if (index >= MAX_TOOL_CALLS_PER_ROUND) {
-        entries.push({
-          name: blockName,
-          status: "rejected",
-          body: `Rejected: too many tool calls in one turn (maximum ${MAX_TOOL_CALLS_PER_ROUND}). Re-issue this call in a later turn.`,
-        });
-        continue;
-      }
-      if (block.kind === "malformed") {
-        entries.push({
-          name: blockName,
-          status: "error",
-          body: "This tool_call block could not be parsed as JSON. Re-emit just this call as one valid block.",
-        });
-        continue;
-      }
-      const call = block.call;
-      if (skipReason) {
-        entries.push({ name: call.name, status: "skipped", body: skipReason });
-        continue;
-      }
-
-      // findTool also returns undefined after a least-privilege transition
-      // disabled tools mid-turn; the legacy message covers both cases.
-      const tool = findTool(call.name);
-      if (!tool) {
-        entries.push({
-          name: call.name,
-          status: "error",
-          body: `Tool "${call.name}" is not available.`,
-        });
-        continue;
-      }
-
-      const toolCallId = crypto.randomUUID();
-      if (tool.parameters) {
-        const validation = validateToolArgs(tool.parameters, call.args);
-        if (!validation.ok) {
-          const correction = formatArgIssues(
-            tool.name,
-            validation.issues,
-            tool.parameters,
-          );
-          // Surface the rejected call so clients can show why nothing
-          // executed; no permission prompt fires for a call that was never
-          // dispatched.
-          await emit({
-            type: "tool_pending",
-            toolCallId,
-            name: tool.name,
-            mutating: tool.mutating,
-            kind: tool.kind,
-            args: call.args,
-          });
-          await emit({
-            type: "tool_update",
-            toolCallId,
-            status: "failed",
-            output: correction,
-          });
-          entries.push({ name: call.name, status: "error", body: correction });
-          continue;
-        }
-        call.args = validation.args;
-      }
-
-      await emit({
-        type: "tool_pending",
-        toolCallId,
-        name: tool.name,
-        mutating: tool.mutating,
-        kind: tool.kind,
-        args: call.args,
-      });
-
-      const toolCtx = {
+    const entries = await runToolBatch(
+      blocks.map((block) =>
+        block.kind === "call"
+          ? { kind: "call" as const, name: block.call.name, args: block.call.args }
+          : { kind: "malformed" as const },
+      ),
+      {
         host,
         sessionId,
-        toolCallId,
         cwd,
         environment,
         background,
         signal,
+        findTool,
         requestPermission,
-      };
-      try {
-        const allowed =
-          !tool.mutating ||
-          (await requestPermission(toolCallId, tool, call.args));
-        if (!allowed) {
-          await emit({
-            type: "tool_update",
-            toolCallId,
-            status: "failed",
-            output: "Permission denied by user.",
-          });
-          entries.push({
-            name: call.name,
-            status: "rejected",
-            body: "Tool call rejected by user.",
-          });
-          // A rejection usually invalidates the model's plan for the rest of
-          // the batch — force a re-plan instead of running the remainder.
-          skipReason =
-            "Skipped: an earlier call in this batch was rejected by the user. Re-plan before retrying.";
-          continue;
-        }
-
-        const result = await tool.execute(toolCtx, call.args);
-        // A privilege-reducing transition must take effect before any awaited
-        // rendering/notification work below can fail.
-        if (!("error" in result) && result.disableFurtherTools) {
+        emit,
+        disableTools: () => {
           toolsEnabled = false;
-        }
-        if ("error" in result) {
-          await emit({
-            type: "tool_update",
-            toolCallId,
-            status: "failed",
-            output: result.error,
-          });
-          entries.push({
-            name: call.name,
-            status: "error",
-            body: `Tool error: ${truncateToolOutput(result.error)}`,
-          });
-        } else {
-          await emit({
-            type: "tool_update",
-            toolCallId,
-            status: "completed",
-            output: result.output,
-            diff: result.diff,
-          });
-          entries.push({
-            name: call.name,
-            status: "ok",
-            body: `Tool result: ${truncateToolOutput(result.output)}`,
-          });
-        }
-      } catch (error) {
-        const message = signal.aborted
-          ? "Canceled."
-          : errorMessage(error, `Tool ${tool.name} failed unexpectedly.`);
-        await emit({
-          type: "tool_update",
-          toolCallId,
-          status: "failed",
-          output: message,
-        });
-        if (signal.aborted) throw error;
-        entries.push({
-          name: call.name,
-          status: "error",
-          body: `Tool error: ${truncateToolOutput(message)}`,
-        });
-      }
-    }
+        },
+      },
+    );
 
     pushTurn({ role: "user", content: formatBatchResults(entries) });
     hasCompletedRound = true;
   }
-}
-
-/**
- * A single call keeps the legacy "Tool result:"/"Tool error:" message shape
- * (stored sessions and context accounting key off those prefixes); multiple
- * calls come back numbered in one combined message.
- */
-function formatBatchResults(
-  entries: Array<{ name: string; status: string; body: string }>,
-): string {
-  if (entries.length === 1) return entries[0]!.body;
-  const sections = entries.map(
-    (entry, index) =>
-      `[${index + 1}] ${entry.name} → ${entry.status}\n${entry.body}`,
-  );
-  return `Tool results (${entries.length} calls):\n${sections.join("\n")}`;
-}
-
-function errorMessage(error: unknown, fallback: string): string {
-  return error instanceof Error && error.message ? error.message : fallback;
 }
 
 function completionTruncationReason(

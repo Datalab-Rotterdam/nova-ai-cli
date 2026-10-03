@@ -24,7 +24,15 @@ import { deriveTitle } from "../core/sessions.js";
 import { buildSkillsSystemPrompt, discoverSkills } from "../core/skills.js";
 import { detectToolEnvironment } from "../core/tools/environment.js";
 import { stripToolCallMarkup } from "../core/tools/marker.js";
-import { buildToolsSystemPrompt } from "../core/tools/system-prompt.js";
+import {
+  buildNativeToolsSystemPrompt,
+  buildToolsSystemPrompt,
+} from "../core/tools/system-prompt.js";
+import {
+  chooseToolProtocol,
+  runWithToolProtocol,
+  type ToolProtocol,
+} from "../core/agent/tool-protocol.js";
 import type { ToolDefinition } from "../core/tools/types.js";
 import { truncateToolOutput } from "../core/tool-output.js";
 import { AcpToolHost } from "./acp-tool-host.js";
@@ -325,14 +333,20 @@ export class BackgroundService {
     const tools = buildSessionTools(session, this.runtime.clientCapabilities, {
       mode: null,
     });
-    const systemPrompt = [
-      buildModeSystemPrompt(getPromptMode(params)),
-      buildSkillsSystemPrompt(session.skills),
-      buildMemorySystemPrompt(session.memory),
-      buildToolsSystemPrompt(tools, session.cwd),
-    ]
-      .filter(Boolean)
-      .join("\n\n");
+    const systemPromptFor = (protocol: ToolProtocol) =>
+      [
+        buildModeSystemPrompt(getPromptMode(params)),
+        buildSkillsSystemPrompt(session.skills),
+        buildMemorySystemPrompt(session.memory),
+        protocol === "native"
+          ? buildNativeToolsSystemPrompt(tools, session.cwd)
+          : buildToolsSystemPrompt(tools, session.cwd),
+      ]
+        .filter(Boolean)
+        .join("\n\n");
+    const systemPrompt = systemPromptFor(
+      chooseToolProtocol(model, this.runtime.models.toolSupport, tools.length > 0),
+    );
     const userMessage: ChatMessage = {
       role: "user",
       content: contentBlocksToNovaContent(params.prompt),
@@ -367,18 +381,29 @@ export class BackgroundService {
     let turnMessages: ChatMessage[] = [];
     let completedNormally = false;
     try {
-      const result = await runTurn(messages, abortController.signal, {
-        host,
-        sessionId: params.sessionId,
-        cwd: session.cwd,
-        environment: session.environment,
-        background,
-        tools,
-        requestPermission,
-        contextWindow,
-        emit,
-        novaClient,
+      const result = await runWithToolProtocol({
         model,
+        support: this.runtime.models.toolSupport,
+        hasTools: tools.length > 0,
+        run: (toolProtocol) => {
+          if (systemPrompt) {
+            messages[0] = { role: "system", content: systemPromptFor(toolProtocol) };
+          }
+          return runTurn(messages, abortController.signal, {
+            toolProtocol,
+            host,
+            sessionId: params.sessionId,
+            cwd: session.cwd,
+            environment: session.environment,
+            background,
+            tools,
+            requestPermission,
+            contextWindow,
+            emit,
+            novaClient,
+            model,
+          });
+        },
       });
       turnMessages = result.turnMessages;
       completedNormally = result.stopReason !== "cancelled";

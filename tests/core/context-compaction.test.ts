@@ -168,3 +168,36 @@ test("compaction throws when every attempt returns a blank completion", async ()
     /Nova AI returned an empty context-compaction summary\./,
   );
 });
+
+test("compaction never keeps a tool result without its call", async () => {
+  const { compactConversation } = await import("../../src/core/context-compaction.js");
+  const novaClient = {
+    chat: {
+      completions: {
+        create: async () => ({ choices: [{ message: { content: "summary" } }] }),
+      },
+    },
+  } as unknown as import("@datalabrotterdam/nova-sdk").NovaAI;
+  const call = (id: string) => ({
+    role: "assistant" as const,
+    content: "",
+    tool_calls: [{ id, type: "function", function: { name: "read_file", arguments: "{}" } }],
+  });
+  const history = [
+    { role: "user" as const, content: "task" },
+    call("c1"),
+    { role: "tool" as const, tool_call_id: "c1", content: "Tool result: one" },
+    { role: "user" as const, content: "more" },
+    call("c2"),
+    { role: "tool" as const, tool_call_id: "c2", content: "Tool result: ".concat("x".repeat(200_000)) },
+  ];
+  const result = await compactConversation(history, novaClient, "m", { contextWindow: 8_000 });
+  assert.ok(result.compacted);
+  const kept = result.history.slice(1);
+  assert.notEqual(kept[0]?.role, "tool");
+  for (const [index, message] of kept.entries()) {
+    if (message.role === "tool") {
+      assert.ok("tool_calls" in (kept[index - 1] ?? {}), "tool result must follow its call");
+    }
+  }
+});
