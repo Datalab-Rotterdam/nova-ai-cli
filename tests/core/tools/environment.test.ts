@@ -1,7 +1,12 @@
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   detectDockerEnvironment,
+  detectToolEnvironment,
+  findCommandsOnPath,
   inventoryEnvironmentVariables,
   type CommandProbe,
 } from "../../../src/core/tools/environment.js";
@@ -75,5 +80,40 @@ describe("detectDockerEnvironment", () => {
       composeVersion: "v2.38.1",
     });
     assert.equal(calls.length, 4);
+  });
+});
+
+describe("findCommandsOnPath", () => {
+  it("finds executables in PATH order without starting a shell", { skip: process.platform === "win32" && "no execute bits on Windows" }, async () => {
+    const first = mkdtempSync(join(tmpdir(), "nova-path-a-"));
+    const second = mkdtempSync(join(tmpdir(), "nova-path-b-"));
+    writeFileSync(join(first, "git"), "#!/bin/sh\n", { mode: 0o755 });
+    writeFileSync(join(second, "git"), "#!/bin/sh\n", { mode: 0o755 });
+    writeFileSync(join(second, "jq"), "not executable", { mode: 0o644 });
+
+    const found = await findCommandsOnPath(["git", "jq", "rg"], [first, second, join(first, "missing")], "linux");
+    assert.deepEqual(found.commandPaths.git, [join(first, "git"), join(second, "git")]);
+    assert.equal(found.commands.jq, false, "a file without the execute bit is not a command");
+    assert.equal(found.commands.rg, false);
+  });
+
+  it("uses PATHEXT and ignores case on Windows", async () => {
+    const folder = mkdtempSync(join(tmpdir(), "nova-path-win-"));
+    writeFileSync(join(folder, "Docker.EXE"), "");
+    writeFileSync(join(folder, "npm.cmd"), "");
+    writeFileSync(join(folder, "node.txt"), "");
+
+    const found = await findCommandsOnPath(["docker", "npm", "node"], [folder], "win32", ".COM;.EXE;.BAT;.CMD");
+    assert.deepEqual(found.commandPaths.docker, [join(folder, "Docker.EXE")]);
+    assert.deepEqual(found.commandPaths.npm, [join(folder, "npm.cmd")]);
+    assert.equal(found.commands.node, false);
+  });
+});
+
+describe("detectToolEnvironment", () => {
+  it("starts no Docker probe until inspect_environment asks for it", async () => {
+    const environment = await detectToolEnvironment(process.cwd(), undefined);
+    assert.equal(environment.docker.installed, false);
+    assert.equal(typeof environment.loadDocker, "function");
   });
 });

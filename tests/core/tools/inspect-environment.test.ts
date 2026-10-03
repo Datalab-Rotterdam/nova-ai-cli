@@ -56,4 +56,21 @@ describe("inspectEnvironmentTool", () => {
     assert.match(result.output, /Container execution: available through run_command \(permission required\)/);
     assert.match(result.output, /run_package_script: available/);
   });
+
+  it("probes Docker only when the tool runs", async () => {
+    let probes = 0;
+    const ctx = makeToolContext({});
+    const environment = {
+      ...ctx.environment,
+      loadDocker: async () => {
+        probes++;
+        return { ...ctx.environment.docker, installed: true, clientVersion: "Docker version 28.3.3", daemonAvailable: true, serverVersion: "28.3.3" };
+      },
+    };
+    assert.equal(probes, 0);
+    const result = await inspectEnvironmentTool.execute({ ...ctx, environment }, {});
+    assert.equal(probes, 1);
+    assert.ok("output" in result);
+    assert.match(result.output, /Docker daemon: available; server=28\.3\.3/);
+  });
 });

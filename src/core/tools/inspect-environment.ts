@@ -8,7 +8,12 @@ export const inspectEnvironmentTool: ToolDefinition = {
   isAvailable: ({ caps, environment }) => !!caps?.fs?.readTextFile && !!environment?.workspaceReadable,
   mutating: false,
   kind: "read",
-  async execute({ environment }) {
+  async execute({ environment: detected }) {
+    // Docker is only probed here: it is slow (seconds on Windows) and no
+    // other tool needs it.
+    const environment = detected.loadDocker
+      ? { ...detected, docker: await detected.loadDocker() }
+      : detected;
     const availableCommands = Object.entries(environment.commands)
       .filter(([, available]) => available)
       .map(([command]) => command)

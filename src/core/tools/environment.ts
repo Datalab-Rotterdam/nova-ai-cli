@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { access, readFile } from "node:fs/promises";
+import { access, readdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import type * as acp from "@agentclientprotocol/sdk";
 
@@ -30,7 +30,10 @@ export type ToolEnvironment = {
   environmentVariableNames: string[];
   toolingEnvironmentVariables: Record<string, string>;
   pathEntries: string[];
+  /** Not probed at session start (slow on Windows); see loadDocker. */
   docker: DockerEnvironment;
+  /** Probes Docker on demand (cached briefly); absent in tests and fallbacks. */
+  loadDocker?: () => Promise<DockerEnvironment>;
   packageManager: PackageManager | null;
   packageScripts: string[];
   workspaceReadable: boolean;
@@ -122,30 +125,42 @@ let dockerEnvironmentCache:
     }
   | undefined;
 
+/**
+ * What the tools need to know about the machine and workspace. Runs at
+ * session start and before each prompt, so it starts no processes: commands
+ * are found by reading the PATH folders, and Docker is only probed when
+ * inspect_environment asks for it (loadDocker).
+ */
 export async function detectToolEnvironment(
   cwd: string,
   caps: acp.ClientCapabilities | undefined,
 ): Promise<ToolEnvironment> {
-  const [workspaceReadable, commandInventory, packageInfo] = await Promise.all([
-    canAccess(cwd),
-    detectCommands(),
-    detectPackageInfo(cwd),
-  ]);
   const environmentInventory = inventoryEnvironmentVariables(
     process.env,
     process.platform,
   );
-  const docker = await cachedDockerEnvironment(
-    commandInventory.commands.docker ?? false,
-    commandInventory.commands["docker-compose"] ?? false,
-  );
+  const [workspaceReadable, commandInventory, packageInfo] = await Promise.all([
+    canAccess(cwd),
+    findCommandsOnPath(
+      COMMANDS_TO_PROBE,
+      environmentInventory.pathEntries,
+      process.platform,
+      environmentValue(process.env, "PATHEXT", process.platform),
+    ),
+    detectPackageInfo(cwd),
+  ]);
 
   return {
     platform: process.platform,
     commands: commandInventory.commands,
     commandPaths: commandInventory.commandPaths,
     ...environmentInventory,
-    docker,
+    docker: emptyDockerEnvironment(),
+    loadDocker: () =>
+      cachedDockerEnvironment(
+        commandInventory.commands.docker ?? false,
+        commandInventory.commands["docker-compose"] ?? false,
+      ),
     packageManager: choosePackageManager(
       packageInfo.lockfiles,
       commandInventory.commands,
@@ -303,62 +318,70 @@ export function inventoryEnvironmentVariables(
   };
 }
 
-async function detectCommands(): Promise<{
+/**
+ * Where each command lives, in PATH order, like `where` / `command -v`, but
+ * by reading each PATH folder once instead of starting a shell per command.
+ * On Windows names match case-insensitively with the PATHEXT extensions; on
+ * other platforms a match must be an executable file.
+ */
+export async function findCommandsOnPath(
+  commands: readonly string[],
+  pathEntries: readonly string[],
+  platform: NodeJS.Platform | string,
+  pathExt?: string,
+): Promise<{
   commands: Record<string, boolean>;
   commandPaths: Record<string, string[]>;
 }> {
+  const windows = platform === "win32";
+  const extensions = windows
+    ? (pathExt || ".COM;.EXE;.BAT;.CMD")
+        .split(";")
+        .map((extension) => extension.trim().toLowerCase())
+        .filter(Boolean)
+    : [""];
+  const folders = await Promise.all(
+    pathEntries.map(async (folder) => {
+      try {
+        const names = await readdir(folder);
+        return {
+          folder,
+          names: new Map(names.map((name) => [windows ? name.toLowerCase() : name, name])),
+        };
+      } catch {
+        return { folder, names: new Map<string, string>() };
+      }
+    }),
+  );
+
   const entries = await Promise.all(
-    COMMANDS_TO_PROBE.map(
-      async (command) => [command, await findCommandPaths(command)] as const,
-    ),
+    commands.map(async (command) => {
+      const paths: string[] = [];
+      for (const { folder, names } of folders) {
+        for (const extension of extensions) {
+          const candidate = `${command}${extension}`;
+          const name = names.get(windows ? candidate.toLowerCase() : candidate);
+          if (!name) continue;
+          const path = join(folder, name);
+          if (await isRunnable(path, windows)) paths.push(path);
+        }
+      }
+      return [command, [...new Set(paths)]] as [string, string[]];
+    }),
   );
   return {
-    commands: Object.fromEntries(
-      entries.map(([command, paths]) => [command, paths.length > 0]),
-    ),
-    commandPaths: Object.fromEntries(
-      entries.map(([command, paths]) => [command, paths]),
-    ),
+    commands: Object.fromEntries(entries.map(([command, paths]) => [command, paths.length > 0])),
+    commandPaths: Object.fromEntries(entries),
   };
 }
 
-async function findCommandPaths(command: string): Promise<string[]> {
-  const lookup =
-    process.platform === "win32"
-      ? `where.exe ${quoteForShell(command)}`
-      : `command -v ${quoteForShell(command)}`;
-
-  return new Promise((resolve) => {
-    const child = spawn(lookup, { shell: true, windowsHide: true });
-    let stdout = "";
-    const timeout = setTimeout(() => {
-      child.kill();
-      resolve([]);
-    }, 2_000);
-
-    child.stdout?.on("data", (chunk: Buffer | string) => {
-      if (stdout.length < 64_000) stdout += chunk.toString();
-    });
-    child.on("error", () => {
-      clearTimeout(timeout);
-      resolve([]);
-    });
-    child.on("close", (code) => {
-      clearTimeout(timeout);
-      if (code !== 0) {
-        resolve([]);
-        return;
-      }
-      resolve([
-        ...new Set(
-          stdout
-            .split(/\r?\n/)
-            .map((line) => line.trim())
-            .filter(Boolean),
-        ),
-      ]);
-    });
-  });
+async function isRunnable(path: string, windows: boolean): Promise<boolean> {
+  try {
+    const info = await stat(path);
+    return info.isFile() && (windows || (info.mode & 0o111) !== 0);
+  } catch {
+    return false;
+  }
 }
 
 function runCommandProbe(
@@ -470,7 +493,3 @@ function choosePackageManager(
   return preference.find((manager) => commands[manager]) ?? null;
 }
 
-function quoteForShell(value: string): string {
-  if (process.platform === "win32") return `"${value.replace(/"/g, '\\"')}"`;
-  return `'${value.replace(/'/g, "'\\''")}'`;
-}

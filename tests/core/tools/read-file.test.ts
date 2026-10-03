@@ -1,8 +1,13 @@
 import assert from "node:assert/strict";
+import { resolve } from "node:path";
 import { describe, it } from "node:test";
 import { readFileTool } from "../../../src/core/tools/read-file.js";
 import type { ToolHost } from "../../../src/core/tool-host.js";
 import { makeToolContext } from "./test-helpers.js";
+
+/** The tools resolve paths for the platform: "/tmp/x" becomes D:\tmp\x on Windows. */
+const FILE = resolve("/tmp/x");
+const MISSING = resolve("/tmp/missing");
 
 function makeContext(readTextFile: ToolHost["readTextFile"]) {
   return makeToolContext({ host: { readTextFile }, cwd: "/tmp" });
@@ -24,11 +29,11 @@ describe("readFileTool", () => {
 
   it("reads the file and returns the content", async () => {
     const ctx = makeContext(async (path) => {
-      assert.equal(path, "/tmp/x");
+      assert.equal(path, FILE);
       return "hello";
     });
 
-    const result = await readFileTool.execute(ctx, { path: "/tmp/x" });
+    const result = await readFileTool.execute(ctx, { path: FILE });
 
     assert.deepEqual(result, { output: "hello" });
   });
@@ -38,8 +43,8 @@ describe("readFileTool", () => {
       throw new Error("file not found");
     });
 
-    const result = await readFileTool.execute(ctx, { path: "/tmp/missing" });
+    const result = await readFileTool.execute(ctx, { path: MISSING });
 
-    assert.deepEqual(result, { error: "file not found (path tried: /tmp/missing)" });
+    assert.deepEqual(result, { error: `file not found (path tried: ${MISSING})` });
   });
 });

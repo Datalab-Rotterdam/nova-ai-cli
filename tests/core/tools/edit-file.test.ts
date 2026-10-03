@@ -1,8 +1,13 @@
 import assert from "node:assert/strict";
+import { resolve } from "node:path";
 import { describe, it } from "node:test";
 import { editFileTool } from "../../../src/core/tools/edit-file.js";
 import type { ToolHost } from "../../../src/core/tool-host.js";
 import { makeToolContext } from "./test-helpers.js";
+
+/** The tools resolve paths for the platform: "/tmp/x" becomes D:\tmp\x on Windows. */
+const FILE = resolve("/tmp/x");
+const escaped = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 function makeContext(overrides: Partial<Pick<ToolHost, "readTextFile" | "writeTextFile">> = {}) {
   return makeToolContext({ host: overrides, cwd: "/tmp" });
@@ -17,22 +22,22 @@ describe("editFileTool", () => {
 
   it("errors when old_string is missing", async () => {
     const ctx = makeContext();
-    const result = await editFileTool.execute(ctx, { path: "/tmp/x", new_string: "b" });
+    const result = await editFileTool.execute(ctx, { path: FILE, new_string: "b" });
     assert.deepEqual(result, { error: "edit_file requires a non-empty 'old_string' argument." });
   });
 
   it("errors when old_string is not found", async () => {
     const ctx = makeContext({ readTextFile: async () => "hello world" });
-    const result = await editFileTool.execute(ctx, { path: "/tmp/x", old_string: "nope", new_string: "b" });
-    assert.deepEqual(result, { error: "old_string not found in /tmp/x." });
+    const result = await editFileTool.execute(ctx, { path: FILE, old_string: "nope", new_string: "b" });
+    assert.deepEqual(result, { error: `old_string not found in ${FILE}.` });
   });
 
   it("errors when old_string matches more than once", async () => {
     const ctx = makeContext({ readTextFile: async () => "foo foo" });
-    const result = await editFileTool.execute(ctx, { path: "/tmp/x", old_string: "foo", new_string: "bar" });
+    const result = await editFileTool.execute(ctx, { path: FILE, old_string: "foo", new_string: "bar" });
     assert.ok("error" in result);
     if ("error" in result) {
-      assert.match(result.error, /matches 2 locations in \/tmp\/x \(lines 1, 1\)/);
+      assert.match(result.error, new RegExp(`matches 2 locations in ${escaped(FILE)} \\(lines 1, 1\\)`));
       assert.match(result.error, /replace_all/);
     }
   });
@@ -46,7 +51,7 @@ describe("editFileTool", () => {
       },
     });
     const result = await editFileTool.execute(ctx, {
-      path: "/tmp/x",
+      path: FILE,
       old_string: "foo",
       new_string: "qux",
       replace_all: true,
@@ -64,7 +69,7 @@ describe("editFileTool", () => {
       },
     });
     const result = await editFileTool.execute(ctx, {
-      path: "/tmp/x",
+      path: FILE,
       old_string: "X",
       new_string: "$$total & $&",
     });
@@ -81,7 +86,7 @@ describe("editFileTool", () => {
       },
     });
     const result = await editFileTool.execute(ctx, {
-      path: "/tmp/x",
+      path: FILE,
       old_string: "alpha\nbeta",
       new_string: "alpha\nBETA",
     });
@@ -98,7 +103,7 @@ describe("editFileTool", () => {
       },
     });
     const result = await editFileTool.execute(ctx, {
-      path: "/tmp/x",
+      path: FILE,
       old_string: "if (x) {\n  go();\n}",
       new_string: "if (x) {\n  stop();\n}",
     });
@@ -111,7 +116,7 @@ describe("editFileTool", () => {
       readTextFile: async () => "  a();\nx\n    a();\n",
     });
     const result = await editFileTool.execute(ctx, {
-      path: "/tmp/x",
+      path: FILE,
       old_string: "a();\nnope",
       new_string: "b();",
     });
@@ -120,11 +125,11 @@ describe("editFileTool", () => {
 
     const ambiguous = await editFileTool.execute(
       makeContext({ readTextFile: async () => "  a();\nx\n    a();\n" }),
-      { path: "/tmp/x", old_string: "a();", new_string: "b();" },
+      { path: FILE, old_string: "a();", new_string: "b();" },
     );
     assert.ok("error" in ambiguous);
     if ("error" in ambiguous) {
-      assert.match(ambiguous.error, /matches 2 locations in \/tmp\/x \(lines 1, 3\)/);
+      assert.match(ambiguous.error, new RegExp(`matches 2 locations in ${escaped(FILE)} \\(lines 1, 3\\)`));
     }
   });
 
@@ -134,7 +139,7 @@ describe("editFileTool", () => {
         "const a = 1;\nif (expectedNonce && token.nonce !== expectedNonce) {\n  throw new Error();\n}\n",
     });
     const result = await editFileTool.execute(ctx, {
-      path: "/tmp/x",
+      path: FILE,
       old_string: "if (expectedNonce && token.nonce != expectedNonce) {\n  throw new Error();\n}",
       new_string: "whatever",
     });
@@ -155,13 +160,13 @@ describe("editFileTool", () => {
       },
     });
 
-    const result = await editFileTool.execute(ctx, { path: "/tmp/x", old_string: "world", new_string: "there" });
+    const result = await editFileTool.execute(ctx, { path: FILE, old_string: "world", new_string: "there" });
 
     assert.deepEqual(result, {
-      output: "Edited /tmp/x.",
-      diff: { path: "/tmp/x", oldText: "hello world", newText: "hello there" },
+      output: `Edited ${FILE}.`,
+      diff: { path: FILE, oldText: "hello world", newText: "hello there" },
     });
-    assert.deepEqual(written, { path: "/tmp/x", content: "hello there" });
+    assert.deepEqual(written, { path: FILE, content: "hello there" });
   });
 
   it("returns an error when the host read rejects", async () => {
@@ -170,7 +175,7 @@ describe("editFileTool", () => {
         throw new Error("not found");
       },
     });
-    const result = await editFileTool.execute(ctx, { path: "/tmp/x", old_string: "a", new_string: "b" });
+    const result = await editFileTool.execute(ctx, { path: FILE, old_string: "a", new_string: "b" });
     assert.deepEqual(result, { error: "not found" });
   });
 
@@ -181,7 +186,7 @@ describe("editFileTool", () => {
         throw new Error("permission denied");
       },
     });
-    const result = await editFileTool.execute(ctx, { path: "/tmp/x", old_string: "world", new_string: "there" });
+    const result = await editFileTool.execute(ctx, { path: FILE, old_string: "world", new_string: "there" });
     assert.deepEqual(result, { error: "permission denied" });
   });
 });
