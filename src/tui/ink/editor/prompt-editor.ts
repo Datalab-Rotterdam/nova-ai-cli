@@ -10,6 +10,7 @@ import {
   type AutocompleteItem,
   type WorkspaceAutocompleteProvider,
 } from "../../files/workspace-autocomplete.js";
+import { isLateTerminalReply } from "../terminal-keyboard.js";
 import { TextBuffer } from "./buffer.js";
 
 export type QueuedEditorItem = { id: string; text: string };
@@ -122,6 +123,8 @@ export class PromptEditor {
 
   /** Returns false when the key is not the editor's (global shortcuts). */
   handleKey(input: string, key: KeyPress): boolean {
+    // An answer to the startup terminal probe that came in too late.
+    if (isLateTerminalReply(input)) return true;
     // Fast typing (or input written by another program) can arrive as one
     // chunk; a carriage return inside it is still Enter. Real pastes come
     // through `paste` (bracketed paste) and keep their newlines.
@@ -197,6 +200,9 @@ export class PromptEditor {
           return this.edit(() => this.buffer.deleteToLineStart());
         case "w":
           return this.edit(() => this.buffer.deleteWordBackward());
+        case "j":
+          // With the kitty protocol Ctrl+J is reported as such, not as "\n".
+          return this.edit(() => this.buffer.newline());
         case "d":
           if (this.buffer.isEmpty) return false;
           return this.edit(() => this.buffer.deleteForward());

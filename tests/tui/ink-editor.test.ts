@@ -68,6 +68,18 @@ test("prompt editor submits on Enter and inserts new lines with Alt+Enter, Ctrl+
   assert.equal(editor.getText(), "");
 });
 
+test("Shift+Enter and Ctrl+J from the kitty protocol insert new lines; late probe replies are dropped", () => {
+  const editor = new PromptEditor();
+  type(editor, "one");
+  editor.handleKey("\r", { return: true, shift: true });
+  type(editor, "two");
+  editor.handleKey("j", { ctrl: true });
+  type(editor, "three");
+  editor.handleKey("[?0u", {});
+  editor.handleKey("[?62;22c", {});
+  assert.equal(editor.getText(), "one\ntwo\nthree");
+});
+
 test("a typed chunk that contains carriage returns submits each line", () => {
   const editor = new PromptEditor();
   const submitted: string[] = [];

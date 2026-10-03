@@ -118,6 +118,11 @@ class PtyHarness {
       this.rawOutput += data;
       this.terminal.write(data);
     });
+    // Like a real terminal: answers to queries (device attributes, the
+    // kitty keyboard probe) go back to the program as input.
+    this.terminal.onData((reply) => {
+      if (!this.disposed && !this.exitEvent) this.process.write(reply);
+    });
     this.exited = new Promise((resolve) => {
       this.process.onExit((event) => {
         this.exitEvent = event;

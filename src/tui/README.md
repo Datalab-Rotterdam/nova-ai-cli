@@ -58,11 +58,14 @@ output is inserted above them. With an empty editor, Up recalls the newest
 queued entry; Up/Down cycle queued entries, edits update them in place, and
 submitting an empty recalled entry removes it. `/queue` and `/queue clear`
 inspect or clear pending messages.
-Alt+Enter, Ctrl+J or a trailing `\` before Enter inserts a newline;
-Shift+Enter does too in terminals with the kitty keyboard protocol (kitty,
-WezTerm, Ghostty, foot, Alacritty; set `NOVA_KITTY_KEYBOARD=1` or `0` to
-override). Ink's own protocol probe is not used because it delivers keys typed
-during the probe twice.
+Shift+Enter inserts a newline in terminals with the kitty keyboard protocol
+(VS Code, kitty, WezTerm, Ghostty, foot, Alacritty, recent iTerm2, …); Alt+Enter,
+Ctrl+J or a trailing `\` before Enter work everywhere. At startup Nova asks the
+terminal (`ESC[?u` followed by a device-attributes query that every terminal
+answers, so the answer takes one round trip) and switches the protocol on when
+supported; keys typed meanwhile are kept. Ink's own probe is not used because
+it delivers keys typed during the probe twice. `NOVA_KITTY_KEYBOARD=1` or `0`
+skips the probe.
 
 Large clipboard pastes (more than 10 lines or 1,000 characters) stay outside
 the editor and appear as a compact `[Pasted from clipboard #N: ...]` marker.

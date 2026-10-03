@@ -1,3 +1,4 @@
+<!-- testing123 -->
 <div align="center">
 
 <img src="./assets/logo.png" width="96" height="96" alt="Nova logo" />
@@ -126,9 +127,10 @@ Enter submits. While a response is streaming, another submission is added to
 the agent-owned FIFO queue and its position appears in the status row.
 `/steer <message>` puts guidance at the front and injects it at the next safe
 model boundary after a tool finishes; it does not cancel the active response.
-`/queue` inspects it and `/queue clear` removes pending messages. `Alt+Enter`,
-`Ctrl+J` or a trailing `\` inserts a newline (`Shift+Enter` too in kitty,
-WezTerm, Ghostty, foot and Alacritty). Slash commands and `@file` references autocomplete
+`/queue` inspects it and `/queue clear` removes pending messages. `Shift+Enter`
+inserts a newline in terminals that support the kitty keyboard protocol (VS
+Code, kitty, WezTerm, Ghostty, foot, Alacritty, recent iTerm2; detected at
+startup); `Alt+Enter`, `Ctrl+J` or a trailing `\` work in every terminal. Slash commands and `@file` references autocomplete
 in the editor.
 
 If Nova reports that the model's maximum context length was exceeded, the

@@ -6,6 +6,7 @@ import { fromAgentPermissionMode, SessionRunner } from "../session/session-runne
 import { createStore, type Store } from "../state/store.js";
 import type { UIState, UpdateAvailable } from "../state/types.js";
 import { checkForUpdate } from "../update-check.js";
+import { detectKittyKeyboard, kittyKeyboardOverride } from "./terminal-keyboard.js";
 import { PromptInput } from "./components/prompt-input.js";
 import { StatusLine } from "./components/status-line.js";
 import { TranscriptBlockView } from "./components/transcript.js";
@@ -26,6 +27,8 @@ export type InkTuiOptions = {
   checkForUpdate?(): Promise<UpdateAvailable | null>;
   stdin?: NodeJS.ReadStream;
   stdout?: NodeJS.WriteStream;
+  /** Skips the terminal probe (tests). */
+  kittyKeyboard?: boolean;
 };
 
 const FRAME_MS = 120;
@@ -64,6 +67,12 @@ export async function runInkTui(
   else store.setState({ sessionId: runner.sessionId });
 
   const stdout = options.stdout ?? process.stdout;
+  const stdin = options.stdin ?? process.stdin;
+  // Before Ink reads input: the kitty keyboard protocol is what lets the
+  // terminal report Shift+Enter (new line) apart from Enter. Ink's own
+  // "auto" probe delivers keys typed during the probe twice.
+  const kittyKeyboard =
+    options.kittyKeyboard ?? kittyKeyboardOverride() ?? (await detectKittyKeyboard(stdin, stdout));
   const controller = new TuiController(store, runner, {
     write: (data) => {
       stdout.write(data);
@@ -71,14 +80,13 @@ export async function runInkTui(
   });
   const instance = render(<App controller={controller} />, {
     stdout,
-    stdin: options.stdin ?? process.stdin,
+    stdin,
     exitOnCtrlC: false,
     patchConsole: true,
     // Ink otherwise turns non-interactive whenever CI is set in the
     // environment; the TUI only runs on a terminal anyway.
     interactive: Boolean(stdout.isTTY),
-    // Lets terminals that support it report Shift+Enter (new line).
-    kittyKeyboard: { mode: kittyKeyboardSupported() ? "enabled" : "disabled" },
+    kittyKeyboard: { mode: kittyKeyboard ? "enabled" : "disabled" },
   });
   controller.start();
 
@@ -114,25 +122,6 @@ export async function runInkTui(
     await instance.waitUntilExit().catch(() => {});
   }
   stdout.write(`Resume this session with: nova-ai --resume ${runner.sessionId}\n`);
-}
-
-/**
- * Ink's "auto" mode probes the terminal for 200ms and, in that window,
- * delivers early keystrokes twice. Known terminals get the protocol without
- * a probe; NOVA_KITTY_KEYBOARD=1/0 overrides the guess.
- */
-export function kittyKeyboardSupported(env: NodeJS.ProcessEnv = process.env): boolean {
-  if (env.NOVA_KITTY_KEYBOARD === "1") return true;
-  if (env.NOVA_KITTY_KEYBOARD === "0") return false;
-  const program = (env.TERM_PROGRAM ?? "").toLowerCase();
-  const term = (env.TERM ?? "").toLowerCase();
-  return (
-    term === "xterm-kitty" ||
-    term === "xterm-ghostty" ||
-    term.startsWith("foot") ||
-    term === "alacritty" ||
-    ["wezterm", "ghostty", "kitty"].includes(program)
-  );
 }
 
 export function App({ controller }: { controller: TuiController }) {

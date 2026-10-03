@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
 import { createRequire } from "node:module";
 import test from "node:test";
 import type * as acp from "@agentclientprotocol/sdk";
 import type { Terminal as HeadlessTerminal } from "@xterm/headless";
-import { kittyKeyboardSupported, runInkTui } from "../../src/tui/ink/app.js";
+import { runInkTui } from "../../src/tui/ink/app.js";
+import { detectKittyKeyboard, kittyKeyboardOverride } from "../../src/tui/ink/terminal-keyboard.js";
 import { SessionRunner } from "../../src/tui/session/session-runner.js";
 import type { Store } from "../../src/tui/state/store.js";
 import type { PermissionScope, UIState } from "../../src/tui/state/types.js";
@@ -96,6 +98,7 @@ test("the Ink TUI runs a prompt, answers a permission, redraws on Ctrl+O and exi
     stdin: stdin as unknown as NodeJS.ReadStream,
     stdout: stdout as unknown as NodeJS.WriteStream,
     checkForUpdate: async () => null,
+    kittyKeyboard: false,
     createRunner(created) {
       store = created;
       const runner = new SessionRunner(created, { apiKey: "test", defaultModel: "test-model" }, process.cwd());
@@ -176,6 +179,7 @@ test("a long streaming answer stays below the terminal height instead of repaint
     stdin: stdin as unknown as NodeJS.ReadStream,
     stdout: stdout as unknown as NodeJS.WriteStream,
     checkForUpdate: async () => null,
+    kittyKeyboard: false,
     createRunner(created) {
       store = created;
       const runner = new SessionRunner(created, { apiKey: "test", defaultModel: "test-model" }, process.cwd());
@@ -222,6 +226,7 @@ test("resizing redraws cleanly without leftover prompt borders", async () => {
     stdin: stdin as unknown as NodeJS.ReadStream,
     stdout: stdout as unknown as NodeJS.WriteStream,
     checkForUpdate: async () => null,
+    kittyKeyboard: false,
     createRunner(created) {
       store = created;
       const runner = new SessionRunner(created, { apiKey: "test", defaultModel: "test-model" }, process.cwd());
@@ -269,10 +274,35 @@ test("resizing redraws cleanly without leftover prompt borders", async () => {
   terminal.dispose();
 });
 
-test("the kitty keyboard protocol is only switched on for terminals known to support it", () => {
-  assert.equal(kittyKeyboardSupported({ TERM: "xterm-kitty" }), true);
-  assert.equal(kittyKeyboardSupported({ TERM_PROGRAM: "WezTerm" }), true);
-  assert.equal(kittyKeyboardSupported({ TERM: "xterm-256color", TERM_PROGRAM: "Apple_Terminal" }), false);
-  assert.equal(kittyKeyboardSupported({ TERM: "xterm-256color", NOVA_KITTY_KEYBOARD: "1" }), true);
-  assert.equal(kittyKeyboardSupported({ TERM: "xterm-kitty", NOVA_KITTY_KEYBOARD: "0" }), false);
+test("the terminal probe detects the kitty protocol and keeps keys typed meanwhile", async () => {
+  const probe = (reply: string | null, typedFirst = "") => {
+    const stdin = Object.assign(new PassThrough(), { isTTY: true, isRaw: false, setRawMode: () => {} });
+    const stdout = {
+      isTTY: true,
+      written: "",
+      write(data: string) {
+        this.written += data;
+        if (typedFirst) stdin.write(typedFirst);
+        if (reply !== null) setImmediate(() => stdin.write(reply));
+        return true;
+      },
+    };
+    return { stdin, stdout, result: detectKittyKeyboard(stdin, stdout, 200) };
+  };
+
+  const kitty = probe("\u001b[?0u\u001b[?62;22c", "ab");
+  assert.equal(await kitty.result, true);
+  assert.equal(kitty.stdout.written, "\u001b[?u\u001b[c");
+  assert.equal(String(kitty.stdin.read()), "ab", "keys typed during the probe come back once");
+  assert.equal(kitty.stdin.read(), null);
+
+  const plain = probe("\u001b[?1;2c");
+  const started = Date.now();
+  assert.equal(await plain.result, false);
+  assert.ok(Date.now() - started < 150, "a terminal without kitty support is known without waiting for the timeout");
+
+  assert.equal(await probe(null).result, false, "no answer at all: off after the timeout");
+  assert.equal(kittyKeyboardOverride({ NOVA_KITTY_KEYBOARD: "1" }), true);
+  assert.equal(kittyKeyboardOverride({ NOVA_KITTY_KEYBOARD: "0" }), false);
+  assert.equal(kittyKeyboardOverride({}), null);
 });
