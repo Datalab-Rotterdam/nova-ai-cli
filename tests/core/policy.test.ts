@@ -117,3 +117,18 @@ describe("path subjects", () => {
     assert.equal(evaluatePermissionRules(rules, "edit_file", { path: "../src/a.ts" }, cwd), "ask");
   });
 });
+
+describe("tool names shared with nova-ai-vscode", () => {
+  it("gives create_file, list_dir and fetch_url their subjects", () => {
+    assert.equal(evaluatePermissionRules({ allow: ["Write(src/*)"] }, "create_file", { path: "src/a.ts" }, cwd), "allow");
+    assert.equal(evaluatePermissionRules({ deny: ["list_dir(secrets)"] }, "list_dir", { path: "secrets" }, cwd), "deny");
+    assert.equal(
+      evaluatePermissionRules({ allow: ["fetch_url(https://docs.example.com/*)"] }, "fetch_url", { url: "https://docs.example.com/a" }, cwd),
+      "allow",
+    );
+    assert.equal(
+      evaluatePermissionRules({ allow: ["fetch_url(https://docs.example.com/*)"] }, "fetch_url", { url: "https://evil.example/a" }, cwd),
+      "ask",
+    );
+  });
+});

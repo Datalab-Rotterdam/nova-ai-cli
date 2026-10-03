@@ -1,5 +1,8 @@
 import { isAbsolute, relative, resolve, sep } from "node:path";
 
+// Shared with nova-ai-vscode (src/permissions/rules.ts); keep both copies and
+// docs/NOVA_HOME.md ("Rules") in sync.
+
 export type PermissionRuleSet = {
   allow?: string[];
   deny?: string[];
@@ -178,14 +181,18 @@ function permissionTarget(
       };
     }
     case "write_file":
+    case "create_file": // nova-ai-vscode
       return { names: ["Write", toolName], value: pathArg(), path: true, shell: false };
     case "edit_file":
       return { names: ["Edit", toolName], value: pathArg(), path: true, shell: false };
     case "read_file":
       return { names: ["Read", toolName], value: pathArg(), path: true, shell: false };
     case "list_directory":
+    case "list_dir": // nova-ai-vscode
     case "search_text":
       return { names: [toolName], value: pathArg(), path: true, shell: false };
+    case "fetch_url":
+      return { names: [toolName], value: stringArg(args.url), path: false, shell: false };
     default:
       return {
         names: [toolName],

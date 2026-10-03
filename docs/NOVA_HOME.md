@@ -101,7 +101,7 @@ literal). Subjects:
 |---|---|
 | `run_command`, `start_background_command` | the command line |
 | `run_package_script` | `npm run <script> [-- args]` |
-| `read_file`, `write_file`, `edit_file`, `list_directory`, `search_text` | the path, workspace-relative with `/` (absolute outside the workspace) |
+| `read_file`, `write_file`, `create_file`, `edit_file`, `list_directory`, `list_dir`, `search_text` | the path, workspace-relative with `/` (absolute outside the workspace) |
 | `fetch_url` | the URL |
 | others | none: only the bare tool name matches |
 
