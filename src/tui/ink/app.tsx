@@ -29,6 +29,7 @@ export type InkTuiOptions = {
 };
 
 const FRAME_MS = 120;
+const RESIZE_SETTLE_MS = 100;
 
 export async function runInkTui(
   credentials: StoredCredentials,
@@ -83,6 +84,19 @@ export async function runInkTui(
 
   const onSignal = () => controller.requestExit();
   process.once("SIGTERM", onSignal);
+
+  // Once a width change settles (a drag sends many), print everything again.
+  let printedColumns = stdout.columns;
+  let resizeTimer: ReturnType<typeof setTimeout> | undefined;
+  const onResize = () => {
+    if (resizeTimer) clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => {
+      if (stdout.columns === printedColumns) return;
+      printedColumns = stdout.columns;
+      controller.redrawAll();
+    }, RESIZE_SETTLE_MS);
+  };
+  stdout.on("resize", onResize);
   void (options.checkForUpdate ?? checkForUpdate)().then((updateAvailable) => {
     if (updateAvailable) store.setState({ updateAvailable });
   });
@@ -94,6 +108,8 @@ export async function runInkTui(
     await controller.stop();
   } finally {
     process.off("SIGTERM", onSignal);
+    stdout.off("resize", onResize);
+    if (resizeTimer) clearTimeout(resizeTimer);
     instance.unmount();
     await instance.waitUntilExit().catch(() => {});
   }

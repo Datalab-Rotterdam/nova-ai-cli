@@ -15,8 +15,8 @@ const { Terminal } = createRequire(import.meta.url)("@xterm/headless") as typeof
 /** A terminal for Ink: output goes into a headless xterm we can read back. */
 class FakeTerminalOutput extends EventEmitter {
   readonly isTTY = true;
-  readonly columns = 80;
-  readonly rows = 24;
+  columns = 80;
+  rows = 24;
   raw = "";
   constructor(private readonly terminal: HeadlessTerminal) {
     super();
@@ -25,6 +25,13 @@ class FakeTerminalOutput extends EventEmitter {
     this.raw += data;
     this.terminal.write(data);
     return true;
+  }
+  /** Like a real window resize: the terminal re-wraps, then the app is told. */
+  resize(columns: number, rows: number): void {
+    this.columns = columns;
+    this.rows = rows;
+    this.terminal.resize(columns, rows);
+    this.emit("resize");
   }
 }
 
@@ -197,6 +204,49 @@ test("a long streaming answer stays below the terminal height instead of repaint
   });
   await waitFor(() => /line0 = 0;/.test(text(terminal)), () => text(terminal));
   assert.equal(text(terminal).match(/line0 = 0;/g)?.length, 1, "the finished answer is printed to the scrollback once");
+
+  stdin.send("\u0003");
+  stdin.send("\u0003");
+  await run;
+  terminal.dispose();
+});
+
+test("resizing redraws cleanly without leftover prompt borders", async () => {
+  const terminal = new Terminal({ cols: 100, rows: 30, allowProposedApi: true, scrollback: 1_000, convertEol: true });
+  const stdout = new FakeTerminalOutput(terminal);
+  stdout.columns = 100;
+  stdout.rows = 30;
+  const stdin = new FakeTerminalInput();
+  let store!: Store<UIState>;
+  const run = runInkTui({ apiKey: "test", defaultModel: "test-model" }, process.cwd(), [], {
+    stdin: stdin as unknown as NodeJS.ReadStream,
+    stdout: stdout as unknown as NodeJS.WriteStream,
+    checkForUpdate: async () => null,
+    createRunner(created) {
+      store = created;
+      const runner = new SessionRunner(created, { apiKey: "test", defaultModel: "test-model" }, process.cwd());
+      installFakeAgentQueue(runner);
+      return runner;
+    },
+  });
+  const show = () => screen(terminal);
+  await waitFor(() => /test-model \| agent/.test(show()), show);
+  store.setState({
+    messages: [{ id: "a1", role: "assistant", text: `Once upon a time. ${"A story about a lantern. ".repeat(12)}`, streaming: false }],
+  });
+  await waitFor(() => /lantern/.test(show()), show);
+
+  // Shrink step by step, the way dragging a window edge does.
+  for (const columns of [96, 90, 84, 77, 70, 64]) {
+    stdout.resize(columns, 30);
+    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+  }
+  await waitFor(
+    () => (text(terminal).match(/╭/g)?.length ?? 0) === 1 && /test-model \| agent/.test(show()),
+    () => text(terminal),
+  );
+  assert.equal(text(terminal).match(/Once upon a time/g)?.length, 1, "the answer is printed once");
+  assert.equal(text(terminal).match(/Nova AI/g)?.length, 1, "the header is printed once");
 
   stdin.send("\u0003");
   stdin.send("\u0003");

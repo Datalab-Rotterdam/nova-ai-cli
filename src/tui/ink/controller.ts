@@ -389,6 +389,18 @@ export class TuiController {
     }
   };
 
+  /**
+   * Prints the whole transcript again. After the width changed, the terminal
+   * re-wrapped what is on screen on its own and the live area can't be
+   * erased exactly (Ink leaves stale prompt borders), and old scrollback keeps
+   * the old wrapping.
+   */
+  redrawAll(): void {
+    if (this.stopped || this.exiting) return;
+    this.committer.requestRedraw();
+    this.refresh();
+  }
+
   toggleToolDetails(): void {
     this.expandedTools = !this.expandedTools;
     this.store.setState({

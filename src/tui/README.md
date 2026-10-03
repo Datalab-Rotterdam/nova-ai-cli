@@ -37,8 +37,10 @@ row, then the prompt (or an open dialog) and the status rows.
   screen once a frame is as tall as the terminal, which would flicker and
   duplicate scrollback.
 - When the printed history no longer matches (another session, `/clear`,
-  `/rewind`, Ctrl+O), the screen and scrollback are cleared and the transcript
-  is printed again.
+  `/rewind`, Ctrl+O, or a width change once resizing stops), the screen and
+  scrollback are cleared and the transcript is printed again. Ink alone can't
+  redraw after a width change: the terminal re-wraps the old frame, so Ink
+  erases too few rows and stale prompt borders stay behind.
 - A background job that finishes after it was printed gets a new line; a plan
   is printed once when the turn ends.
 - Dialogs (sessions, models, permission modes, background jobs, tool

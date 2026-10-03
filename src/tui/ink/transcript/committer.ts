@@ -59,6 +59,13 @@ export class TranscriptCommitter {
   private planSignature: string | null = null;
   private snapshot: TranscriptSnapshot | null = null;
   private lastState: UIState | null = null;
+  private redrawRequested = false;
+
+  /** The next sync starts a new epoch, e.g. after the terminal width changed. */
+  requestRedraw(): void {
+    this.redrawRequested = true;
+    this.lastState = null;
+  }
 
   sync(state: UIState, expanded: boolean): TranscriptSnapshot {
     if (this.snapshot && state === this.lastState && expanded === this.expanded)
@@ -66,6 +73,7 @@ export class TranscriptCommitter {
     this.lastState = state;
 
     if (
+      this.redrawRequested ||
       state.sessionId !== this.sessionId ||
       expanded !== this.expanded ||
       !this.prefixIntact(state.messages)
@@ -254,6 +262,7 @@ export class TranscriptCommitter {
   }
 
   private startEpoch(state: UIState, expanded: boolean): void {
+    this.redrawRequested = false;
     this.epoch++;
     this.sessionId = state.sessionId;
     this.expanded = expanded;
