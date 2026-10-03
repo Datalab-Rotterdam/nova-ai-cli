@@ -55,6 +55,7 @@ describe("buildSessionTools", () => {
     });
     assert.deepEqual(names(tools).sort(), [
       "ask_user",
+      "find_files",
       "list_directory",
       "memory_read",
       "read_file",
