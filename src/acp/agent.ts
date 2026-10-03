@@ -30,7 +30,7 @@ import {
   type McpConnection,
   type McpConnectionFailure,
 } from "../core/mcp.js";
-import { buildMemorySystemPrompt, discoverMemories } from "../core/memory.js";
+import { buildMemorySystemPrompt, loadMemory } from "../core/memory.js";
 import { PromptQueue } from "../core/prompt-queue.js";
 import { stripReasoningTags } from "../core/reasoning-tags.js";
 import { runTurn } from "../core/run-turn.js";
@@ -223,7 +223,7 @@ export class NovaAgent implements AgentRuntime {
       this.clientCapabilities,
     );
     const skills = discoverSkills(params.cwd);
-    const memory = discoverMemories(params.cwd);
+    const memory = loadMemory(params.cwd);
     this.sessions.set(sessionId, {
       pendingPrompt: null,
       promptQueue: new PromptQueue(),
@@ -560,7 +560,7 @@ export class NovaAgent implements AgentRuntime {
       this.clientCapabilities,
     );
     session.skills = discoverSkills(session.cwd);
-    session.memory = discoverMemories(session.cwd);
+    session.memory = loadMemory(session.cwd);
     const background = this.background.createBackgroundToolApi(params.sessionId, client);
     const tools = buildSessionTools(session, this.clientCapabilities, {
       mode: session.mode,

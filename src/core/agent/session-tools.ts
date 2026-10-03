@@ -2,9 +2,9 @@ import type * as acp from "@agentclientprotocol/sdk";
 import type { InteractionMode } from "../interaction-modes.js";
 import { interactionModeAllowsTools } from "../interaction-modes.js";
 import {
-  createLoadMemoryTool,
-  createSaveMemoryTool,
-  discoverMemories,
+  createMemoryReadTool,
+  createMemoryWriteTool,
+  loadMemory,
 } from "../memory.js";
 import { createLoadSkillTool } from "../skills.js";
 import { createEnterPlanModeTool } from "../tools/enter-plan-mode.js";
@@ -15,9 +15,9 @@ import type { Session } from "./session.js";
 
 export function createMemoryTools(session: Session): ToolDefinition[] {
   return [
-    createLoadMemoryTool(() => session.memory),
-    createSaveMemoryTool(session.cwd, undefined, () => {
-      session.memory = discoverMemories(session.cwd);
+    createMemoryReadTool(session.cwd, () => session.memory),
+    createMemoryWriteTool(session.cwd, () => {
+      session.memory = loadMemory(session.cwd);
     }),
   ];
 }

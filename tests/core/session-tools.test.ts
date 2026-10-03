@@ -18,7 +18,7 @@ function session(): Session {
     mcpFailures: [],
     environment: makeEnvironment(),
     skills: [],
-    memory: [],
+    memory: { blocks: [], notes: [], consolidate: [] },
     mode: "agent",
     model: null,
   };
@@ -51,7 +51,7 @@ describe("buildSessionTools", () => {
     assert.equal(tools[0], "enter_plan_mode");
     assert.equal(tools[1], "update_plan");
     assert.ok(tools.includes("read_file"));
-    assert.ok(tools.includes("save_memory") || tools.includes("load_memory"));
+    assert.ok(tools.includes("memory_read") && tools.includes("memory_write"));
   });
 
   it("skips mode gating and plan tools for background agents", () => {

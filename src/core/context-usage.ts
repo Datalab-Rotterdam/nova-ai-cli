@@ -150,7 +150,14 @@ export function estimateMessagesTokens(messages: ChatMessage[]): number {
 
 function toolCategory(name: string): ContextUsageCategory {
   if (name === "load_skill") return "skills";
-  if (name === "load_memory" || name === "save_memory") return "memory";
+  if (
+    name === "memory_read" ||
+    name === "memory_write" ||
+    name === "load_memory" ||
+    name === "save_memory"
+  ) {
+    return "memory";
+  }
   if (name === "start_background_agent") return "agents";
   return "tools";
 }

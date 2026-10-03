@@ -1,7 +1,7 @@
 import type { ChatMessage } from "@datalabrotterdam/nova-sdk";
 import type { InteractionMode } from "../interaction-modes.js";
 import type { McpConnection, McpConnectionFailure } from "../mcp.js";
-import type { MemoryEntry } from "../memory.js";
+import type { MemorySnapshot } from "../memory.js";
 import type { PromptQueue } from "../prompt-queue.js";
 import type { SkillDefinition } from "../skills.js";
 import type { ToolEnvironment } from "../tools/environment.js";
@@ -26,7 +26,7 @@ export type Session = {
   mcpFailures: McpConnectionFailure[];
   environment: ToolEnvironment;
   skills: SkillDefinition[];
-  memory: MemoryEntry[];
+  memory: MemorySnapshot;
   mode: InteractionMode;
   model: string | null;
 };

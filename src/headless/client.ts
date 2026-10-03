@@ -25,7 +25,12 @@ export type HeadlessEvent =
     }
   | { type: "notification"; method: string; params: unknown };
 
-const EDIT_TOOL_NAMES = new Set(["write_file", "edit_file", "save_memory"]);
+const EDIT_TOOL_NAMES = new Set([
+  "write_file",
+  "edit_file",
+  "memory_write",
+  "save_memory",
+]);
 
 export class HeadlessAcpClient {
   readonly capabilities = {

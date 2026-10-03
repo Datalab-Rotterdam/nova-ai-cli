@@ -17,7 +17,7 @@ import {
 } from "../core/background.js";
 import { chatContentToText } from "../core/chat-content.js";
 import { readCredentials } from "../core/credentials.js";
-import { buildMemorySystemPrompt, discoverMemories } from "../core/memory.js";
+import { buildMemorySystemPrompt, loadMemory } from "../core/memory.js";
 import { stripReasoningTags } from "../core/reasoning-tags.js";
 import { runTurn } from "../core/run-turn.js";
 import { deriveTitle } from "../core/sessions.js";
@@ -324,7 +324,7 @@ export class BackgroundService {
       this.runtime.clientCapabilities,
     );
     session.skills = discoverSkills(session.cwd);
-    session.memory = discoverMemories(session.cwd);
+    session.memory = loadMemory(session.cwd);
     const contextWindow = await this.runtime.models.resolveContextWindow(
       novaClient,
       model,
