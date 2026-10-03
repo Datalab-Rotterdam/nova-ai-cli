@@ -7,13 +7,16 @@ export default defineConfig({
   target: "node22",
   outDir: "dist",
   dts: true,
-  splitting: false,
+  // Each mode (TUI, headless, ACP) is a dynamic import; splitting keeps
+  // Ink and React out of `--acp`, `-p` and `--version`.
+  splitting: true,
   sourcemap: false,
   clean: true,
   shims: false,
   external: [
     "@agentclientprotocol/sdk",
-    "@earendil-works/pi-tui",
+    "ink",
+    "react",
     "@datalabrotterdam/nova-sdk",
     "@modelcontextprotocol/sdk",
     "@sourceregistry/node-webserver",

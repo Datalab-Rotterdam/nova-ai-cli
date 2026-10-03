@@ -1,20 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type {
-  UserInputRequest,
-  UserInputResponse,
-} from "../../src/core/user-questions.js";
-import {
-  OTHER_OPTION_ID,
-  toElicitationRequest,
-} from "../../src/acp/user-questions.js";
-import { QuestionDialog } from "../../src/tui/pi-app/components.js";
+import type { UserInputRequest } from "../../src/core/user-questions.js";
+import { toElicitationRequest } from "../../src/acp/user-questions.js";
 import { TuiAcpClient } from "../../src/tui/session/tui-acp-client.js";
 import { createStore } from "../../src/tui/state/store.js";
-import type {
-  QuestionRequestView,
-  UIState,
-} from "../../src/tui/state/types.js";
+import type { UIState } from "../../src/tui/state/types.js";
 
 const questions: UserInputRequest = {
   message: "A few choices are needed before continuing.",
@@ -45,53 +35,6 @@ const questions: UserInputRequest = {
     },
   ],
 };
-
-test("question dialog supports single, multiple, recommendations, descriptions, and Other", () => {
-  let result: UserInputResponse | null = null;
-  let closed = 0;
-  const pending: QuestionRequestView = {
-    id: "question-1",
-    request: questions,
-    resolve: (response) => {
-      result = response;
-    },
-  };
-  const dialog = new QuestionDialog(
-    pending,
-    () => {},
-    () => closed++,
-  );
-
-  const initial = dialog.render(80).join("\n");
-  assert.match(initial, /This controls the component architecture/);
-  assert.match(initial, /Svelte.*recommended/);
-  assert.match(initial, /Other.*write your own answer/);
-
-  dialog.handleInput("\r"); // choose Svelte for the single-select question
-  dialog.handleInput(" "); // check Markdown in the multi-select question
-  dialog.handleInput("\u001b[F"); // move to Other
-  dialog.handleInput("\r");
-  assert.match(dialog.render(80).join("\n"), /Your answer/);
-  dialog.handleInput("Vim key bindings");
-  dialog.handleInput("\r");
-
-  assert.deepEqual(result, {
-    action: "accept",
-    answers: [
-      {
-        questionId: "framework",
-        selectedOptionIds: ["svelte"],
-        customAnswer: undefined,
-      },
-      {
-        questionId: "features",
-        selectedOptionIds: ["markdown", OTHER_OPTION_ID],
-        customAnswer: "Vim key bindings",
-      },
-    ],
-  });
-  assert.equal(closed, 1);
-});
 
 test("TUI ACP client resolves standard form elicitation through pending question state", async () => {
   const store = createStore(state());

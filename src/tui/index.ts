@@ -3,7 +3,7 @@ import type { TuiOptions } from "../cli.js";
 import { readCredentials } from "../core/credentials.js";
 import { listStoredSessions } from "../core/sessions.js";
 import { setWorkspaceTrusted } from "../core/nova-home.js";
-import { runPiTui } from "./pi-app/app.js";
+import { runInkTui } from "./ink/app.js";
 import { workspaceNeedsTrust } from "./settings/workspace-mcp.js";
 
 export async function runChat(options: TuiOptions): Promise<number> {
@@ -26,7 +26,8 @@ export async function runChat(options: TuiOptions): Promise<number> {
 
   if (workspaceNeedsTrust(cwd)) await askToTrust(cwd);
 
-  await runPiTui(credentials, cwd, resume ? ["--resume", resume] : []);
+  const args = resume ? ["--resume", resume] : [];
+  await runInkTui(credentials, cwd, args);
   return 0;
 }
 

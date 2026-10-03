@@ -3,7 +3,7 @@ import type { PromptImageAttachment } from "../files/prompt-images.js";
 import type { PromptPasteAttachment } from "../files/prompt-pastes.js";
 import type { Store } from "../state/store.js";
 import type { UIState } from "../state/types.js";
-import type { PromptEditor } from "./prompt-editor.js";
+import type { PromptEditor } from "./editor/prompt-editor.js";
 
 type PromptSubmitRunner = {
   readonly model: string;
@@ -55,7 +55,7 @@ export function bindPromptSubmission({
         : draftImages.referencedBy(text);
       const pastes = editor.referencedPastes(text);
       if (images.length > 0 && !(await runner.supportsImageInput())) {
-        // Pi's editor clears itself before invoking onSubmit, so explicitly
+        // The editor clears itself before invoking onSubmit, so explicitly
         // restore a rejected draft along with its retained attachments.
         editor.setText(text);
         store.setState({

@@ -46,14 +46,15 @@ async function runPtyScenario(): Promise<void> {
     harness.write(ESCAPE);
     await harness.waitFor(/Request cancel/);
 
+    // Inline mode: earlier transcript lives in the terminal's own scrollback.
     harness.write("fixture-fill\r");
     await harness.waitFor(/fixture scroll line 48/);
-    harness.write(`${ESCAPE}[<64;10;10M`.repeat(5));
-    await harness.waitFor(/fixture scroll line 2\d/);
-    assert.doesNotMatch(harness.screen(), /fixture scroll line 48/);
+    assert.doesNotMatch(harness.screen(), /fixture scroll line 01/);
+    assert.match(harness.buffer(), /fixture scroll line 01[\s\S]*fixture scroll line 48/);
+    assert.equal(harness.buffer().match(/fixture scroll line 01/g)?.length, 1);
 
     harness.resize(96, 30);
-    await harness.waitFor(/fixture scroll line 2\d/);
+    await harness.waitFor(/fixture-model \| agent/);
     assert.equal(harness.columns, 96);
     assert.equal(harness.rows, 30);
 
@@ -67,7 +68,9 @@ async function runPtyScenario(): Promise<void> {
       harness.output(),
       /Resume this session with: nova-ai --resume /,
     );
-    assert.match(harness.output(), /\u001b\[\?1049l/);
+    // The transcript stays in the terminal after exit; the prompt does not.
+    assert.match(harness.buffer(), /fixture scroll line 48/);
+    assert.doesNotMatch(harness.screen(), /fixture-model \| agent/);
   } finally {
     harness.dispose();
   }
@@ -134,10 +137,21 @@ class PtyHarness {
     this.process.resize(columns, rows);
   }
 
+  /** The visible rows (the bottom of the buffer; earlier rows are scrollback). */
   screen(): string {
     const buffer = this.terminal.buffer.active;
     const lines: string[] = [];
     for (let index = 0; index < this.terminal.rows; index++) {
+      lines.push(buffer.getLine(buffer.baseY + index)?.translateToString(true) ?? "");
+    }
+    return lines.join("\n");
+  }
+
+  /** Scrollback and screen together. */
+  buffer(): string {
+    const buffer = this.terminal.buffer.active;
+    const lines: string[] = [];
+    for (let index = 0; index < buffer.length; index++) {
       lines.push(buffer.getLine(index)?.translateToString(true) ?? "");
     }
     return lines.join("\n");
@@ -224,7 +238,10 @@ function spawnFixture(cwd: string, columns: number, rows: number): PtyHarness {
   const tsxCli = createRequire(import.meta.url).resolve("tsx/cli");
   return new PtyHarness(
     process.execPath,
-    compiled ? [compiledFixture] : [tsxCli, sourceFixture],
+    compiled
+      ? [compiledFixture]
+      : // The fixture runs in a temp cwd; JSX settings come from the repo.
+        [tsxCli, "--tsconfig", join(here, "..", "..", "tsconfig.json"), sourceFixture],
     cwd,
     columns,
     rows,

@@ -1,6 +1,6 @@
 import type * as acp from "@agentclientprotocol/sdk";
 import type { ChatMessage } from "@datalabrotterdam/nova-sdk";
-import { runPiTui } from "../../../src/tui/pi-app/app.js";
+import { runInkTui } from "../../../src/tui/ink/app.js";
 import { SessionRunner } from "../../../src/tui/session/session-runner.js";
 import type { Store } from "../../../src/tui/state/store.js";
 import type { UIMessage, UIState } from "../../../src/tui/state/types.js";
@@ -92,7 +92,7 @@ function createFixtureRunner(store: Store<UIState>): SessionRunner {
   return runner;
 }
 
-await runPiTui(
+await runInkTui(
   { apiKey: "pty-fixture", defaultModel: "fixture-model" },
   process.cwd(),
   [],

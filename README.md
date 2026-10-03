@@ -98,12 +98,11 @@ cancelled, `3` tool-turn safety limit, and `130` interrupted.
 
 ### Interactive terminal UI
 
-The TUI uses synchronized differential rendering in a full-terminal viewport.
-It fills the current rows and columns on startup, fully reflows on resize, and
-keeps the multiline editor and its status row pinned below the scrollable
-transcript. Session/model/tool selection screens temporarily own the full
-terminal viewport and use stable full-width rows, so the editor cannot show
-through and scrolling replaces the previous terminal cells cleanly.
+The TUI (built with Ink) renders inline below your shell prompt. Finished
+messages and tool results go to the terminal's normal scrollback, so you scroll,
+search and copy them with the terminal itself; only the streaming answer, running
+tools, the prompt and the status rows are redrawn. Pickers and dialogs replace
+the prompt while open.
 It includes width-aware Markdown, history/paste/autocomplete, permission
 dialogs, tool inspection, background shell/agent inspection, model/session
 pickers, progressive skill loading, and resumable exits. Skills are discovered
@@ -120,15 +119,16 @@ profile and workspace; `/skills` shows the active catalog.
 | `Ctrl+B`                           | Inspect background shells and agents                                                 |
 | `Ctrl+R` / `Ctrl+P` / `Ctrl+K`     | Sessions / models / permission mode                                                  |
 | `Alt+V`                            | Paste a clipboard image as `[#ImageN]` when the selected model supports image input  |
-| Mouse wheel / `Shift+Page Up/Down` | Scroll conversation history                                                          |
-| `Ctrl+Home` / `Ctrl+End`           | Jump to oldest / newest conversation content                                         |
+| `Up` / `Down`                      | Earlier prompts; with an empty prompt, edit queued messages                          |
+| `Tab`                              | Accept a suggestion or complete a path                                               |
 
 Enter submits. While a response is streaming, another submission is added to
 the agent-owned FIFO queue and its position appears in the status row.
 `/steer <message>` puts guidance at the front and injects it at the next safe
 model boundary after a tool finishes; it does not cancel the active response.
-`/queue` inspects it and `/queue clear` removes pending messages. `Shift+Enter`
-or `Ctrl+J` inserts a newline. Slash commands and `@file` references autocomplete
+`/queue` inspects it and `/queue clear` removes pending messages. `Alt+Enter`,
+`Ctrl+J` or a trailing `\` inserts a newline (`Shift+Enter` too in kitty,
+WezTerm, Ghostty, foot and Alacritty). Slash commands and `@file` references autocomplete
 in the editor.
 
 If Nova reports that the model's maximum context length was exceeded, the

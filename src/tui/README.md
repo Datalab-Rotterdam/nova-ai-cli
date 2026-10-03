@@ -1,38 +1,53 @@
-# Nova TUI foundation
+# Nova TUI
 
-The default interactive UI uses `@earendil-works/pi-tui`. Nova keeps its own
-application state and talks to `NovaAgent` through the in-process ACP adapter;
-the TUI library owns terminal input, width-aware rendering, differential
-updates, synchronized output, focus, overlays, Markdown, and the editor.
+The interactive UI is built with [Ink](https://github.com/vadimdemedes/ink)
+(React for the terminal). Nova keeps its own application state and talks to
+`NovaAgent` over a real in-process ACP connection, the same protocol an editor
+uses with `nova-ai --acp`.
 
 This split is deliberate:
 
 - `state/` is the UI source of truth.
 - `session/tui-acp-client.ts` translates ACP requests and notifications.
-- `session/session-runner.ts` coordinates TUI prompt lifecycle while the ACP
+- `session/session-runner.ts` coordinates the prompt lifecycle while the ACP
   session owns queued prompts, ordering, and steering.
-- `pi-app/` contains presentation and keyboard interaction only.
 - `commands/` defines the UI-independent slash-command surface.
+- `ink/` is the view: React components plus the plain classes behind them.
+  - `controller.ts` holds the behaviour (shortcuts, dialogs, commands, prompt
+    submission) without React; `app.tsx` renders its `ViewState`.
+  - `transcript/committer.ts` decides which transcript blocks are final.
+  - `editor/` is the prompt editor (buffer, history, queue editing, pastes,
+    autocomplete); `dialogs/state.ts` holds each dialog's keyboard logic and
+    `dialogs/views.tsx` draws them.
+  - `components/` has the transcript blocks, Markdown, prompt and status line.
 
 ## Interaction model
 
-The app runs in the terminal's alternate screen and always renders exactly the
-current terminal height. `FullscreenLayout` gives the transcript all rows not
-used by the editor and status footer, with the status row rendered below the
-input. The Nova AI workspace header is the first transcript content, so it is
-visible at the top of history and scrolls away normally instead of consuming a
-fixed viewport row. Selection dialogs replace the root layout while open instead of using
-Pi's overlay compositor. This keeps their title at the first row and counter at
-the last row. Navigation uses a synchronized full repaint, preventing the old
-selection cursor or editor cells from surviving a scroll frame.
-Pi's resize callback reads the new columns and rows, reflows every width-aware
-component, and performs a full repaint. The transcript handles mouse-wheel,
-Shift+Page Up/Down, and Ctrl+Home/End navigation. Bounded inspectors use a
-separate scrollable overlay with arrows, Page Up/Down, Home, and End.
+Nova renders inline, below the shell prompt, like `claude` or `codex`.
+Finished transcript blocks are printed once with Ink's `<Static>` and become
+ordinary terminal scrollback: scroll, search and copy them with the terminal's
+own controls. Only the live area is redrawn: the answer that is still
+streaming, running tools, queued prompts, the plan during a turn, the working
+row, then the prompt (or an open dialog) and the status rows.
 
-The input is a real multiline editor with a visible `> ` prompt, hardware
-insertion cursor, wrapping, history, bracketed paste, undo, slash-command
-autocomplete, and `@file` completion. Enter submits;
+- Final blocks always form a prefix of the transcript. A long answer moves to
+  the scrollback paragraph by paragraph (never inside a code block) while the
+  rest streams, so the live area stays small.
+- The live area is capped below the terminal height. Ink repaints the whole
+  screen once a frame is as tall as the terminal, which would flicker and
+  duplicate scrollback.
+- When the printed history no longer matches (another session, `/clear`,
+  `/rewind`, Ctrl+O), the screen and scrollback are cleared and the transcript
+  is printed again.
+- A background job that finishes after it was printed gets a new line; a plan
+  is printed once when the turn ends.
+- Dialogs (sessions, models, permission modes, background jobs, tool
+  inspector, text panels, permission requests and questions) replace the
+  prompt in the live area and are bounded by the terminal height.
+
+The input is a multiline editor with a visible `> ` prompt, wrapping,
+history, bracketed paste, slash-command autocomplete, and `@file` completion
+(via `fd` when installed, respecting `.gitignore`). Enter submits;
 submitting while a response streams appends a visible entry to the FIFO prompt
 queue. `/steer <message>` also appears immediately, then enters the active turn
 at the next safe model boundary after a tool finishes instead of cancelling the
@@ -41,7 +56,11 @@ output is inserted above them. With an empty editor, Up recalls the newest
 queued entry; Up/Down cycle queued entries, edits update them in place, and
 submitting an empty recalled entry removes it. `/queue` and `/queue clear`
 inspect or clear pending messages.
-Shift+Enter or Ctrl+J inserts a newline.
+Alt+Enter, Ctrl+J or a trailing `\` before Enter inserts a newline;
+Shift+Enter does too in terminals with the kitty keyboard protocol (kitty,
+WezTerm, Ghostty, foot, Alacritty; set `NOVA_KITTY_KEYBOARD=1` or `0` to
+override). Ink's own protocol probe is not used because it delivers keys typed
+during the probe twice.
 
 Large clipboard pastes (more than 10 lines or 1,000 characters) stay outside
 the editor and appear as a compact `[Pasted from clipboard #N: ...]` marker.
@@ -80,11 +99,10 @@ mark every remaining pending tool as failed, and collapsed rows keep the final
 error reason visible.
 
 For multi-step work the agent uses `update_plan` to publish a standard ACP
-`plan` update. The transcript keeps the latest checklist visible with completed,
-active, and pending markers; the active marker animates on the existing render
-clock. Each update replaces the full checklist, so progress from the main agent
-or work it delegated to background agents appears in place instead of creating
-another transcript entry.
+`plan` update. During the turn the latest checklist stays in the live area
+with completed, active, and pending markers (the active marker animates); each
+update replaces it in place. When the turn ends, the final checklist is
+printed to the scrollback once.
 
 | Key                              | Action                                                                                  |
 | -------------------------------- | --------------------------------------------------------------------------------------- |
@@ -98,10 +116,14 @@ another transcript entry.
 | Ctrl+P                           | Switch model                                                                            |
 | Ctrl+K                           | Switch permission mode                                                                  |
 | Alt+V                            | Paste a clipboard image when supported by the selected model                            |
-| Mouse wheel / Shift+Page Up/Down | Scroll transcript                                                                       |
-| Ctrl+Home / Ctrl+End             | Jump to transcript top / bottom                                                         |
+| Up / Down                        | Earlier prompts; with an empty prompt, queued messages first                            |
+| Tab                              | Accept a suggestion, or complete a path                                                 |
+| Ctrl+A / Ctrl+E / Ctrl+U / Ctrl+W | Line start / end, delete to line start, delete word                                    |
 
-The tool inspector is an accordion-style live view. Use the wheel or Up/Down
+Ctrl+O re-prints the transcript with verbose tool output (diffs longer than
+40 changed lines are shortened otherwise).
+
+The tool inspector is an accordion-style live view. Use Up/Down
 to select a call; Enter, Space, Left, or Right to expand/collapse its arguments,
 diff, and output; and Page Up/Down to scroll long details. `/tools` opens the
 same inspector.
@@ -113,9 +135,10 @@ immediately blocks later tools in the current turn, and `ask`/`plan` turns are
 started without any tools. Mode state is exposed through standard ACP session
 modes and `current_mode_update` notifications.
 
-The agent cannot change `permissionMode`. Only the user-facing Ctrl+K and
+The agent cannot change the permission mode. Only the user-facing Ctrl+K and
 `/permission` controls can select `ask`, `acceptEdits`, or `bypassAll`, and
-`bypassAll` is never accepted as an ACP interaction mode.
+`bypassAll` is never accepted as an ACP interaction mode or read from a
+settings file.
 
 The same views are discoverable through `/tools`, `/agent`, `/shell`, `/mcp`,
 `/session` (`/sessions` is an alias), `/model`, and `/permission`; queue control
@@ -184,32 +207,32 @@ they advertise `clientCapabilities.elicitation.form`.
 
 ## Permissions
 
-Project permission policy lives in `.nova-ai/settings.json`. Rules use a
-Claude-style `Tool(pattern)` form; `*` matches any sequence and `?` matches one
-character. `deny` is evaluated before `allow` and remains effective in
-`bypassAll` mode. Unmatched mutating calls follow `permissionMode` (`ask`,
-`acceptEdits`, or `bypassAll`). Read-only tools remain automatic.
+The agent enforces the policy; the TUI only shows its questions. The full
+contract (files, trust, rule syntax) is in `docs/NOVA_HOME.md`. In short:
+rules use a `Tool(pattern)` form where `*` matches any text and `?` one
+character; deny rules win, also in `bypassAll` mode and for read-only tools.
+Allow rules from the repository (`.nova-ai/settings.json`,
+`.nova-ai/settings.local.json`) only count once you trusted the workspace
+(asked at startup when it declares rules or MCP servers, or `/trust`). The
+default permission mode comes from `~/.nova-ai/settings.json` or the private
+`~/.nova-ai/projects/<key>/settings.json`, never from the repository.
 
 ```json
 {
-  "permissionMode": "ask",
   "permissions": {
-    "allow": [
-      "Bash(npx tsc *)",
-      "Bash(npx tsup *)",
-      "Bash(npm run *)",
-      "Edit(src/**)"
-    ],
+    "allow": ["Bash(npx tsc *)", "Bash(npm run *)", "Edit(src/**)"],
     "deny": ["Bash(npm publish*)", "Write(.env*)"]
   }
 }
 ```
 
 `Bash(...)` covers foreground commands, package scripts, and background shell
-commands. `Write(...)` and `Edit(...)` match their workspace path. Native tool
+commands; a command line is checked per command (`a && b` needs both
+allowed). `Write(...)` and `Edit(...)` match the workspace path. Native tool
 names such as `run_command(...)` and MCP tool names are also accepted. A rule
 without parentheses allows or denies every invocation of that tool. Choosing
-`always` in the permission dialog persists an exact argument-aware allow rule.
+`always` in the permission dialog saves an exact rule in the private
+`~/.nova-ai/projects/<key>/settings.json`, outside the repository.
 
 ## MCP
 
@@ -261,18 +284,24 @@ The existing `.nova-ai/settings.json` array format remains supported:
 }
 ```
 
-The two sources are merged by server name. A `.mcp.json` entry overrides a
+Servers the workspace declares only start once the workspace is trusted. The
+two sources are merged by server name. A `.mcp.json` entry overrides a
 same-named entry from `.nova-ai/settings.json`. The files are re-read when a
 new or stored session is opened. Header and environment values are never shown
 by the inspector. Use `/mcp` to inspect the configured transports.
 
 ## Adding UI behavior
 
-Prefer a small `Component` in `pi-app/components.ts` whose `render(width)`
-returns width-bounded rows. Put agent behavior in ACP, state transitions in the
-store/adapter, and only view behavior in the component. Use `SelectionDialog`
-for choices and `ScrollPanel` for long inspectable output.
+Put agent behaviour in ACP, state transitions in the store/adapter, keyboard
+logic in a plain class (`ink/controller.ts`, `ink/dialogs/state.ts`,
+`ink/editor/`) and drawing in a small React component under `ink/`. Let Ink do
+the layout: prefixes and indentation are `<Box>` columns, so wrapping follows
+the terminal width. Use `SelectionDialog` for choices and `ScrollPanel` for
+long output. A new transcript block kind needs a case in the committer (when is
+it final?) and in `TranscriptBlockView`.
 
-Rendering regressions belong in `tests/tui/pi-components.test.ts`. Tests should
-include narrow widths, long unbroken text, Unicode/wide characters, content
-shrinking, and expanded tool output.
+Tests: `tests/tui/ink-transcript.test.ts` (committer and rendered blocks via
+`renderToString`), `ink-dialogs.test.ts` (`ink-testing-library`),
+`ink-editor.test.ts`, `ink-app.test.ts` (the whole app on a headless xterm) and
+the real-terminal scenario in `pty-runtime-e2e.test.ts`. Cover narrow widths,
+long unbroken text, wide characters and expanded tool output.
