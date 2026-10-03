@@ -187,10 +187,14 @@ export function ActivityBlock({
       </Text>
       {details.map((detail, index) => (
         <Box key={index}>
-          <Text color={palette.faint}>{index === 0 ? "  ⎿  " : "     "}</Text>
-          <Text color={palette.muted} wrap="truncate-end">
-            {detail}
-          </Text>
+          <Box flexShrink={0}>
+            <Text color={palette.faint}>{index === 0 ? "  ⎿  " : "     "}</Text>
+          </Box>
+          <Box flexGrow={1} flexShrink={1}>
+            <Text color={palette.muted} wrap="truncate-end">
+              {detail}
+            </Text>
+          </Box>
         </Box>
       ))}
     </Box>

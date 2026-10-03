@@ -144,7 +144,9 @@ export function App({ controller }: { controller: TuiController }) {
 
   const { transcript } = view;
   const scrollback = (
-    <Static key={transcript.epoch} items={[...transcript.committed]}>
+    // <Static> is laid out as an absolute box; without a width its text
+    // wraps against its content and runs past the terminal edge.
+    <Static key={transcript.epoch} items={[...transcript.committed]} style={{ width: columns }}>
       {(block) => (
         <Box key={block.key} marginTop={1}>
           <TranscriptBlockView block={block} />

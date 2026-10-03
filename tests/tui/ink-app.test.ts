@@ -232,7 +232,14 @@ test("resizing redraws cleanly without leftover prompt borders", async () => {
   const show = () => screen(terminal);
   await waitFor(() => /test-model \| agent/.test(show()), show);
   store.setState({
-    messages: [{ id: "a1", role: "assistant", text: `Once upon a time. ${"A story about a lantern. ".repeat(12)}`, streaming: false }],
+    messages: [
+      {
+        id: "a1",
+        role: "assistant",
+        text: `Once upon a time. ${"A story about a lantern. ".repeat(12)}\n\n- ${"a long list item ".repeat(10)}`,
+        streaming: false,
+      },
+    ],
   });
   await waitFor(() => /lantern/.test(show()), show);
 
@@ -245,6 +252,14 @@ test("resizing redraws cleanly without leftover prompt borders", async () => {
     () => (text(terminal).match(/╭/g)?.length ?? 0) === 1 && /test-model \| agent/.test(show()),
     () => text(terminal),
   );
+  // Every printed line fits: the terminal had to wrap none of them itself.
+  const buffer = terminal.buffer.active;
+  const softWrapped: string[] = [];
+  for (let index = 0; index < buffer.length; index++) {
+    const line = buffer.getLine(index);
+    if (line?.isWrapped) softWrapped.push(buffer.getLine(index - 1)?.translateToString(true) ?? "");
+  }
+  assert.deepEqual(softWrapped, []);
   assert.equal(text(terminal).match(/Once upon a time/g)?.length, 1, "the answer is printed once");
   assert.equal(text(terminal).match(/Nova AI/g)?.length, 1, "the header is printed once");
 

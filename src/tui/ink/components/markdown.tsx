@@ -103,13 +103,17 @@ function List({ list }: { list: Tokens.List }) {
         const content = item.tokens.filter((token) => token.type !== "checkbox");
         return (
           <Box key={index} marginTop={index > 0 && list.loose ? 1 : 0}>
-            <Text color={palette.accent}>{`${bullet} `}</Text>
+            <Box flexShrink={0}>
+              <Text color={palette.accent}>{`${bullet} `}</Text>
+            </Box>
             <Box flexDirection="column" flexGrow={1} flexShrink={1}>
               {checkbox ? (
                 <Box>
-                  <Text color={item.checked ? palette.success : palette.faint}>
-                    {checkbox}
-                  </Text>
+                  <Box flexShrink={0}>
+                    <Text color={item.checked ? palette.success : palette.faint}>
+                      {checkbox}
+                    </Text>
+                  </Box>
                   <Box flexGrow={1} flexShrink={1}>
                     <Blocks tokens={content} tight={!list.loose} />
                   </Box>

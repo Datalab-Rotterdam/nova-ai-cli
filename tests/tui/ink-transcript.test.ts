@@ -243,6 +243,27 @@ test("markdown wraps inside the terminal width", () => {
   assert.ok(lines.every((line) => stringWidth(line) <= 32), lines.join("\n"));
 });
 
+test("long paragraphs and list items never run past the terminal edge", () => {
+  const sentence =
+    "Instead, she used the scent of rain on dry earth, the sound of a first laugh, and the warmth of a hearth fire.";
+  const blocks: TranscriptBlock[] = [
+    { key: "a", kind: "assistant", first: true, streaming: false, text: `${sentence} ${sentence}` },
+    {
+      key: "b",
+      kind: "assistant",
+      first: false,
+      streaming: false,
+      text: `- item ${sentence}\n- [x] task ${sentence}\n\n1. step ${sentence}\n   - nested ${sentence}`,
+    },
+    { key: "c", kind: "user", text: sentence },
+  ];
+  for (const columns of [40, 63, 80, 115]) {
+    const lines = plain(renderBlocks(blocks, columns)).split("\n");
+    const tooWide = lines.filter((line) => stringWidth(line) > columns);
+    assert.deepEqual(tooWide, [], `at ${columns} columns`);
+  }
+});
+
 test("read and search tools collapse into one activity line", () => {
   const committer = new TranscriptCommitter();
   const snapshot = committer.sync(
