@@ -9,18 +9,18 @@ import { NovaAgent } from "../../acp/agent.js";
 import {
   extractToolCall,
   stripToolCallMarkup,
-} from "../../acp/tools/marker.js";
+} from "../../core/tools/marker.js";
 import type {
   BackgroundJobKind,
   BackgroundJobSummary,
   OutputResponse,
-} from "../../acp/background.js";
-import type { StoredCredentials } from "../../acp/credentials.js";
-import type { PromptQueueEntryView } from "../../acp/prompt-queue.js";
-import { saveDefaultModel } from "../../acp/credentials.js";
-import { loadStoredSession } from "../../acp/sessions.js";
-import type { SessionCheckpoint } from "../../acp/sessions.js";
-import { discoverSkills } from "../../acp/skills.js";
+} from "../../core/background.js";
+import type { StoredCredentials } from "../../core/credentials.js";
+import type { PromptQueueEntryView } from "../../core/prompt-queue.js";
+import { saveDefaultModel } from "../../core/credentials.js";
+import { loadStoredSession } from "../../core/sessions.js";
+import type { SessionCheckpoint } from "../../core/sessions.js";
+import { discoverSkills } from "../../core/skills.js";
 import { chatContentToText } from "../../core/chat-content.js";
 import {
   resolveModelContextWindow,

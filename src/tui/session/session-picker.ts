@@ -1,4 +1,4 @@
-import { listStoredSessions, type StoredSession } from "../../acp/sessions.js";
+import { listStoredSessions, type StoredSession } from "../../core/sessions.js";
 
 export type SessionPickerItem = {
   value: string;

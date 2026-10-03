@@ -1,5 +1,5 @@
 import type { ChatMessage } from "@datalabrotterdam/nova-sdk";
-import { extractToolCall } from "../acp/tools/marker.js";
+import { extractToolCall } from "./tools/marker.js";
 import { chatContentToText } from "./chat-content.js";
 
 export type ContextUsageCategory =

@@ -1,5 +1,5 @@
 import type * as acp from "@agentclientprotocol/sdk";
-import type { ToolDiff } from "../acp/tools/types.js";
+import type { ToolDiff } from "./tools/types.js";
 
 export type AgentEvent =
   | { type: "text"; text: string }

@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { ChatMessage, NovaAI } from "@datalabrotterdam/nova-sdk";
-import type { ToolEnvironment } from "../../src/acp/tools/environment.js";
-import type { ToolDefinition } from "../../src/acp/tools/types.js";
+import type { ToolEnvironment } from "../../src/core/tools/environment.js";
+import type { ToolDefinition } from "../../src/core/tools/types.js";
 import type { AgentEvent } from "../../src/core/agent-events.js";
 import type { ToolHost } from "../../src/core/tool-host.js";
 import { runTurn } from "../../src/core/run-turn.js";

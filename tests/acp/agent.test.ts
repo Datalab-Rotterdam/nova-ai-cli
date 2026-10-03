@@ -14,7 +14,7 @@ import {
   appendSessionTurn,
   deleteStoredSession,
   loadStoredSession,
-} from "../../src/acp/sessions.js";
+} from "../../src/core/sessions.js";
 
 const testSessionsDir = mkdtempSync(join(tmpdir(), "nova-agent-sessions-"));
 process.env.NOVA_AI_CLI_SESSIONS_DIR = testSessionsDir;

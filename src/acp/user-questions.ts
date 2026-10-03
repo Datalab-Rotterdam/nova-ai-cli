@@ -5,8 +5,9 @@ import type {
   UserQuestion,
   UserQuestionOption,
 } from "../core/user-questions.js";
+import { OTHER_OPTION_ID } from "../core/user-questions.js";
 
-export const OTHER_OPTION_ID = "__other__";
+export { OTHER_OPTION_ID };
 const OTHER_SUFFIX = "__other_text";
 const QUESTION_META = "nova-ai-cli/question";
 const DESCRIPTION_META = "nova-ai-cli/description";

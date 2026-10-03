@@ -2,7 +2,7 @@ import type { SlashCommand } from "./types.js";
 import type {
   BackgroundJobKind,
   BackgroundJobSummary,
-} from "../../acp/background.js";
+} from "../../core/background.js";
 import { isInteractionMode } from "../../core/interaction-modes.js";
 
 const permissionModes = ["ask", "acceptEdits", "bypassAll"] as const;

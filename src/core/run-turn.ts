@@ -7,11 +7,11 @@ import {
   stripToolCallMarkup,
   tailMayContinueToolCalls,
   type ToolCallScan,
-} from "../acp/tools/marker.js";
-import type { BackgroundToolApi } from "../acp/background.js";
-import type { ToolEnvironment } from "../acp/tools/environment.js";
-import { formatArgIssues, validateToolArgs } from "../acp/tools/schema.js";
-import type { ToolDefinition } from "../acp/tools/types.js";
+} from "./tools/marker.js";
+import type { BackgroundToolApi } from "./background.js";
+import type { ToolEnvironment } from "./tools/environment.js";
+import { formatArgIssues, validateToolArgs } from "./tools/schema.js";
+import type { ToolDefinition } from "./tools/types.js";
 import type { AgentEvent } from "./agent-events.js";
 import {
   isContextLimitError,

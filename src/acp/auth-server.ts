@@ -9,7 +9,7 @@ import {
   credentialsPath,
   writeCredentials,
   type StoredCredentials,
-} from "./credentials.js";
+} from "../core/credentials.js";
 
 const AUTH_TIMEOUT_MS = 5 * 60 * 1000;
 const HOST = "127.0.0.1";

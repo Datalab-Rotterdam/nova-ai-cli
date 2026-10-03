@@ -1,4 +1,4 @@
-import { readCredentials } from "../acp/credentials.js";
+import { readCredentials } from "../core/credentials.js";
 import { runPiTui } from "./pi-app/app.js";
 
 export async function runChat(...args: string[]): Promise<void> {

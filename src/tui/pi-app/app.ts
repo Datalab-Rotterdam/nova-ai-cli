@@ -5,7 +5,7 @@ import {
   matchesKey,
   type OverlayHandle,
 } from "@earendil-works/pi-tui";
-import type { StoredCredentials } from "../../acp/credentials.js";
+import type { StoredCredentials } from "../../core/credentials.js";
 import type { ContextUsage } from "../../core/context-usage.js";
 import { INTERACTION_MODES } from "../../core/interaction-modes.js";
 import {

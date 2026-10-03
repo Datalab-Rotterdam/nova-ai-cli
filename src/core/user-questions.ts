@@ -1,3 +1,6 @@
+/** Option id for the free-text "Other" answer, shared by every client. */
+export const OTHER_OPTION_ID = "__other__";
+
 export type UserQuestionType = "single" | "multiple";
 
 export type UserQuestionOption = {

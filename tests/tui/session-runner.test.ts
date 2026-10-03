@@ -15,7 +15,7 @@ import { installFakeAgentQueue } from "./fake-agent-queue.js";
 import {
   appendSessionTurn,
   deleteStoredSession,
-} from "../../src/acp/sessions.js";
+} from "../../src/core/sessions.js";
 
 function state(): UIState {
   return {

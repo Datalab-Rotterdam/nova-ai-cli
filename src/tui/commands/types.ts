@@ -2,10 +2,10 @@ import type {
   BackgroundJobKind,
   BackgroundJobSummary,
   OutputResponse,
-} from "../../acp/background.js";
+} from "../../core/background.js";
 import type { ContextCompactionResult } from "../../core/context-compaction.js";
 import type { InteractionMode, PermissionMode } from "../state/types.js";
-import type { SessionCheckpoint } from "../../acp/sessions.js";
+import type { SessionCheckpoint } from "../../core/sessions.js";
 
 export type SlashCommandContext = {
   print(text: string): void;

@@ -27,32 +27,32 @@ import {
 } from "../core/interaction-modes.js";
 import { AcpToolHost } from "./acp-tool-host.js";
 import { runBrowserAuth } from "./auth-server.js";
-import { readCredentials } from "./credentials.js";
-import { stripToolCallMarkup } from "./tools/marker.js";
+import { readCredentials } from "../core/credentials.js";
+import { stripToolCallMarkup } from "../core/tools/marker.js";
 import {
   buildSkillsSystemPrompt,
   createLoadSkillTool,
   discoverSkills,
   type SkillDefinition,
-} from "./skills.js";
+} from "../core/skills.js";
 import {
   buildMemorySystemPrompt,
   createLoadMemoryTool,
   createSaveMemoryTool,
   discoverMemories,
   type MemoryEntry,
-} from "./memory.js";
+} from "../core/memory.js";
 import {
   closeMcpConnections,
   connectMcpServers,
   listMcpTools,
   type McpConnection,
   type McpConnectionFailure,
-} from "./mcp.js";
+} from "../core/mcp.js";
 import {
   detectToolEnvironment,
   type ToolEnvironment,
-} from "./tools/environment.js";
+} from "../core/tools/environment.js";
 import {
   appendSessionCompaction,
   appendSessionTurn,
@@ -65,7 +65,7 @@ import {
   rewindStoredSession,
   type RewindSessionParams,
   type SessionIdParams,
-} from "./sessions.js";
+} from "../core/sessions.js";
 import {
   buildProviderInfos,
   listJoinedModels,
@@ -88,16 +88,16 @@ import {
   type NesDocument,
   type NesSession,
 } from "./nes.js";
-import { availableTools, buildToolsSystemPrompt } from "./tools/index.js";
-import { createEnterPlanModeTool } from "./tools/enter-plan-mode.js";
-import { createUpdatePlanTool } from "./tools/update-plan.js";
-import type { ToolDefinition } from "./tools/types.js";
+import { availableTools, buildToolsSystemPrompt } from "../core/tools/index.js";
+import { createEnterPlanModeTool } from "../core/tools/enter-plan-mode.js";
+import { createUpdatePlanTool } from "../core/tools/update-plan.js";
+import type { ToolDefinition } from "../core/tools/types.js";
 import { sessionModeState } from "./session-modes.js";
 import {
   BackgroundJobManager,
   type BackgroundJobSummary,
   summarize,
-} from "./background.js";
+} from "../core/background.js";
 import type {
   BackgroundToolApi,
   JobIdParams,
@@ -105,7 +105,7 @@ import type {
   OutputResponse,
   StartPromptParams,
   StartTerminalParams,
-} from "./background.js";
+} from "../core/background.js";
 import {
   PromptQueue,
   type EnqueuePromptParams,
@@ -114,7 +114,7 @@ import {
   type QueueEntryParams,
   type QueueSessionParams,
   type UpdateQueuedPromptParams,
-} from "./prompt-queue.js";
+} from "../core/prompt-queue.js";
 
 const AUTH_METHOD_ID = "nova-api-key";
 

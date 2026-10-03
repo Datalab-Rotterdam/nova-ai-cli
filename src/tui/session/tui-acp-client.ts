@@ -25,8 +25,8 @@ import {
   terminateProcessTree,
 } from "../../core/process-tree.js";
 import type { UserInputResponse } from "../../core/user-questions.js";
-import { resolveWorkspaceFile } from "../../acp/tools/workspace-paths.js";
-import type { PromptQueueEntryView } from "../../acp/prompt-queue.js";
+import { resolveWorkspaceFile } from "../../core/tools/workspace-paths.js";
+import type { PromptQueueEntryView } from "../../core/prompt-queue.js";
 import {
   isInteractionMode,
   type InteractionMode,

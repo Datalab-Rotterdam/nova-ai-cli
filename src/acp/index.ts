@@ -6,14 +6,14 @@ import {
   parseListParams,
   parseStartPromptParams,
   parseStartTerminalParams,
-} from "./background.js";
+} from "../core/background.js";
 import {
   parseEnqueuePromptParams,
   parseQueueEntryParams,
   parseQueueSessionParams,
   parseUpdateQueuedPromptParams,
-} from "./prompt-queue.js";
-import { parseRewindSessionParams, parseSessionIdParams } from "./sessions.js";
+} from "../core/prompt-queue.js";
+import { parseRewindSessionParams, parseSessionIdParams } from "../core/sessions.js";
 import { redirectConsoleToStderr } from "./stdio-guard.js";
 
 async function runAcp(...args: string[]): Promise<void> {

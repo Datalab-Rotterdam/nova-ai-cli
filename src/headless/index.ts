@@ -1,7 +1,7 @@
 import { resolve } from "node:path";
 import * as acp from "@agentclientprotocol/sdk";
 import { NovaAgent } from "../acp/agent.js";
-import { loadStoredSession } from "../acp/sessions.js";
+import { loadStoredSession } from "../core/sessions.js";
 import { readWorkspaceMcpConfiguration } from "../tui/settings/workspace-mcp.js";
 import {
   HeadlessAcpClient,

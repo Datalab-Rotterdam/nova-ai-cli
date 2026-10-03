@@ -9,7 +9,7 @@ import {
   startAuthServer,
   type AuthServer,
 } from "../../src/acp/auth-server.js";
-import type { StoredCredentials } from "../../src/acp/credentials.js";
+import type { StoredCredentials } from "../../src/core/credentials.js";
 
 const uiDir = mkdtempSync(join(tmpdir(), "nova-auth-ui-"));
 writeFileSync(join(uiDir, "index.html"), "<!doctype html><title>setup</title>");
