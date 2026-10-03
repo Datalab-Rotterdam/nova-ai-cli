@@ -7,6 +7,9 @@ import {
 } from "@datalabrotterdam/nova-sdk";
 import { createNovaClient } from "../../core/nova-client.js";
 import { NovaAgent } from "../../acp/agent.js";
+import type { CompactionSummary } from "../commands/types.js";
+import { startInProcessAgent, type InProcessAgent } from "../../client/in-process.js";
+import type { NovaAgentClient } from "../../client/nova-agent-client.js";
 import { replayHistory } from "../../core/history.js";
 import type {
   BackgroundJobKind,
@@ -147,9 +150,12 @@ export class SessionRunner {
   model: string;
   interactionMode: InteractionMode = "agent";
 
+  /** The agent, served in-process over a real ACP connection (tests may stub it). */
   private readonly agent = new NovaAgent();
   private readonly acpClient: TuiAcpClient;
-  private readonly acpContext: acp.AgentContext;
+  private readonly connection: InProcessAgent;
+  private readonly nova: NovaAgentClient;
+  private readonly initialized: Promise<unknown>;
   private readonly novaClient: NovaAI;
   private mcpServers: acp.McpServer[] = [];
   private mcpConfigurationFailures: McpSessionStatus["failures"] = [];
@@ -173,6 +179,7 @@ export class SessionRunner {
   private contextWindow: number | null = null;
   private contextWindowModel: string | null = null;
   private contextWindowRequest = 0;
+  private contextUsageRequest = 0;
 
   constructor(
     private readonly store: Store<UIState>,
@@ -196,10 +203,12 @@ export class SessionRunner {
       (mode) =>
         this.applyInteractionMode(mode, `Agent switched to ${mode} mode.`),
     );
-    this.acpContext = this.acpClient.context();
-    this.agent.initialize({
+    this.connection = startInProcessAgent(() => this.acpClient.asAcpClient(), this.agent);
+    this.nova = this.connection.client;
+    this.initialized = this.nova.initialize({
       protocolVersion: acp.PROTOCOL_VERSION,
       clientCapabilities: this.acpClient.capabilities,
+      clientInfo: { name: "nova-ai-cli-tui", version: "1" },
     });
     this.novaClient = createNovaClient(credentials.apiKey);
     const model = credentials.defaultModel ?? process.env.NOVA_MODEL;
@@ -217,7 +226,7 @@ export class SessionRunner {
     if (!stored) return false;
 
     const previousSessionId = this.agentSessionLoaded ? this.sessionId : null;
-    if (previousSessionId) this.agent.cancel({ sessionId: previousSessionId });
+    if (previousSessionId) void this.nova.cancel({ sessionId: previousSessionId });
     this.queuedAttachments.clear();
     this.editingQueuedMessageId = null;
     this.sessionId = stored.sessionId;
@@ -244,31 +253,35 @@ export class SessionRunner {
       contextUsage: null,
     });
     this.agentSessionLoaded = false;
-    this.sessionReady = (
-      previousSessionId
-        ? this.agent.closeSession({ sessionId: previousSessionId })
-        : Promise.resolve({})
-    )
+    this.sessionReady = this.initialized
       .then(() =>
-        this.agent.loadSession(
-          {
+        previousSessionId
+          ? this.nova.closeSession({ sessionId: previousSessionId })
+          : {},
+      )
+      .then(async () => {
+        // The transcript was restored above; the agent's replay would repeat it.
+        this.acpClient.muteSessionUpdates = true;
+        try {
+          return await this.nova.loadSession({
             sessionId: stored.sessionId,
             cwd: stored.cwd,
             mcpServers: this.mcpServers,
-          },
-          silentContext(this.acpContext),
-        ),
-      )
+          });
+        } finally {
+          this.acpClient.muteSessionUpdates = false;
+        }
+      })
       .then((response) => {
         this.applyMcpStatus(response._meta);
         this.applySkillStatus(response._meta);
         this.agentSessionLoaded = true;
-        this.agent.setSessionMode({
-          sessionId: this.sessionId,
-          modeId: this.interactionMode,
-        });
+        this.applyQueue([]);
+        void this.nova
+          .setSessionMode({ sessionId: this.sessionId, modeId: this.interactionMode })
+          .catch(() => {});
         this.applyPermissionMode(this.sessionId);
-        this.updateContextUsage();
+        void this.updateContextUsage();
         void this.refreshContextUsage().catch(() => {});
       });
     void this.sessionReady.catch((err) => {
@@ -280,7 +293,7 @@ export class SessionRunner {
   }
 
   cancel(): void {
-    this.agent.cancel({ sessionId: this.sessionId });
+    void this.nova.cancel({ sessionId: this.sessionId }).catch(() => {});
   }
 
   queuedMessages(): string[] {
@@ -295,27 +308,40 @@ export class SessionRunner {
     }));
   }
 
+  /**
+   * The editor needs an answer right away: it comes from the local queue
+   * mirror, and the agent's response reconciles it (an entry that already
+   * started running cannot be edited any more).
+   */
   beginQueuedMessageEdit(id: string): boolean {
     if (!this.agentSessionLoaded) return false;
-    const { updated } = this.agent.beginQueuedPromptEdit({
-      sessionId: this.sessionId,
-      id,
-    });
-    if (!updated) return false;
+    if (!this.promptQueueEntries().some((entry) => entry.id === id)) return false;
     this.editingQueuedMessageId = id;
     this.syncQueueTranscript();
     this.store.setState({ statusLine: "Editing queued message." });
+    void this.nova
+      .queueEditBegin({ sessionId: this.sessionId, id })
+      .then(({ updated, entries }) => {
+        this.applyQueue(entries);
+        if (!updated && this.editingQueuedMessageId === id) {
+          this.editingQueuedMessageId = null;
+          this.syncQueueTranscript("That message was already sent.");
+        }
+      })
+      .catch(() => {});
     return true;
   }
 
   updateQueuedMessage(id: string, text: string): boolean {
     if (!this.agentSessionLoaded) return false;
-    const { updated } = this.agent.updateQueuedPrompt({
-      sessionId: this.sessionId,
-      id,
-      text,
-    });
-    if (!updated) return false;
+    if (!this.promptQueueEntries().some((entry) => entry.id === id)) return false;
+    this.applyQueue(
+      this.promptQueueEntries().map((entry) => (entry.id === id ? { ...entry, text } : entry)),
+    );
+    void this.nova
+      .queueUpdate({ sessionId: this.sessionId, id, text })
+      .then(({ entries }) => this.applyQueue(entries))
+      .catch(() => {});
     this.syncQueueTranscript();
     return true;
   }
@@ -335,7 +361,11 @@ export class SessionRunner {
 
     const value = text.trim();
     if (!value) {
-      this.agent.removeQueuedPrompt({ sessionId: this.sessionId, id });
+      this.applyQueue(this.promptQueueEntries().filter((queued) => queued.id !== id));
+      void this.nova
+        .queueRemove({ sessionId: this.sessionId, id })
+        .then(({ entries }) => this.applyQueue(entries))
+        .catch(() => {});
       this.queuedAttachments.delete(id);
       if (this.editingQueuedMessageId === id)
         this.editingQueuedMessageId = null;
@@ -351,21 +381,23 @@ export class SessionRunner {
         images: mergeReferencedImages(attachments.images, images, value),
         pastes: mergeReferencedPastes(attachments.pastes, pastes, value),
       });
-      this.agent.updateQueuedPrompt({
-        sessionId: this.sessionId,
-        id,
-        text: value,
-      });
-      void this.finalizeQueuedMessageEdit(id, value);
+      void this.nova
+        .queueUpdate({ sessionId: this.sessionId, id, text: value })
+        .then(({ entries }) => this.applyQueue(entries))
+        .catch(() => {})
+        .then(() => this.finalizeQueuedMessageEdit(id, value));
     }
     return true;
   }
 
   clearQueuedMessages(): number {
     if (!this.agentSessionLoaded) return 0;
-    const { cleared: count } = this.agent.clearPromptQueue({
-      sessionId: this.sessionId,
-    });
+    const count = this.promptQueueEntries().length;
+    this.applyQueue([]);
+    void this.nova
+      .queueClear({ sessionId: this.sessionId })
+      .then(({ entries }) => this.applyQueue(entries))
+      .catch(() => {});
     this.queuedAttachments.clear();
     this.editingQueuedMessageId = null;
     this.syncQueueTranscript(
@@ -426,7 +458,7 @@ export class SessionRunner {
     if (sessionId !== this.sessionId || !this.agentSessionLoaded) {
       return this.refreshContextUsage();
     }
-    const usage = this.updateContextUsage();
+    const usage = await this.updateContextUsage();
     if (!usage)
       throw new Error(
         "Context usage is unavailable before the session is ready.",
@@ -436,7 +468,8 @@ export class SessionRunner {
 
   async close(): Promise<void> {
     await this.acpClient.releaseAllTerminals();
-    await this.agent.closeSession({ sessionId: this.sessionId });
+    await this.nova.closeSession({ sessionId: this.sessionId }).catch(() => {});
+    await this.connection.close();
   }
 
   setModel(model: string): void {
@@ -445,7 +478,7 @@ export class SessionRunner {
     this.contextWindowModel = null;
     this.contextWindowRequest++;
     saveDefaultModel(model);
-    if (this.agentSessionLoaded) this.updateContextUsage();
+    if (this.agentSessionLoaded) void this.updateContextUsage();
     void this.refreshContextUsage().catch(() => {});
   }
 
@@ -464,7 +497,7 @@ export class SessionRunner {
   }
 
   private applyPermissionMode(sessionId: string): void {
-    void this.agent
+    void this.nova
       .setSessionConfigOption({
         sessionId,
         configId: "permission_mode",
@@ -478,7 +511,9 @@ export class SessionRunner {
   setInteractionMode(mode: InteractionMode): void {
     this.applyInteractionMode(mode, `Mode: ${mode}`);
     if (this.agentSessionLoaded) {
-      this.agent.setSessionMode({ sessionId: this.sessionId, modeId: mode });
+      void this.nova
+        .setSessionMode({ sessionId: this.sessionId, modeId: mode })
+        .catch(() => {});
     }
   }
 
@@ -498,7 +533,7 @@ export class SessionRunner {
     this.agentSessionLoaded = false;
     this.store.setState({ contextUsage: null, plan: [] });
     if (previousSessionId)
-      await this.agent.closeSession({ sessionId: previousSessionId });
+      await this.nova.closeSession({ sessionId: previousSessionId });
     this.sessionReady = this.createSession();
     await this.sessionReady;
     this.store.setState({
@@ -531,7 +566,7 @@ export class SessionRunner {
     return supported;
   }
 
-  async compactContext(): Promise<ContextCompactionResult> {
+  async compactContext(): Promise<CompactionSummary> {
     if (this.store.getState().busy || this.promptActive) {
       throw new Error(
         "Wait for the active request to finish before compacting context.",
@@ -540,7 +575,7 @@ export class SessionRunner {
     await this.ensureSession();
     this.store.setState({ busy: true, statusLine: "Compacting context..." });
     try {
-      const result = await this.agent.compactSession({
+      const result = await this.nova.sessionCompact({
         sessionId: this.sessionId,
         model: this.model,
       });
@@ -549,7 +584,7 @@ export class SessionRunner {
           ? `Context compacted: ${result.removedMessages} older messages summarized.`
           : "Context is already compact.",
       });
-      this.updateContextUsage();
+      void this.updateContextUsage();
       return result;
     } finally {
       this.store.setState({ busy: false });
@@ -564,7 +599,7 @@ export class SessionRunner {
       throw new Error("Cancel the active request before rewinding.");
     }
     await this.ensureSession();
-    const result = await this.agent.rewindSession({
+    const result = await this.nova.sessionRewind({
       sessionId: this.sessionId,
       turns,
     });
@@ -581,25 +616,25 @@ export class SessionRunner {
       queuedCount: 0,
       statusLine: `Rewound ${result.removedCheckpoints.length} turn${result.removedCheckpoints.length === 1 ? "" : "s"}.`,
     });
-    this.updateContextUsage();
+    void this.updateContextUsage();
     return result;
   }
 
   async startBackgroundShell(command: string): Promise<BackgroundJobSummary> {
     await this.ensureSession();
-    const { job } = await this.agent.startBackgroundTerminal(
-      { sessionId: this.sessionId, command },
-      this.acpContext,
-    );
+    const { job } = await this.nova.backgroundStartTerminal({
+      sessionId: this.sessionId,
+      command,
+    });
     return job;
   }
 
   async startBackgroundAgent(prompt: string): Promise<BackgroundJobSummary> {
     await this.ensureSession();
-    const { job } = await this.agent.startBackgroundPrompt(
-      { sessionId: this.sessionId, prompt: [{ type: "text", text: prompt }] },
-      this.acpContext,
-    );
+    const { job } = await this.nova.backgroundStartPrompt({
+      sessionId: this.sessionId,
+      prompt: [{ type: "text", text: prompt }],
+    });
     return job;
   }
 
@@ -607,7 +642,7 @@ export class SessionRunner {
     kind?: BackgroundJobKind,
   ): Promise<BackgroundJobSummary[]> {
     await this.ensureSession();
-    const { jobs } = this.agent.listBackgroundJobs({
+    const { jobs } = await this.nova.backgroundList({
       sessionId: this.sessionId,
     });
     return kind ? jobs.filter((job) => job.kind === kind) : jobs;
@@ -615,24 +650,18 @@ export class SessionRunner {
 
   async backgroundOutput(jobId: string): Promise<OutputResponse> {
     await this.ensureSession();
-    return this.agent.backgroundOutput({ jobId }, this.acpContext);
+    return this.nova.backgroundOutput({ jobId });
   }
 
   async killBackgroundJob(jobId: string): Promise<BackgroundJobSummary> {
     await this.ensureSession();
-    const { job } = await this.agent.killBackgroundJob(
-      { jobId },
-      this.acpContext,
-    );
+    const { job } = await this.nova.backgroundKill({ jobId });
     return job;
   }
 
   async releaseBackgroundJob(jobId: string): Promise<BackgroundJobSummary> {
     await this.ensureSession();
-    const { job } = await this.agent.releaseBackgroundJob(
-      { jobId },
-      this.acpContext,
-    );
+    const { job } = await this.nova.backgroundRelease({ jobId });
     return job;
   }
 
@@ -676,16 +705,13 @@ export class SessionRunner {
       await this.ensureSession();
       const prompt =
         preparedPrompt ?? (await this.preparePrompt(value, images, pastes));
-      const response = await this.agent.prompt(
-        {
-          sessionId: this.sessionId,
-          prompt,
-          _meta: {
-            "nova-ai-cli/model": this.model,
-          },
+      const response = await this.nova.prompt({
+        sessionId: this.sessionId,
+        prompt,
+        _meta: {
+          "nova-ai-cli/model": this.model,
         },
-        this.acpContext,
-      );
+      });
       if (response.stopReason === "cancelled") {
         pendingToolFailure = "Canceled.";
         this.store.setState({ statusLine: "Request canceled." });
@@ -709,7 +735,7 @@ export class SessionRunner {
       this.promptActive = false;
       this.acpClient.failPendingTools(pendingToolFailure);
       this.acpClient.resetStreaming();
-      this.updateContextUsage();
+      void this.updateContextUsage();
       this.store.setState({ busy: false });
     }
 
@@ -723,18 +749,35 @@ export class SessionRunner {
     kind: "steer" | "followup",
     front = false,
   ): Promise<void> {
+    // Shown as queued right away (the editor and transcript read the mirror
+    // synchronously); the agent's response replaces this provisional entry.
+    const provisionalId = `pending-${crypto.randomUUID()}`;
+    const provisional: PromptQueueEntryView = {
+      id: provisionalId,
+      version: 0,
+      text,
+      kind,
+      createdAt: new Date().toISOString(),
+      editing: false,
+    };
+    if (this.agentSessionLoaded) {
+      const current = this.promptQueueEntries();
+      this.applyQueue(front ? [provisional, ...current] : [...current, provisional]);
+      this.syncQueueTranscript();
+    }
     if (!this.agentSessionLoaded) await this.ensureSession();
     const provisionalPrompt = this.promptBlocks(
       expandPromptPastes(text, pastes),
       images,
     );
-    const { entry, entries } = this.agent.queuePrompt({
+    const { entry, entries } = await this.nova.queueEnqueue({
       sessionId: this.sessionId,
       text,
       prompt: provisionalPrompt,
       kind,
       front,
     });
+    this.applyQueue(entries);
     this.queuedAttachments.set(entry.id, {
       images: [...images],
       pastes: [...pastes],
@@ -745,21 +788,23 @@ export class SessionRunner {
         : `Queued message ${entries.length}: ${summarizeQueueMessage(text)}`,
     );
     if (kind === "followup") {
-      const locked = this.agent.beginQueuedPromptEdit({
+      const locked = await this.nova.queueEditBegin({
         sessionId: this.sessionId,
         id: entry.id,
       });
+      this.applyQueue(locked.entries);
       const expectedVersion = locked.entries.find(
         (candidate) => candidate.id === entry.id,
       )?.version;
       const prompt = await this.preparePrompt(text, images, pastes);
-      this.agent.updateQueuedPrompt({
+      const updated = await this.nova.queueUpdate({
         sessionId: this.sessionId,
         id: entry.id,
         prompt,
         editing: false,
         expectedVersion,
       });
+      this.applyQueue(updated.entries);
     }
     if (!this.store.getState().busy && !this.promptActive) {
       await this.runNextQueuedPrompt();
@@ -789,10 +834,11 @@ export class SessionRunner {
   private async runNextQueuedPrompt(): Promise<void> {
     if (this.store.getState().busy || this.promptActive) return;
     if (!this.agentSessionLoaded) return;
-    const next = this.agent.takeNextQueuedPrompt({
+    const { entry: next } = await this.nova.queueTakeNext({
       sessionId: this.sessionId,
     });
     if (!next) return;
+    this.applyQueue(this.promptQueueEntries().filter((entry) => entry.id !== next.id));
     this.queuedAttachments.delete(next.id);
     if (this.editingQueuedMessageId === next.id)
       this.editingQueuedMessageId = null;
@@ -813,13 +859,14 @@ export class SessionRunner {
       attachments.images,
       attachments.pastes,
     );
-    const { updated } = this.agent.updateQueuedPrompt({
+    const { updated, entries } = await this.nova.queueUpdate({
       sessionId: this.sessionId,
       id,
       text,
       prompt,
       editing: false,
     });
+    this.applyQueue(entries);
     if (!updated) return;
     if (this.editingQueuedMessageId === id) this.editingQueuedMessageId = null;
     this.syncQueueTranscript("Queued message updated.");
@@ -828,9 +875,14 @@ export class SessionRunner {
     }
   }
 
+  /** The local mirror of the agent's queue (responses and _nova/queue/changed). */
   private promptQueueEntries(): PromptQueueEntryView[] {
     if (!this.agentSessionLoaded) return [];
-    return this.agent.listPromptQueue({ sessionId: this.sessionId }).entries;
+    return this.acpClient.queueSnapshot;
+  }
+
+  private applyQueue(entries: PromptQueueEntryView[]): void {
+    this.acpClient.queueSnapshot = entries;
   }
 
   private async preparePrompt(
@@ -860,7 +912,8 @@ export class SessionRunner {
 
   private async createSession(): Promise<void> {
     this.loadMcpConfiguration(this.cwd);
-    const { sessionId, _meta } = await this.agent.newSession({
+    await this.initialized;
+    const { sessionId, _meta } = await this.nova.newSession({
       cwd: this.cwd,
       mcpServers: this.mcpServers,
     });
@@ -868,12 +921,12 @@ export class SessionRunner {
     this.applyMcpStatus(_meta);
     this.applySkillStatus(_meta);
     this.agentSessionLoaded = true;
-    this.agent.setSessionMode({
-      sessionId,
-      modeId: this.interactionMode,
-    });
+    this.applyQueue([]);
+    void this.nova
+      .setSessionMode({ sessionId, modeId: this.interactionMode })
+      .catch(() => {});
     this.applyPermissionMode(sessionId);
-    this.updateContextUsage();
+    void this.updateContextUsage();
     void this.refreshContextUsage().catch(() => {});
     if (this.mcpStatus.failures.length > 0) {
       this.store.setState({
@@ -973,18 +1026,27 @@ export class SessionRunner {
   ): void {
     this.interactionMode = mode;
     this.store.setState({ interactionMode: mode, statusLine });
-    if (this.agentSessionLoaded) this.updateContextUsage();
+    if (this.agentSessionLoaded) void this.updateContextUsage();
   }
 
-  private updateContextUsage(): ContextUsage | null {
+  /** Asks the agent for the context estimate; only the newest answer is shown. */
+  private async updateContextUsage(): Promise<ContextUsage | null> {
     if (!this.agentSessionLoaded) return null;
-    const usage = this.agent.contextUsage({
-      sessionId: this.sessionId,
-      contextWindow: this.contextWindow,
-      mode: this.interactionMode,
-    });
-    this.store.setState({ contextUsage: usage });
-    return usage;
+    const request = ++this.contextUsageRequest;
+    const sessionId = this.sessionId;
+    try {
+      const usage = await this.nova.sessionContextUsage({
+        sessionId,
+        contextWindow: this.contextWindow,
+        mode: this.interactionMode,
+      });
+      if (request === this.contextUsageRequest && sessionId === this.sessionId) {
+        this.store.setState({ contextUsage: usage });
+      }
+      return usage;
+    } catch {
+      return null;
+    }
   }
 
   private async maybeHandoffBackgroundAgentOutputs(): Promise<void> {
@@ -994,9 +1056,9 @@ export class SessionRunner {
       this.completedBackgroundAgentJobs.size === 0
     )
       return;
-    const jobs = this.agent
-      .listBackgroundJobs({ sessionId: this.sessionId })
-      .jobs.filter((job) => job.kind === "prompt");
+    const jobs = (
+      await this.nova.backgroundList({ sessionId: this.sessionId })
+    ).jobs.filter((job) => job.kind === "prompt");
     if (jobs.some((job) => job.status === "running")) return;
 
     this.handoffActive = true;
@@ -1061,17 +1123,6 @@ function mergeReferencedPastes(
     [...existing, ...added].map((paste) => [paste.marker, paste]),
   );
   return [...byMarker.values()].filter((paste) => text.includes(paste.marker));
-}
-
-function silentContext(context: acp.AgentContext): acp.AgentContext {
-  return {
-    request: (
-      method: string,
-      params?: unknown,
-      options?: acp.SendRequestOptions,
-    ) => context.request(method, params, options),
-    notify: async () => {},
-  } as unknown as acp.AgentContext;
 }
 
 /** The TUI's mode names ↔ the agent's permission_mode values. */

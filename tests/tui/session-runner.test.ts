@@ -150,7 +150,7 @@ test("steering enters the active turn at a safe boundary before FIFO follow-ups"
   let cancellations = 0;
 
   const internals = runner as unknown as {
-    acpContext: import("@agentclientprotocol/sdk").AgentContext;
+    acpClient: { context(): import("@agentclientprotocol/sdk").AgentContext };
     agent: {
       prompt(
         params: {
@@ -168,7 +168,7 @@ test("steering enters the active turn at a safe boundary before FIFO follow-ups"
       await toolFinished;
       const steered = await queueAgent.takeSteeringMessages(
         { sessionId: runner.sessionId },
-        internals.acpContext,
+        internals.acpClient.context(),
       );
       prompts.push(
         ...(steered ?? []).map((message) => String(message.content ?? "")),

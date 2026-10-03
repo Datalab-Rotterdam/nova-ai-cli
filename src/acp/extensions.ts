@@ -17,8 +17,11 @@ export const NOVA_METHODS = {
   queueUpdate: "_nova/queue/update",
   queueRemove: "_nova/queue/remove",
   queueClear: "_nova/queue/clear",
+  queueTakeNext: "_nova/queue/take_next",
   sessionCheckpoints: "_nova/session/checkpoints",
   sessionRewind: "_nova/session/rewind",
+  sessionCompact: "_nova/session/compact",
+  sessionContextUsage: "_nova/session/context_usage",
 } as const;
 
 export const NOVA_NOTIFICATIONS = {

@@ -197,11 +197,6 @@ async function notifyUsage(
 /** How long closing a session waits for its turn to save its history. */
 const SHUTDOWN_GRACE_MS = 2_000;
 
-export type PromptRuntimeOptions = {
-  /** @deprecated Queue steering through queue/enqueue or queuePrompt instead. */
-  takeSteeringMessages?(): ChatMessage[] | Promise<ChatMessage[]>;
-};
-
 export class NovaAgent implements AgentRuntime {
   private readonly sessions = new Map<string, Session>();
   clientCapabilities: acp.ClientCapabilities | undefined;
@@ -676,7 +671,6 @@ export class NovaAgent implements AgentRuntime {
   async prompt(
     params: acp.PromptRequest,
     client: acp.AgentContext,
-    runtime: PromptRuntimeOptions = {},
   ): Promise<acp.PromptResponse> {
     const session = this.requireSession(params.sessionId);
     for (const earlier of session.activeTurns) earlier.abort();
@@ -685,7 +679,7 @@ export class NovaAgent implements AgentRuntime {
     const run = session.turnQueue.then(() =>
       abortController.signal.aborted
         ? { stopReason: "cancelled" as const }
-        : this.runPrompt(session, params, client, runtime, abortController),
+        : this.runPrompt(session, params, client, abortController),
     );
     session.turnQueue = run.then(
       () => {},
@@ -702,7 +696,6 @@ export class NovaAgent implements AgentRuntime {
     session: Session,
     params: acp.PromptRequest,
     client: acp.AgentContext,
-    runtime: PromptRuntimeOptions,
     abortController: AbortController,
   ): Promise<acp.PromptResponse> {
     if (slashCommandName(params.prompt) === "compact") {
@@ -877,7 +870,6 @@ export class NovaAgent implements AgentRuntime {
                 { sessionId: params.sessionId },
                 client,
               )),
-              ...((await runtime.takeSteeringMessages?.()) ?? []),
             ],
             emit,
             novaClient,

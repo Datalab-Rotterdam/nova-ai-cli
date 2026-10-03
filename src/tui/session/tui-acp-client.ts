@@ -88,6 +88,41 @@ export class TuiAcpClient {
     private readonly onInteractionModeChange?: (mode: InteractionMode) => void,
   ) {}
 
+  /**
+   * Set while the runner loads a session whose transcript it restored itself;
+   * the agent's replay would show everything twice.
+   */
+  muteSessionUpdates = false;
+  /** The agent's latest prompt queue (from _nova/queue/changed or a response). */
+  queueSnapshot: PromptQueueEntryView[] = [];
+
+  /** This client as the SDK's ACP Client, for a real (in-process) connection. */
+  asAcpClient(): acp.Client {
+    return {
+      sessionUpdate: (params) =>
+        this.muteSessionUpdates ? Promise.resolve() : this.sessionUpdate(params),
+      requestPermission: (params) => this.requestPermission(params),
+      readTextFile: (params) => this.readTextFile(params),
+      writeTextFile: async (params) => {
+        await this.writeTextFile(params);
+        return {};
+      },
+      createTerminal: (params) => this.createTerminal(params),
+      terminalOutput: (params) => this.terminalOutput(params),
+      waitForTerminalExit: (params) => this.waitForTerminalExit(params),
+      killTerminal: async (params) => {
+        await this.killTerminal(params);
+        return {};
+      },
+      releaseTerminal: async (params) => {
+        await this.releaseTerminal(params);
+        return {};
+      },
+      unstable_createElicitation: (params) => this.createElicitation(params),
+      extNotification: (method, params) => this.handleNotification(method, params),
+    };
+  }
+
   context(): acp.AgentContext {
     return {
       request: (
@@ -441,6 +476,13 @@ export class TuiAcpClient {
       }
       return [{ id: entry.id, text: entry.text, kind: entry.kind }];
     });
+    this.queueSnapshot = rawEntries.filter(
+      (value): value is PromptQueueEntryView =>
+        !!value &&
+        typeof value === "object" &&
+        typeof (value as PromptQueueEntryView).id === "string" &&
+        typeof (value as PromptQueueEntryView).text === "string",
+    );
     this.store.setState((state) => {
       const transcript = state.messages.filter(
         (message) => !(message.role === "user" && message.queued),

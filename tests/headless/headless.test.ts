@@ -123,6 +123,7 @@ function fakeRuntime(stopReason: "end_turn" | "max_turn_requests"): {
     },
     cancel: () => {},
     closeSession: async () => ({}),
+    setSessionConfigOption: async () => ({ configOptions: [] }),
   } as unknown as NonNullable<HeadlessDependencies["agent"]>;
   const clientFactory = (
     _cwd: string,
@@ -160,3 +161,29 @@ function capture(): { value: string; write(chunk: string): void } {
     },
   };
 }
+
+test("headless runs the real agent over ACP end to end", async () => {
+  const { withFakeNova, sse, text } = await import("../acp/fake-nova.js");
+  const { mkdirSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  await withFakeNova(
+    () => sse([text("Done headless.")]),
+    async (requests, home) => {
+      const cwd = join(home, "repo");
+      mkdirSync(cwd, { recursive: true });
+      const out: string[] = [];
+      const err: string[] = [];
+      const code = await runHeadless(["--json", "--cwd", cwd, "-p", "say done"], {
+        stdout: { write: (chunk: string) => out.push(chunk) },
+        stderr: { write: (chunk: string) => err.push(chunk) },
+        registerSignals: false,
+      });
+      assert.equal(code, 0, err.join(""));
+      const events = out.join("").trim().split("\n").map((line) => JSON.parse(line));
+      assert.equal(events.at(-1).type, "result");
+      assert.equal(events.at(-1).stopReason, "end_turn");
+      assert.match(JSON.stringify(events), /Done headless\./);
+      assert.equal(requests.length, 1);
+    },
+  );
+});

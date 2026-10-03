@@ -4,6 +4,12 @@ import type {
   OutputResponse,
 } from "../../core/background.js";
 import type { ContextCompactionResult } from "../../core/context-compaction.js";
+
+/** What /compact reports; the summarized history itself stays in the agent. */
+export type CompactionSummary = Pick<
+  ContextCompactionResult,
+  "compacted" | "removedMessages" | "keptMessages"
+>;
 import type { InteractionMode, PermissionMode } from "../state/types.js";
 import type { SessionCheckpoint } from "../../core/sessions.js";
 
@@ -31,7 +37,7 @@ export type SlashCommandContext = {
   steerMessage(message: string): boolean;
   queuedMessages(): string[];
   clearQueuedMessages(): number;
-  compactContext(): Promise<ContextCompactionResult>;
+  compactContext(): Promise<CompactionSummary>;
   rewind(turns?: number): Promise<{
     removedCheckpoints: SessionCheckpoint[];
     remainingCheckpoints: SessionCheckpoint[];

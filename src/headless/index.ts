@@ -2,6 +2,8 @@ import { resolve } from "node:path";
 import { NOVA_NOTIFICATIONS } from "../acp/extensions.js";
 import * as acp from "@agentclientprotocol/sdk";
 import { NovaAgent } from "../acp/agent.js";
+import { clientFromContext } from "../client/context-client.js";
+import { startInProcessAgent } from "../client/in-process.js";
 import type { PermissionMode } from "../core/policy/settings.js";
 import { setWorkspaceTrusted } from "../core/nova-home.js";
 import { loadStoredSession } from "../core/sessions.js";
@@ -33,6 +35,7 @@ type HeadlessClientLike = {
   close(): Promise<void>;
 };
 
+/** The agent methods headless mode reaches over ACP (tests may pass a fake). */
 type HeadlessAgentLike = Pick<
   NovaAgent,
   | "initialize"
@@ -41,8 +44,8 @@ type HeadlessAgentLike = Pick<
   | "prompt"
   | "cancel"
   | "closeSession"
-> &
-  Partial<Pick<NovaAgent, "setSessionConfigOption">>;
+  | "setSessionConfigOption"
+>;
 
 const AGENT_PERMISSION_MODE: Record<HeadlessPermissionMode, PermissionMode> = {
   "read-only": "default",
@@ -116,17 +119,17 @@ export async function runHeadless(
   }
 
   const output = createOutput(options.json, stdout, stderr);
-  const agent = dependencies.agent ?? new NovaAgent();
   const client = (
     dependencies.clientFactory ??
     ((cwd, permissionMode, emit) =>
       new HeadlessAcpClient(cwd, permissionMode, emit))
   )(options.cwd, options.permissionMode, output.event);
-  const context = client.context();
-  agent.initialize({
-    protocolVersion: acp.PROTOCOL_VERSION,
-    clientCapabilities: client.capabilities,
-  });
+  // The same ACP path an editor uses, in-process.
+  const connection = startInProcessAgent(
+    () => clientFromContext(client.context()),
+    (dependencies.agent ?? new NovaAgent()) as NovaAgent,
+  );
+  const agent = connection.client;
 
   if (options.trustWorkspace) setWorkspaceTrusted(options.cwd, true);
   const mcpConfiguration = options.mcp
@@ -144,12 +147,17 @@ export async function runHeadless(
   let interrupted = false;
   const onInterrupt = () => {
     interrupted = true;
-    if (sessionId) agent.cancel({ sessionId });
+    if (sessionId) void agent.cancel({ sessionId }).catch(() => {});
   };
   if (dependencies.registerSignals !== false)
     process.once("SIGINT", onInterrupt);
 
   try {
+    await agent.initialize({
+      protocolVersion: acp.PROTOCOL_VERSION,
+      clientCapabilities: client.capabilities,
+      clientInfo: { name: "nova-ai-cli-headless", version: "1" },
+    });
     if (options.resume) {
       await agent.resumeSession({
         sessionId: options.resume,
@@ -165,8 +173,10 @@ export async function runHeadless(
       sessionId = created.sessionId;
     }
     // The agent's policy decides; the headless client only answers what is
-    // left (see HeadlessAcpClient.requestPermission).
-    await agent.setSessionConfigOption?.({
+    // left (see HeadlessAcpClient.requestPermission). Failing to set the mode
+    // must stop the run: the agent could otherwise use a remembered, broader
+    // mode than the one asked for.
+    await agent.setSessionConfigOption({
       sessionId,
       configId: "permission_mode",
       value: AGENT_PERMISSION_MODE[options.permissionMode],
@@ -182,16 +192,11 @@ export async function runHeadless(
     });
     output.write({ type: "message", role: "user", text: prompt });
 
-    const response = await agent.prompt(
-      {
-        sessionId,
-        prompt: [{ type: "text", text: prompt }],
-        ...(options.model
-          ? { _meta: { "nova-ai-cli/model": options.model } }
-          : {}),
-      },
-      context,
-    );
+    const response = await agent.prompt({
+      sessionId,
+      prompt: [{ type: "text", text: prompt }],
+      ...(options.model ? { _meta: { "nova-ai-cli/model": options.model } } : {}),
+    });
     const exitCode = interrupted
       ? 130
       : response.stopReason === "max_turn_requests"
@@ -214,8 +219,9 @@ export async function runHeadless(
   } finally {
     if (dependencies.registerSignals !== false)
       process.removeListener("SIGINT", onInterrupt);
-    await client.close().catch(() => {});
     if (sessionId) await agent.closeSession({ sessionId }).catch(() => ({}));
+    await connection.close().catch(() => {});
+    await client.close().catch(() => {});
   }
 }
 
