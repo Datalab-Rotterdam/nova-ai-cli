@@ -39,7 +39,7 @@ import {
   evaluatePermissionRules,
   exactPermissionRule,
   type PermissionRuleSet,
-} from "../settings/permission-rules.js";
+} from "../../core/policy/rules.js";
 import {
   addAllowedPermissionRule,
   readWorkspaceSettings,

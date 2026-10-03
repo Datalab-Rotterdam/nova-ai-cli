@@ -1,3 +1,5 @@
+import { isAbsolute, relative, resolve, sep } from "node:path";
+
 export type PermissionRuleSet = {
   allow?: string[];
   deny?: string[];
@@ -22,12 +24,18 @@ export type ShellCommandAnalysis = {
   complex: boolean;
 };
 
+/**
+ * `cwd`: when given, path subjects are matched workspace-relative with `/`
+ * separators (so `edit_file(src/*)` matches whether the model passed a
+ * relative or an absolute path); paths outside it stay absolute.
+ */
 export function evaluatePermissionRules(
   rules: PermissionRuleSet | undefined,
   toolName: string,
   args: Record<string, unknown>,
+  cwd?: string,
 ): PermissionDecision {
-  const target = permissionTarget(toolName, args);
+  const target = permissionTarget(toolName, args, cwd);
   if (!target.shell) {
     if (matchingRule(rules?.deny, target)) return "deny";
     if (matchingRule(rules?.allow, target)) return "allow";
@@ -67,9 +75,12 @@ export function evaluatePermissionRules(
 export function exactPermissionRule(
   toolName: string,
   args: Record<string, unknown>,
+  cwd?: string,
 ): string {
-  const target = permissionTarget(toolName, args);
-  const name = target.names[0] ?? toolName;
+  const target = permissionTarget(toolName, args, cwd);
+  // The real tool name (not a Claude-style alias such as Bash or Edit), so the
+  // rule also works in nova-ai-vscode, which shares the settings files.
+  const name = toolName;
   const value = target.path
     ? escapePathGlob(normalizePath(target.value))
     : escapeGlob(target.value);
@@ -138,7 +149,9 @@ function parseRule(
 function permissionTarget(
   toolName: string,
   args: Record<string, unknown>,
+  cwd?: string,
 ): PermissionTarget {
+  const pathArg = () => subjectPath(stringArg(args.path), cwd);
   switch (toolName) {
     case "run_command":
     case "start_background_command":
@@ -165,19 +178,14 @@ function permissionTarget(
       };
     }
     case "write_file":
-      return {
-        names: ["Write", toolName],
-        value: stringArg(args.path),
-        path: true,
-        shell: false,
-      };
+      return { names: ["Write", toolName], value: pathArg(), path: true, shell: false };
     case "edit_file":
-      return {
-        names: ["Edit", toolName],
-        value: stringArg(args.path),
-        path: true,
-        shell: false,
-      };
+      return { names: ["Edit", toolName], value: pathArg(), path: true, shell: false };
+    case "read_file":
+      return { names: ["Read", toolName], value: pathArg(), path: true, shell: false };
+    case "list_directory":
+    case "search_text":
+      return { names: [toolName], value: pathArg(), path: true, shell: false };
     default:
       return {
         names: [toolName],
@@ -368,6 +376,16 @@ function escapeRegex(value: string): string {
 
 function normalizePath(value: string): string {
   return value.replace(/\\/g, "/");
+}
+
+/** Workspace-relative (with `/`) when inside `cwd`, otherwise the path as an absolute one. */
+function subjectPath(value: string, cwd: string | undefined): string {
+  if (!cwd || !value) return value;
+  const absolute = resolve(cwd, value);
+  const rel = relative(resolve(cwd), absolute);
+  if (rel === "") return ".";
+  if (!rel.startsWith("..") && !isAbsolute(rel)) return rel.split(sep).join("/");
+  return absolute;
 }
 
 function stringArg(value: unknown): string {

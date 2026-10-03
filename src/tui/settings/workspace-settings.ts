@@ -2,7 +2,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { McpServer } from "@agentclientprotocol/sdk";
 import type { PermissionMode } from "../state/types.js";
-import type { PermissionRuleSet } from "./permission-rules.js";
+import type { PermissionRuleSet } from "../../core/policy/rules.js";
 
 export type WorkspaceSettings = {
   permissionMode?: PermissionMode;

@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import {
   chmodSync,
   existsSync,
@@ -9,10 +9,9 @@ import {
   rmdirSync,
   rmSync,
   statSync,
-  writeFileSync,
 } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
-import { novaHomeRoot, projectPaths } from "./nova-home.js";
+import { basename, join, resolve } from "node:path";
+import { novaHomeRoot, projectPaths, writePrivateFile } from "./nova-home.js";
 import type { ToolDefinition } from "./tools/types.js";
 
 /**
@@ -310,7 +309,7 @@ export function applyMemoryChange(
 
     assertUnchanged(paths.index, original);
     if (change.action === "save_note") {
-      writePrivate(
+      writePrivateFile(
         notePath,
         [
           "---",
@@ -325,7 +324,7 @@ export function applyMemoryChange(
     } else {
       rmSync(notePath, { force: true });
     }
-    if (proposed !== base) writePrivate(paths.index, proposed);
+    if (proposed !== base) writePrivateFile(paths.index, proposed);
     return {
       summary:
         change.action === "save_note"
@@ -340,7 +339,7 @@ export function applyMemoryChange(
   const planned = planIndexChange(base, change);
   if (planned.proposed === base) return { summary: planned.summary };
   assertUnchanged(paths.index, original);
-  writePrivate(paths.index, planned.proposed);
+  writePrivateFile(paths.index, planned.proposed);
   return {
     summary: planned.summary,
     diff: { path: paths.index, oldText: original, newText: planned.proposed },
@@ -506,7 +505,7 @@ function moveNotes(fromDir: string, scope: MemoryScope, to: ScopePaths): void {
       mkdirSync(to.notes, { recursive: true, mode: DIR_MODE });
       renameSync(from, target);
       chmodSync(target, FILE_MODE);
-      if (proposed !== base) writePrivate(to.index, proposed);
+      if (proposed !== base) writePrivateFile(to.index, proposed);
     } catch {
       // leave it for the next run
     }
@@ -537,18 +536,6 @@ function assertUnchanged(path: string, expected: string | null): void {
   }
 }
 
-function writePrivate(path: string, content: string): void {
-  const dir = dirname(path);
-  mkdirSync(dir, { recursive: true, mode: DIR_MODE });
-  const temp = join(dir, `.${basename(path)}.${process.pid}.${randomUUID()}.tmp`);
-  try {
-    writeFileSync(temp, content, { encoding: "utf8", flag: "wx", mode: FILE_MODE });
-    renameSync(temp, path);
-  } catch (error) {
-    rmSync(temp, { force: true });
-    throw error;
-  }
-}
 
 function upsertLine(
   text: string,

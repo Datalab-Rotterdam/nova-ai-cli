@@ -6,7 +6,7 @@ import type {
 import {
   evaluatePermissionRules,
   type PermissionDecision,
-} from "../tui/settings/permission-rules.js";
+} from "../core/policy/rules.js";
 import { readWorkspaceSettings } from "../tui/settings/workspace-settings.js";
 import { TuiAcpClient } from "../tui/session/tui-acp-client.js";
 import { createStore } from "../tui/state/store.js";

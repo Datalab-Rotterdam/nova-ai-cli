@@ -8,7 +8,7 @@ import {
   analyzeShellCommand,
   evaluatePermissionRules,
   exactPermissionRule,
-} from "../../src/tui/settings/permission-rules.js";
+} from "../../src/core/policy/rules.js";
 import { writeWorkspaceSettings } from "../../src/tui/settings/workspace-settings.js";
 import { TuiAcpClient } from "../../src/tui/session/tui-acp-client.js";
 import { createStore } from "../../src/tui/state/store.js";
@@ -166,7 +166,7 @@ test("path aliases normalize Windows separators and exact rules escape shell wil
     "allow",
   );
   const exact = exactPermissionRule("run_command", { command: "grep *.ts" });
-  assert.equal(exact, "Bash(grep \\*.ts)");
+  assert.equal(exact, "run_command(grep \\*.ts)");
   assert.equal(
     evaluatePermissionRules({ allow: [exact] }, "run_command", {
       command: "grep *.ts",
@@ -181,7 +181,7 @@ test("path aliases normalize Windows separators and exact rules escape shell wil
   );
 
   const exactPath = exactPermissionRule("edit_file", { path: "src\\*.ts" });
-  assert.equal(exactPath, "Edit(src/[*].ts)");
+  assert.equal(exactPath, "edit_file(src/[*].ts)");
   assert.equal(
     evaluatePermissionRules({ allow: [exactPath] }, "edit_file", {
       path: "src\\*.ts",
@@ -236,7 +236,7 @@ test("always allow persists an exact argument-aware permission rule", async () =
     ) as {
       permissions?: { allow?: string[] };
     };
-    assert.deepEqual(persisted.permissions?.allow, ["Bash(npm test)"]);
+    assert.deepEqual(persisted.permissions?.allow, ["run_command(npm test)"]);
 
     const nextClient = new TuiAcpClient(createStore(state("ask", cwd)), cwd);
     const response = await nextClient.requestPermission(

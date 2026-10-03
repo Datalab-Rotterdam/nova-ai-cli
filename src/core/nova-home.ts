@@ -1,7 +1,14 @@
-import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import {
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
-import { basename, join, posix, resolve, win32 } from "node:path";
+import { basename, dirname, join, posix, resolve, win32 } from "node:path";
 
 /**
  * `~/.nova-ai`, shared with the VS Code extension (nova-ai-vscode
@@ -34,6 +41,8 @@ export type ProjectPaths = {
   key: string;
   dir: string;
   info: string;
+  /** Private per-project settings (permission rules, mode); never in the repo. */
+  settings: string;
   cliSessions: string;
 };
 
@@ -44,6 +53,7 @@ export function projectPaths(cwd: string): ProjectPaths {
     key,
     dir,
     info: join(dir, "project.json"),
+    settings: join(dir, "settings.json"),
     cliSessions: join(dir, "cli-sessions"),
   };
 }
@@ -127,4 +137,39 @@ export function slugify(name: string): string {
     .replace(/^[-.]+|[-.]+$/g, "")
     .slice(0, SLUG_MAX_LENGTH)
     .replace(/[-.]+$/g, "");
+}
+
+/**
+ * Whether the user trusts this workspace's own files: allow rules in
+ * `<ws>/.nova-ai/settings*.json` and MCP servers the workspace declares. A
+ * cloned repository must not be able to approve its own commands, so trust is
+ * stored outside it, in project.json.
+ */
+export function isWorkspaceTrusted(cwd: string): boolean {
+  try {
+    const info = JSON.parse(readFileSync(projectPaths(cwd).info, "utf8"));
+    return info?.trusted === true;
+  } catch {
+    return false;
+  }
+}
+
+export function setWorkspaceTrusted(cwd: string, trusted: boolean): void {
+  const paths = ensureProject(cwd);
+  const info = JSON.parse(readFileSync(paths.info, "utf8")) as Record<string, unknown>;
+  writePrivateFile(paths.info, `${JSON.stringify({ ...info, trusted }, null, 2)}\n`);
+}
+
+/** Atomic (temp file + rename), owner-only write, creating the folder. */
+export function writePrivateFile(path: string, content: string): void {
+  const dir = dirname(path);
+  mkdirSync(dir, { recursive: true, mode: DIR_MODE });
+  const temp = join(dir, `.${basename(path)}.${process.pid}.${randomUUID()}.tmp`);
+  try {
+    writeFileSync(temp, content, { encoding: "utf8", flag: "wx", mode: FILE_MODE });
+    renameSync(temp, path);
+  } catch (error) {
+    rmSync(temp, { force: true });
+    throw error;
+  }
 }

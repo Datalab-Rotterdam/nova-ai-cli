@@ -15,17 +15,21 @@ there), otherwise `~/.nova-ai`. Directories are created `0700`, files `0600`.
 ~/.nova-ai/
   MEMORY.md                     global memory index (always in the prompt)
   memory/<name>.md              global memory notes
+  settings.json                 user settings: permission rules, default mode
   credentials.json              CLI only: API key + default model
   model-capabilities.json       CLI only: learned native tool-call support
   background-jobs/              CLI only: background job transcripts
   sessions/<id>.jsonl           CLI only, legacy: sessions from before projects/
   projects/<slug>-<hash8>/      one folder per workspace (see "Project key")
-    project.json                where the folder came from
+    project.json                where the folder came from; "trusted"
+    settings.json               private per-project settings (rules saved by "always allow")
     MEMORY.md                   project memory index (always in the prompt)
     memory/<name>.md            project memory notes
     sessions/                   extension: chat panel sessions (index.json + <id>.json)
     cli-sessions/<id>.jsonl     CLI: sessions
     scratch/                    extension: scratch files (pruned after 7 days)
+<workspace>/.nova-ai/settings.json        team settings, committed
+<workspace>/.nova-ai/settings.local.json  personal settings, git-ignored
 <workspace>/NOVA.md             team instructions, committed, read-only for Nova
 <workspace>/AGENTS.md           team instructions, committed, read-only for Nova
 ```
@@ -54,6 +58,60 @@ is that file and the name is its base name without the extension.
 ```json
 { "path": "/abs/workspace", "name": "workspace", "createdAt": "…", "lastOpenedAt": "…" }
 ```
+
+## Settings and trust
+
+Every settings file has the same shape; writers keep keys they do not know:
+
+```json
+{ "permissions": { "allow": ["run_command(npm test)", "edit_file(src/*)"], "deny": ["read_file(.env)"] },
+  "permissionMode": "acceptEdits" }
+```
+
+Sources, all merged:
+
+| File | Deny rules | Allow rules | `permissionMode` |
+|---|---|---|---|
+| `~/.nova-ai/settings.json` | yes | yes | yes |
+| `projects/<key>/settings.json` | yes | yes | yes (wins) |
+| `<workspace>/.nova-ai/settings.json` | yes | trusted only | never |
+| `<workspace>/.nova-ai/settings.local.json` | yes | trusted only | never |
+
+- Deny always wins, also for read-only tools. A repository can never approve
+  its own commands or pick its own mode: its allow rules count only once the
+  user trusted the workspace, recorded as `"trusted": true` in `project.json`.
+- "Always allow" saves an exact rule in `projects/<key>/settings.json` (outside
+  the repository). Older extension versions wrote `settings.local.json`; it is
+  still read.
+- Modes: `default` (ask for every change), `acceptEdits` (file edits are
+  accepted), `bypassPermissions` (everything is accepted). `bypassPermissions`
+  is never stored; it must be chosen in each session. `memory_write` is always
+  confirmed unless an allow rule names it.
+- Trust also gates MCP servers the workspace declares (`.mcp.json`,
+  `mcpServers` in `.nova-ai/settings.json`): they are only started in a
+  trusted workspace.
+
+### Rules
+
+`tool` matches every call of the tool, `tool(glob)` when the call's subject
+matches the glob (`*` any text, `?` one character, `[*]`/`[?]` or `\*`/`\?`
+literal). Subjects:
+
+| Tool | Subject |
+|---|---|
+| `run_command`, `start_background_command` | the command line |
+| `run_package_script` | `npm run <script> [-- args]` |
+| `read_file`, `write_file`, `edit_file`, `list_directory`, `search_text` | the path, workspace-relative with `/` (absolute outside the workspace) |
+| `fetch_url` | the URL |
+| others | none: only the bare tool name matches |
+
+Command rules are checked per command: a command line is split at `;`, `&&`,
+`||`, `|`, `&` and newlines (outside quotes), a deny rule matching any part
+denies the whole line, and an allow rule must match every part. Lines with
+substitutions, subshells, heredocs or nested shells (`$( )`, backticks, `( )`,
+`{ }`, `<<`, `sh -c`, …) are only allowed by a rule that matches the whole
+line exactly. Rule names may also use the aliases `Bash` (command tools),
+`Read`, `Write` and `Edit`; Nova itself always writes real tool names.
 
 ## Memory
 
