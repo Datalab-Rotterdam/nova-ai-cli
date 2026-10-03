@@ -1,0 +1,32 @@
+import type { ChatMessage } from "@datalabrotterdam/nova-sdk";
+import type { InteractionMode } from "../interaction-modes.js";
+import type { McpConnection, McpConnectionFailure } from "../mcp.js";
+import type { MemoryEntry } from "../memory.js";
+import type { PromptQueue } from "../prompt-queue.js";
+import type { SkillDefinition } from "../skills.js";
+import type { ToolEnvironment } from "../tools/environment.js";
+import type { ToolDefinition } from "../tools/types.js";
+
+/** In-memory state of one agent session, shared by every front end. */
+export type Session = {
+  pendingPrompt: AbortController | null;
+  promptQueue: PromptQueue;
+  cwd: string;
+  history: ChatMessage[];
+  /**
+   * Finished background prompt jobs park a bounded handoff note here; the
+   * next foreground prompt drains it into history. Background jobs never
+   * write to session.history directly — a job finishing mid-turn would
+   * otherwise interleave messages the foreground model never saw.
+   */
+  pendingBackgroundHandoffs: ChatMessage[];
+  title: string | null;
+  mcpConnections: McpConnection[];
+  mcpTools: ToolDefinition[];
+  mcpFailures: McpConnectionFailure[];
+  environment: ToolEnvironment;
+  skills: SkillDefinition[];
+  memory: MemoryEntry[];
+  mode: InteractionMode;
+  model: string | null;
+};
