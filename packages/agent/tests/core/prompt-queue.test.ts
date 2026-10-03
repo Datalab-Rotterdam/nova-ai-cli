@@ -4,6 +4,7 @@ import type * as acp from "@agentclientprotocol/sdk";
 import { NovaAgent } from "../../src/acp/agent.js";
 import {
   parseEnqueuePromptParams,
+  parseUpdateQueuedPromptParams,
   PromptQueue,
 } from "../../src/core/prompt-queue.js";
 
@@ -140,4 +141,14 @@ test("queue extension parameters reject malformed content", () => {
       }),
     /prompt must be an array/,
   );
+});
+
+test("an entry can switch between follow-up and steering and move to the front", () => {
+  const queue = new PromptQueue();
+  const first = queue.enqueue({ text: "a", prompt: [], kind: "followup" });
+  const second = queue.enqueue({ text: "b", prompt: [], kind: "followup" });
+  assert.equal(queue.update(second.id, { kind: "steer", front: true }), true);
+  assert.deepEqual(queue.list().map((entry) => [entry.text, entry.kind]), [["b", "steer"], ["a", "followup"]]);
+  assert.equal(queue.update(first.id, { kind: "steer", expectedVersion: 99 }), false, "a stale version changes nothing");
+  assert.throws(() => parseUpdateQueuedPromptParams({ sessionId: "s", id: "x", kind: "later" }), /kind must be/);
 });
