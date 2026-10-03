@@ -6,8 +6,8 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { novaHomeRoot } from "./nova-home.js";
 
 export type StoredCredentials = {
   apiKey: string;
@@ -17,13 +17,8 @@ export type StoredCredentials = {
 const DIR_MODE = 0o700;
 const FILE_MODE = 0o600;
 
-/** `NOVA_AI_HOME` (shared with the VS Code extension) or `~/.nova-ai`. */
-function novaHome(): string {
-  return process.env.NOVA_AI_HOME?.trim() || join(homedir(), ".nova-ai");
-}
-
 export function credentialsPath(): string {
-  return join(novaHome(), "credentials.json");
+  return join(novaHomeRoot(), "credentials.json");
 }
 
 /**

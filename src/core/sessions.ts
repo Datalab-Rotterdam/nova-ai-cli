@@ -1,14 +1,15 @@
 import {
   appendFileSync,
+  existsSync,
   mkdirSync,
   readdirSync,
   readFileSync,
   unlinkSync,
 } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import type { ChatMessage } from "@datalabrotterdam/nova-sdk";
 import { chatContentToText } from "./chat-content.js";
+import { ensureProject, novaHomeRoot, projectsDir } from "./nova-home.js";
 import { truncateStoredToolMessage } from "./tool-output.js";
 
 export type StoredSession = {
@@ -19,7 +20,18 @@ export type StoredSession = {
   messages: ChatMessage[];
 };
 
-type HeaderLine = { kind: "header"; cwd: string; title: string | null };
+/**
+ * Stamped on every header line. Readers ignore unknown keys, so older CLI
+ * versions keep reading newer files; bump only for incompatible changes.
+ */
+const SESSION_FORMAT_VERSION = 1;
+
+type HeaderLine = {
+  kind: "header";
+  version?: number;
+  cwd: string;
+  title: string | null;
+};
 type MessageLine = { kind: "message"; updatedAt: string; message: ChatMessage };
 type TurnLine = {
   kind: "turn";
@@ -61,11 +73,33 @@ export type RewindSessionResult = {
 export type SessionIdParams = { sessionId: string };
 export type RewindSessionParams = SessionIdParams & { turns?: number };
 
-function sessionsDir(): string {
-  return (
-    process.env.NOVA_AI_CLI_SESSIONS_DIR ??
-    join(homedir(), ".nova-ai", "sessions")
-  );
+const FILE_MODE = 0o600;
+const DIR_MODE = 0o700;
+
+/** Flat directory override (tests, custom setups); disables the project layout. */
+function overrideDir(): string | null {
+  return process.env.NOVA_AI_CLI_SESSIONS_DIR?.trim() || null;
+}
+
+/** Where sessions lived before the per-project layout; still read and appended to. */
+function legacyDir(): string {
+  return join(novaHomeRoot(), "sessions");
+}
+
+/** Every directory that may hold session files, existing or not. */
+function sessionDirs(): string[] {
+  const override = overrideDir();
+  if (override) return [override];
+  let projectKeys: string[] = [];
+  try {
+    projectKeys = readdirSync(projectsDir());
+  } catch {
+    projectKeys = [];
+  }
+  return [
+    legacyDir(),
+    ...projectKeys.map((key) => join(projectsDir(), key, "cli-sessions")),
+  ];
 }
 
 /**
@@ -92,12 +126,39 @@ export function isValidSessionId(sessionId: unknown): sessionId is string {
   );
 }
 
-function sessionFilePath(sessionId: string): string {
+function sessionFileIn(directory: string, sessionId: string): string {
   if (!isValidSessionId(sessionId)) throw new InvalidSessionIdError();
-  const dir = resolve(sessionsDir());
+  const dir = resolve(directory);
   const path = resolve(dir, `${sessionId}.jsonl`);
   if (dirname(path) !== dir) throw new InvalidSessionIdError();
   return path;
+}
+
+/** The existing file of a session, wherever it lives; null when there is none. */
+function findSessionFile(sessionId: string): string | null {
+  for (const dir of sessionDirs()) {
+    const path = sessionFileIn(dir, sessionId);
+    if (existsSync(path)) return path;
+  }
+  if (!isValidSessionId(sessionId)) throw new InvalidSessionIdError();
+  return null;
+}
+
+/**
+ * The file to append to: the session's existing file (a session never moves
+ * between files), else a new one in the project folder of its cwd.
+ */
+function sessionFileForWrite(sessionId: string, cwd: string): string {
+  const existing = findSessionFile(sessionId);
+  if (existing) return existing;
+  const dir = overrideDir() ?? ensureProject(cwd).cliSessions;
+  mkdirSync(dir, { recursive: true, mode: DIR_MODE });
+  return sessionFileIn(dir, sessionId);
+}
+
+function readSessionFile(sessionId: string): string | null {
+  const path = findSessionFile(sessionId);
+  return path ? readFileSync(path, "utf8") : null;
 }
 
 export function parseSessionFile(raw: string): StoredSession | null {
@@ -209,7 +270,8 @@ function normalizeStoredMessage(message: ChatMessage): ChatMessage {
 
 export function loadStoredSession(sessionId: string): StoredSession | null {
   try {
-    const raw = readFileSync(sessionFilePath(sessionId), "utf8");
+    const raw = readSessionFile(sessionId);
+    if (raw === null) return null;
     const session = parseSessionFile(raw);
     return session ? { ...session, sessionId } : null;
   } catch {
@@ -227,8 +289,7 @@ export function appendSessionTurn(
   header: { cwd: string; title: string | null },
   newMessages: ChatMessage[],
 ): SessionCheckpoint {
-  mkdirSync(sessionsDir(), { recursive: true });
-  const path = sessionFilePath(sessionId);
+  const path = sessionFileForWrite(sessionId, header.cwd);
   const updatedAt = new Date().toISOString();
 
   const lines: string[] = [];
@@ -237,6 +298,7 @@ export function appendSessionTurn(
   lines.push(
     JSON.stringify({
       kind: "header",
+      version: SESSION_FORMAT_VERSION,
       cwd: header.cwd,
       title: header.title,
     } satisfies HeaderLine),
@@ -251,7 +313,7 @@ export function appendSessionTurn(
     } satisfies TurnLine),
   );
 
-  appendFileSync(path, `${lines.join("\n")}\n`);
+  appendFileSync(path, `${lines.join("\n")}\n`, { mode: FILE_MODE });
   return checkpointForTurn(
     checkpointId,
     updatedAt,
@@ -271,12 +333,12 @@ export function appendSessionCompaction(
   header: { cwd: string; title: string | null },
   messages: ChatMessage[],
 ): void {
-  mkdirSync(sessionsDir(), { recursive: true });
-  const path = sessionFilePath(sessionId);
+  const path = sessionFileForWrite(sessionId, header.cwd);
   const updatedAt = new Date().toISOString();
   const lines = [
     JSON.stringify({
       kind: "header",
+      version: SESSION_FORMAT_VERSION,
       cwd: header.cwd,
       title: header.title,
     } satisfies HeaderLine),
@@ -286,37 +348,44 @@ export function appendSessionCompaction(
       messages,
     } satisfies CompactionLine),
   ];
-  appendFileSync(path, `${lines.join("\n")}\n`);
+  appendFileSync(path, `${lines.join("\n")}\n`, { mode: FILE_MODE });
 }
 
 export function listStoredSessions(cwd?: string): StoredSession[] {
-  let files: string[];
-  try {
-    files = readdirSync(sessionsDir());
-  } catch {
-    return [];
-  }
-
-  const sessions: StoredSession[] = [];
-  for (const file of files) {
-    if (!file.endsWith(".jsonl")) continue;
-    const sessionId = file.slice(0, -".jsonl".length);
+  const sessions = new Map<string, StoredSession>();
+  for (const dir of sessionDirs()) {
+    let files: string[];
     try {
-      const raw = readFileSync(join(sessionsDir(), file), "utf8");
-      const session = parseSessionFile(raw);
-      if (!session) continue;
-      if (!cwd || session.cwd === cwd) sessions.push({ ...session, sessionId });
+      files = readdirSync(dir);
     } catch {
-      // Skip corrupt/partial session files rather than failing the whole listing.
+      continue;
+    }
+    for (const file of files) {
+      if (!file.endsWith(".jsonl")) continue;
+      const sessionId = file.slice(0, -".jsonl".length);
+      if (!isValidSessionId(sessionId) || sessions.has(sessionId)) continue;
+      try {
+        const raw = readFileSync(join(dir, file), "utf8");
+        const session = parseSessionFile(raw);
+        if (!session) continue;
+        if (!cwd || session.cwd === cwd) {
+          sessions.set(sessionId, { ...session, sessionId });
+        }
+      } catch {
+        // Skip corrupt/partial session files rather than failing the whole listing.
+      }
     }
   }
 
-  return sessions.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  return [...sessions.values()].sort((a, b) =>
+    b.updatedAt.localeCompare(a.updatedAt),
+  );
 }
 
 export function listSessionCheckpoints(sessionId: string): SessionCheckpoint[] {
   try {
-    const raw = readFileSync(sessionFilePath(sessionId), "utf8");
+    const raw = readSessionFile(sessionId);
+    if (raw === null) return [];
     return parseSessionTimeline(raw)?.checkpoints.map(toPublicCheckpoint) ?? [];
   } catch {
     return [];
@@ -335,10 +404,10 @@ export function rewindStoredSession(
     throw new Error("turns must be a positive integer");
   }
   let timeline: ReturnType<typeof parseSessionTimeline>;
+  let path: string | null;
   try {
-    timeline = parseSessionTimeline(
-      readFileSync(sessionFilePath(sessionId), "utf8"),
-    );
+    path = findSessionFile(sessionId);
+    timeline = path ? parseSessionTimeline(readFileSync(path, "utf8")) : null;
   } catch {
     return null;
   }
@@ -359,10 +428,11 @@ export function rewindStoredSession(
   const messages = timeline.session.messages.slice(0, targetMessageCount);
   const updatedAt = new Date().toISOString();
   appendFileSync(
-    sessionFilePath(sessionId),
+    path!,
     `${[
       JSON.stringify({
         kind: "header",
+        version: SESSION_FORMAT_VERSION,
         cwd: timeline.session.cwd,
         title: deriveTitle(messages),
       } satisfies HeaderLine),
@@ -389,8 +459,10 @@ export function rewindStoredSession(
 }
 
 export function deleteStoredSession(sessionId: string): void {
+  const path = findSessionFile(sessionId);
+  if (!path) return;
   try {
-    unlinkSync(sessionFilePath(sessionId));
+    unlinkSync(path);
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
   }

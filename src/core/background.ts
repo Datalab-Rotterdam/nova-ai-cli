@@ -1,8 +1,8 @@
 import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import type * as acp from "@agentclientprotocol/sdk";
 import type { AgentEvent } from "./agent-events.js";
+import { novaHomeRoot } from "./nova-home.js";
 
 export type BackgroundJobKind = "terminal" | "prompt";
 export type BackgroundJobStatus =
@@ -96,11 +96,9 @@ export type BackgroundToolApi = {
   release(jobId: string): Promise<BackgroundJobSummary>;
 };
 
-const DEFAULT_BACKGROUND_JOBS_DIR = join(
-  homedir(),
-  ".nova-ai",
-  "background-jobs",
-);
+function defaultBackgroundJobsDir(): string {
+  return join(novaHomeRoot(), "background-jobs");
+}
 
 export class BackgroundJobManager {
   private readonly jobs = new Map<string, BackgroundJob>();
@@ -111,7 +109,7 @@ export class BackgroundJobManager {
     this.outputDir =
       outputDir ??
       process.env.NOVA_AI_CLI_BACKGROUND_JOBS_DIR ??
-      DEFAULT_BACKGROUND_JOBS_DIR;
+      defaultBackgroundJobsDir();
   }
 
   createPromptJob(params: {

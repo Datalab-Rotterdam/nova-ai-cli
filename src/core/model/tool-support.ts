@@ -5,8 +5,8 @@ import {
   renameSync,
   writeFileSync,
 } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { novaHomeRoot } from "../nova-home.js";
 
 /**
  * Whether a model accepts OpenAI-style native tool calls. Learned per model
@@ -60,8 +60,7 @@ export class ToolSupportStore {
 }
 
 function defaultPath(): string {
-  const home = process.env.NOVA_AI_HOME?.trim() || join(homedir(), ".nova-ai");
-  return join(home, "model-capabilities.json");
+  return join(novaHomeRoot(), "model-capabilities.json");
 }
 
 /** Thrown before anything is recorded when the server rejects native tools. */
