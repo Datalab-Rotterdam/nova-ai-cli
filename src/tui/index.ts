@@ -1,27 +1,33 @@
 import { createInterface } from "node:readline/promises";
+import type { TuiOptions } from "../cli.js";
 import { readCredentials } from "../core/credentials.js";
+import { listStoredSessions } from "../core/sessions.js";
 import { setWorkspaceTrusted } from "../core/nova-home.js";
 import { runPiTui } from "./pi-app/app.js";
 import { workspaceNeedsTrust } from "./settings/workspace-mcp.js";
 
-export async function runChat(...args: string[]): Promise<void> {
-  const credentials = readCredentials();
-  if (!credentials) {
-    console.log("nova-ai-cli isn't connected to a Nova AI account yet.");
-    console.log("Run `nova-ai-cli --setup` first to connect your Nova API key.");
-    return;
+export async function runChat(options: TuiOptions): Promise<number> {
+  const stored = readCredentials();
+  if (!stored) {
+    console.error("nova-ai isn't connected to a Nova AI account yet. Run `nova-ai login` first.");
+    return 1;
   }
-
-  if (!process.stdin.isTTY) {
-    console.log("nova-ai-cli's interactive chat needs a real terminal (stdin is not a TTY).");
-    console.log("Run it directly in a terminal, or use `nova-ai-cli --acp` for non-interactive/editor integration.");
-    return;
-  }
+  const credentials = options.model ? { ...stored, defaultModel: options.model } : stored;
 
   const cwd = process.cwd();
+  let resume = options.resume;
+  if (options.continueLast) {
+    resume = listStoredSessions(cwd)[0]?.sessionId ?? null;
+    if (!resume) {
+      console.error(`No earlier session in ${cwd} to continue.`);
+      return 1;
+    }
+  }
+
   if (workspaceNeedsTrust(cwd)) await askToTrust(cwd);
 
-  await runPiTui(credentials, cwd, args);
+  await runPiTui(credentials, cwd, resume ? ["--resume", resume] : []);
+  return 0;
 }
 
 /**

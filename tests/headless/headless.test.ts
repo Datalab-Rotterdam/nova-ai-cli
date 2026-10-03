@@ -25,7 +25,7 @@ test("headless arguments support positional prompts and explicit automation cont
   );
 
   assert.equal(parsed.prompt, "inspect this");
-  assert.equal(parsed.json, true);
+  assert.equal(parsed.outputFormat, "stream-json");
   assert.equal(parsed.mcp, false);
   assert.equal(parsed.model, "nova-test");
   assert.equal(parsed.permissionMode, "accept-edits");
@@ -184,6 +184,70 @@ test("headless runs the real agent over ACP end to end", async () => {
       assert.equal(events.at(-1).stopReason, "end_turn");
       assert.match(JSON.stringify(events), /Done headless\./);
       assert.equal(requests.length, 1);
+    },
+  );
+});
+
+test("--output-format json writes one object with the answer and tools", async () => {
+  const { withFakeNova, sse, text } = await import("../acp/fake-nova.js");
+  const { mkdirSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  await withFakeNova(
+    () => sse([text("All good.")]),
+    async (_requests, home) => {
+      const cwd = join(home, "repo");
+      mkdirSync(cwd, { recursive: true });
+      const out: string[] = [];
+      const code = await runHeadless(["-p", "check", "--output-format", "json", "--cwd", cwd], {
+        stdout: { write: (chunk: string) => out.push(chunk) },
+        stderr: { write: () => {} },
+        registerSignals: false,
+      });
+      assert.equal(code, 0);
+      const lines = out.join("").trim().split("\n");
+      assert.equal(lines.length, 1, "exactly one JSON object");
+      const result = JSON.parse(lines[0]!);
+      assert.equal(result.type, "result");
+      assert.equal(result.text, "All good.");
+      assert.equal(result.stopReason, "end_turn");
+      assert.deepEqual(result.tools, []);
+    },
+  );
+});
+
+test("--continue resumes the newest session of the workspace", async () => {
+  const { withFakeNova, sse, text } = await import("../acp/fake-nova.js");
+  const { mkdirSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  const { appendSessionTurn } = await import("../../src/core/sessions.js");
+  await withFakeNova(
+    () => sse([text("Continued.")]),
+    async (requests, home) => {
+      const cwd = join(home, "repo");
+      mkdirSync(cwd, { recursive: true });
+      const out: string[] = [];
+      const err: string[] = [];
+      const none = await runHeadless(["-p", "x", "-c", "--cwd", cwd], {
+        stdout: { write: (c: string) => out.push(c) },
+        stderr: { write: (c: string) => err.push(c) },
+        registerSignals: false,
+      });
+      assert.equal(none, 1);
+      assert.match(err.join(""), /No earlier session/);
+
+      const sessionId = crypto.randomUUID();
+      appendSessionTurn(sessionId, { cwd, title: "earlier" }, [
+        { role: "user", content: "remember 42" },
+        { role: "assistant", content: "ok" },
+      ]);
+      const code = await runHeadless(["-p", "what number?", "-c", "--cwd", cwd, "--json"], {
+        stdout: { write: (c: string) => out.push(c) },
+        stderr: { write: () => {} },
+        registerSignals: false,
+      });
+      assert.equal(code, 0);
+      const sent = requests.at(-1)!.body.messages as Array<{ role: string; content: unknown }>;
+      assert.ok(JSON.stringify(sent).includes("remember 42"), "earlier history was sent");
     },
   );
 });

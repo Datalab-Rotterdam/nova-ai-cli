@@ -17,7 +17,7 @@ describe("nova-ai --acp as a process", () => {
       assert.equal(init.protocolVersion, 1);
       assert.deepEqual(
         init.authMethods?.map((method) => ("type" in method && method.type ? method.type : "agent")),
-        ["agent", "env_var"],
+        ["agent", "env_var", "terminal"],
       );
       const meta = init.agentCapabilities?._meta?.["nova-ai-cli"] as { methods: string[]; notifications: string[] };
       assert.ok(meta.methods.every((name) => name.startsWith("_nova/")));

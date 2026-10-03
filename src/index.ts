@@ -1,39 +1,71 @@
 #!/usr/bin/env node
-import { runBrowserAuth } from "./acp/auth-server.js";
-import chat from "./tui/index.js";
-import web from "./webui/index.js";
-import acp from "./acp/index.js";
-import headless from "./headless/index.js";
+import { MAIN_HELP, parseCli, parseTuiArgs, versionText } from "./cli.js";
 
-async function main(): Promise<void> {
-  const args = process.argv.slice(2);
-
-  const headlessIndex = args.indexOf("--headless");
-  if (headlessIndex >= 0) {
-    const headlessArgs = args.filter((_, index) => index !== headlessIndex);
-    process.exitCode = await headless(headlessArgs);
-    return;
+async function main(): Promise<number> {
+  const command = parseCli(process.argv.slice(2));
+  switch (command.mode) {
+    case "error":
+      process.stderr.write(`${command.message}\n\n${MAIN_HELP}\n`);
+      return 2;
+    case "help":
+      process.stdout.write(`${MAIN_HELP}\n`);
+      return 0;
+    case "version":
+      process.stdout.write(`${versionText()}\n`);
+      return 0;
+    case "acp": {
+      if (command.args.length) {
+        process.stderr.write(`--acp takes no other arguments (got ${command.args.join(" ")}).\n`);
+        return 2;
+      }
+      const { default: runAcp } = await import("./acp/index.js");
+      await runAcp();
+      return 0;
+    }
+    case "print": {
+      const { default: runHeadless } = await import("./headless/index.js");
+      return runHeadless(command.args);
+    }
+    case "login": {
+      const { runLogin } = await import("./commands/login.js");
+      return runLogin(command.args);
+    }
+    case "logout": {
+      const { runLogout } = await import("./commands/login.js");
+      return runLogout();
+    }
+    case "web": {
+      const { default: runWebUi } = await import("./webui/index.js");
+      await runWebUi();
+      return 0;
+    }
+    case "tui": {
+      let options;
+      try {
+        options = parseTuiArgs(command.args);
+      } catch (error) {
+        process.stderr.write(`${(error as Error).message}\n\n${MAIN_HELP}\n`);
+        return 2;
+      }
+      if (!process.stdin.isTTY || !process.stdout.isTTY) {
+        process.stderr.write(
+          "nova-ai needs an interactive terminal. For scripts and pipes use `nova-ai -p \"<prompt>\"`, for editors `nova-ai --acp`.\n",
+        );
+        return 2;
+      }
+      const { default: runChat } = await import("./tui/index.js");
+      return runChat(options);
+    }
   }
-
-  if (args.includes("--setup")) {
-    await runBrowserAuth();
-    return;
-  }
-
-  if (args.includes("--acp")) {
-    await acp(...args.slice(1));
-    return;
-  }
-
-  if (args.includes("--web")) {
-    await web(...args.slice(1));
-    return;
-  }
-
-  await chat(...args);
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+main().then(
+  (code) => {
+    // --acp and the TUI end the process themselves; others report a code.
+    process.exitCode = code;
+  },
+  (err) => {
+    console.error(err);
+    process.exit(1);
+  },
+);

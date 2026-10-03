@@ -117,6 +117,7 @@ export {
 
 const AUTH_METHOD_ID = "nova-api-key";
 const ENV_AUTH_METHOD_ID = "nova-api-key-env";
+const TERMINAL_AUTH_METHOD_ID = "nova-login-terminal";
 
 /** Slash commands the agent itself handles in session/prompt. */
 const AVAILABLE_COMMANDS: acp.AvailableCommand[] = [
@@ -279,6 +280,13 @@ export class NovaAgent implements AgentRuntime {
             { name: "NOVA_MODEL", label: "Default model", secret: false, optional: true },
           ],
           link: "https://platform.nova.datalabrotterdam.nl/dashboard/api-keys",
+        },
+        {
+          type: "terminal",
+          id: TERMINAL_AUTH_METHOD_ID,
+          name: "Log in in a terminal",
+          description: "Runs `nova-ai login --no-browser`: paste your Nova API key (hidden input).",
+          args: ["login", "--no-browser"],
         },
       ],
     };
@@ -605,6 +613,16 @@ export class NovaAgent implements AgentRuntime {
   async authenticate(
     params: acp.AuthenticateRequest,
   ): Promise<acp.AuthenticateResponse> {
+    if (params.methodId === TERMINAL_AUTH_METHOD_ID) {
+      // The client ran `nova-ai login --no-browser` for the user; check it worked.
+      if (!readCredentials()) {
+        throw acp.RequestError.authRequired(
+          { methodId: params.methodId },
+          "No Nova API key is stored yet; the terminal login did not finish.",
+        );
+      }
+      return {};
+    }
     if (params.methodId === ENV_AUTH_METHOD_ID) {
       // The client restarts us with the variables set; nothing to do but check.
       if (!process.env.NOVA_API_KEY?.trim()) {
@@ -1019,10 +1037,14 @@ export class NovaAgent implements AgentRuntime {
   private async disposeSession(sessionId: string, session: Session): Promise<void> {
     this.sessions.delete(sessionId);
     for (const turn of session.activeTurns) turn.abort();
+    let grace: ReturnType<typeof setTimeout> | undefined;
     await Promise.race([
       session.turnQueue,
-      new Promise((resolve) => setTimeout(resolve, SHUTDOWN_GRACE_MS)),
+      new Promise((resolve) => {
+        grace = setTimeout(resolve, SHUTDOWN_GRACE_MS);
+      }),
     ]);
+    clearTimeout(grace);
     await closeMcpConnections(session.mcpConnections);
   }
 

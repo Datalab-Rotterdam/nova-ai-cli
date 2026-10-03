@@ -6,7 +6,7 @@ import { clientFromContext } from "../client/context-client.js";
 import { startInProcessAgent } from "../client/in-process.js";
 import type { PermissionMode } from "../core/policy/settings.js";
 import { setWorkspaceTrusted } from "../core/nova-home.js";
-import { loadStoredSession } from "../core/sessions.js";
+import { listStoredSessions, loadStoredSession } from "../core/sessions.js";
 import { readWorkspaceMcpConfiguration } from "../tui/settings/workspace-mcp.js";
 import {
   HeadlessAcpClient,
@@ -19,13 +19,21 @@ export type HeadlessOptions = {
   cwd: string;
   model: string | null;
   resume: string | null;
-  json: boolean;
+  /** Resume the most recent session of the workspace. */
+  continueLast: boolean;
+  /**
+   * text: the answer on stdout. stream-json: JSON Lines events while the turn
+   * runs (version-stable, schemaVersion 1). json: one JSON object at the end.
+   */
+  outputFormat: HeadlessOutputFormat;
   mcp: boolean;
   /** Persistently trust the workspace (its MCP servers and allow rules). */
   trustWorkspace: boolean;
   permissionMode: HeadlessPermissionMode;
   help: boolean;
 };
+
+export type HeadlessOutputFormat = "text" | "json" | "stream-json";
 
 type Writable = { write(chunk: string): unknown };
 
@@ -77,7 +85,7 @@ export async function runHeadless(
     options = parseHeadlessArgs(args, process.cwd());
   } catch (error) {
     const message = errorMessage(error);
-    if (args.includes("--json")) {
+    if (args.includes("--json") || args.some((arg) => /^--output-format(=|$)/.test(arg) && !arg.endsWith("=text"))) {
       return writeFailure(true, stdout, stderr, message);
     }
     stderr.write(`${message}\n\n${HEADLESS_HELP}\n`);
@@ -98,18 +106,30 @@ export async function runHeadless(
   }
   if (!prompt) {
     return writeFailure(
-      options.json,
+      options.outputFormat !== "text",
       stdout,
       stderr,
       "Headless mode requires a prompt argument or piped stdin.",
     );
   }
 
+  if (options.continueLast) {
+    const latest = listStoredSessions(options.cwd)[0];
+    if (!latest) {
+      return writeFailure(
+        options.outputFormat !== "text",
+        stdout,
+        stderr,
+        `No earlier session in ${options.cwd} to continue.`,
+      );
+    }
+    options.resume = latest.sessionId;
+  }
   if (options.resume) {
     const stored = loadStoredSession(options.resume);
     if (!stored) {
       return writeFailure(
-        options.json,
+        options.outputFormat !== "text",
         stdout,
         stderr,
         `Session ${options.resume} not found.`,
@@ -118,7 +138,7 @@ export async function runHeadless(
     options.cwd = stored.cwd;
   }
 
-  const output = createOutput(options.json, stdout, stderr);
+  const output = createOutput(options.outputFormat, stdout, stderr);
   const client = (
     dependencies.clientFactory ??
     ((cwd, permissionMode, emit) =>
@@ -234,7 +254,8 @@ export function parseHeadlessArgs(
     cwd: resolve(defaultCwd),
     model: null,
     resume: null,
-    json: false,
+    continueLast: false,
+    outputFormat: "text",
     mcp: true,
     trustWorkspace: false,
     permissionMode: "read-only",
@@ -248,11 +269,24 @@ export function parseHeadlessArgs(
       positional.push(...args.slice(index + 1));
       break;
     }
-    if (arg === "--json") options.json = true;
+    if (arg === "--json") options.outputFormat = "stream-json";
+    else if (arg === "--continue" || arg === "-c") options.continueLast = true;
+    else if (arg === "--output-format")
+      options.outputFormat = parseOutputFormat(takeValue(args, ++index, arg));
+    else if (arg.startsWith("--output-format="))
+      options.outputFormat = parseOutputFormat(arg.slice("--output-format=".length));
+    // -p/--print selects this mode; a following non-option argument is the prompt.
+    else if (arg === "--print" || arg === "-p") {
+      const next = args[index + 1];
+      if (next !== undefined && !next.startsWith("-")) {
+        options.prompt = next;
+        index++;
+      }
+    }
     else if (arg === "--no-mcp") options.mcp = false;
     else if (arg === "--trust-workspace") options.trustWorkspace = true;
     else if (arg === "--help" || arg === "-h") options.help = true;
-    else if (arg === "--prompt" || arg === "-p")
+    else if (arg === "--prompt")
       options.prompt = takeValue(args, ++index, arg);
     else if (arg.startsWith("--prompt="))
       options.prompt = arg.slice("--prompt=".length);
@@ -285,17 +319,42 @@ export function parseHeadlessArgs(
   }
   if (!options.prompt && positional.length)
     options.prompt = positional.join(" ");
+  if (options.continueLast && options.resume) {
+    throw new Error("Use either --continue or --resume, not both.");
+  }
   if (options.prompt !== null && !options.prompt.trim()) {
     throw new Error("Prompt cannot be empty.");
   }
   return options;
 }
 
-function createOutput(json: boolean, stdout: Writable, stderr: Writable) {
+function createOutput(format: HeadlessOutputFormat, stdout: Writable, stderr: Writable) {
   let wroteText = false;
+  // json: everything is collected into one object written by finish().
+  const summary: { text: string; tools: Array<Record<string, unknown>>; permissions: Array<Record<string, unknown>> } = {
+    text: "",
+    tools: [],
+    permissions: [],
+  };
   const write = (record: Record<string, unknown>) => {
-    if (json)
+    if (format === "stream-json") {
       stdout.write(`${JSON.stringify({ schemaVersion: 1, ...record })}\n`);
+      return;
+    }
+    if (format !== "json") return;
+    if (record.type === "result") {
+      stdout.write(
+        `${JSON.stringify({ schemaVersion: 1, ...record, text: summary.text, tools: summary.tools, permissions: summary.permissions })}\n`,
+      );
+    } else if (record.type === "error") {
+      stdout.write(`${JSON.stringify({ schemaVersion: 1, ...record })}\n`);
+    } else if (record.type === "message.delta" && record.role === "assistant") {
+      summary.text += String(record.text ?? "");
+    } else if (record.type === "tool.finished") {
+      summary.tools.push({ toolCallId: record.toolCallId, status: record.status });
+    } else if (record.type === "permission") {
+      summary.permissions.push(record);
+    }
   };
   return {
     write,
@@ -306,20 +365,20 @@ function createOutput(json: boolean, stdout: Writable, stderr: Writable) {
       }
       const record = notificationRecord(event.method, event.params);
       if (record) write(record);
-      if (!json && record?.type === "message.delta") {
+      if (format === "text" && record?.type === "message.delta" && record.role === "assistant") {
         stdout.write(String(record.text ?? ""));
         wroteText = true;
       }
     },
     finishText: () => {
-      if (!json && wroteText) {
+      if (format === "text" && wroteText) {
         stdout.write("\n");
         wroteText = false;
       }
     },
     error: (message: string) => {
-      if (json) write({ type: "error", message });
-      else stderr.write(`${message}\n`);
+      if (format === "text") stderr.write(`${message}\n`);
+      else write({ type: "error", message });
     },
   };
 }
@@ -361,18 +420,24 @@ function notificationRecord(
         sessionId,
         text: textContent(update.content),
       };
-    case "tool_call":
+    case "tool_call": {
+      const toolName = toRecord(update._meta)?.["nova-ai-cli/tool"];
       return {
         type: "tool.started",
         sessionId,
         toolCallId: update.toolCallId,
-        name: update.title,
+        name: typeof toolName === "string" ? toolName : update.title,
+        title: update.title,
         kind: update.kind,
         input: update.rawInput,
       };
+    }
     case "tool_call_update":
       return {
-        type: "tool.finished",
+        type:
+          update.status === "completed" || update.status === "failed"
+            ? "tool.finished"
+            : "tool.updated",
         sessionId,
         toolCallId: update.toolCallId,
         status: update.status,
@@ -401,6 +466,11 @@ function toRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null;
+}
+
+function parseOutputFormat(value: string): HeadlessOutputFormat {
+  if (value === "text" || value === "json" || value === "stream-json") return value;
+  throw new Error(`Unknown output format: ${value}. Expected text, json, or stream-json.`);
 }
 
 function parsePermissionMode(value: string): HeadlessPermissionMode {
@@ -448,16 +518,20 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-export const HEADLESS_HELP = `Usage: nova-ai --headless [options] [prompt]
+export const HEADLESS_HELP = `Usage: nova-ai -p [options] [prompt]
 
-Run one Nova agent request without the interactive terminal UI.
+Run one Nova agent request without the interactive terminal UI. The prompt
+can also be piped on stdin.
 
 Options:
-  -p, --prompt <text>              Prompt text (or pipe it over stdin)
-      --json                       Write version-stable JSON Lines events
+  -p, --print [prompt]             Run headless (the prompt may follow)
+      --output-format <format>     text (default), json (one object at the end)
+                                   or stream-json (JSON Lines while it runs)
+      --json                       Same as --output-format stream-json
       --cwd <path>                 Workspace directory (default: current directory)
       --model <id>                 Override the configured model
       --resume <session-id>        Continue a persisted session
+  -c, --continue                   Continue the most recent session of the workspace
       --no-mcp                     Ignore workspace MCP configuration
       --trust-workspace            Trust this workspace (remembered): start the MCP
                                    servers and apply the allow rules it declares

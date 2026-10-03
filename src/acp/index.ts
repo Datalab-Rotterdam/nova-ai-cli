@@ -4,7 +4,7 @@ import { NovaAgent } from "./agent.js";
 import { createAgentApp } from "./server.js";
 import { redirectConsoleToStderr } from "./stdio-guard.js";
 
-async function runAcp(...args: string[]): Promise<void> {
+async function runAcp(): Promise<void> {
   redirectConsoleToStderr();
   const agentImpl = new NovaAgent();
 

@@ -97,3 +97,14 @@ export function saveDefaultModel(model: string): boolean {
   writeCredentials({ ...stored, defaultModel: model });
   return true;
 }
+
+/** Removes the stored key; returns false when there was none. */
+export function deleteCredentials(): boolean {
+  try {
+    rmSync(credentialsPath());
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
+}

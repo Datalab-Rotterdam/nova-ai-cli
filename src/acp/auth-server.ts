@@ -56,7 +56,8 @@ function openBrowser(url: string): void {
   }
 }
 
-async function validateApiKey(apiKey: string): Promise<StoredCredentials> {
+/** Checks a key against Nova and picks the default model (first enabled one). */
+export async function validateApiKey(apiKey: string): Promise<StoredCredentials> {
   const client = createNovaClient(apiKey);
   const { data: models } = await client.models.list();
   const defaultModel = (models.find((m) => m.enabled !== false) ?? models[0])
