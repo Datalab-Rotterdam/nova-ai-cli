@@ -2,9 +2,12 @@ name: CI
 
 on:
   pull_request:
+  # Other branches are tested through their pull request; running on both
+  # the push and the PR doubled every run.
   push:
     branches:
-      - "**"
+      - main
+      - alpha
   workflow_dispatch:
 
 concurrency:
