@@ -54,6 +54,8 @@ export type PermissionScope = "once" | "session" | "always";
 export type PermissionRequestView = {
   toolCallId: string;
   toolName: string;
+  /** The agent's human-readable description, e.g. "Run `npm test`". */
+  title?: string;
   kind: string;
   args: Record<string, unknown>;
   resolve(allow: boolean, scope: PermissionScope): void;

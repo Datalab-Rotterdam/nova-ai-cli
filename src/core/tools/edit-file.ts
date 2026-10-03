@@ -61,7 +61,7 @@ export const editFileTool: ToolDefinition = {
 
 type Replacement = { newContent: string } | { error: string };
 
-function resolveReplacement(
+export function resolveReplacement(
   content: string,
   oldString: string,
   newString: string,

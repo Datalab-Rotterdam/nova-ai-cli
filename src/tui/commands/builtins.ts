@@ -124,6 +124,14 @@ export const builtinCommands: SlashCommand[] = [
     },
   },
   {
+    name: "trust",
+    description:
+      "Trust this workspace: start the MCP servers it declares and apply its .nova-ai allow rules",
+    run(ctx) {
+      ctx.print(ctx.trustWorkspace());
+    },
+  },
+  {
     name: "model",
     description:
       "Switch the active model (/model <id>, or no args to pick interactively)",

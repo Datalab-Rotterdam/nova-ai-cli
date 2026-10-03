@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import type { Session } from "../../src/core/agent/session.js";
 import { buildSessionTools } from "../../src/core/agent/session-tools.js";
 import { PromptQueue } from "../../src/core/prompt-queue.js";
+import { PermissionPolicy } from "../../src/core/policy/policy.js";
 import { FULL_CAPABILITIES, makeEnvironment } from "./tools/test-helpers.js";
 
 function session(): Session {
@@ -20,6 +21,7 @@ function session(): Session {
     skills: [],
     memory: { blocks: [], notes: [], consolidate: [] },
     mode: "agent",
+    policy: new PermissionPolicy(process.cwd(), "default"),
     model: null,
   };
 }

@@ -35,18 +35,10 @@ import {
   fromElicitationRequest,
   toElicitationResponse,
 } from "../../acp/user-questions.js";
-import {
-  evaluatePermissionRules,
-  exactPermissionRule,
-  type PermissionRuleSet,
-} from "../../core/policy/rules.js";
-import {
-  addAllowedPermissionRule,
-  readWorkspaceSettings,
-} from "../settings/workspace-settings.js";
 import type { Store } from "../state/store.js";
 import type {
   BackgroundJobView,
+  PermissionScope,
   PlanEntryView,
   ToolCallView,
   ToolDiffView,
@@ -55,7 +47,6 @@ import type {
 } from "../state/types.js";
 
 const DEFAULT_OUTPUT_LIMIT = 100_000;
-const AUTO_EDIT_TOOL_NAMES = new Set(["write_file", "edit_file"]);
 
 let nextMessageId = 0;
 function uid(): string {
@@ -83,8 +74,6 @@ export class TuiAcpClient {
   } satisfies acp.ClientCapabilities;
 
   private readonly terminals = new Map<string, TerminalRecord>();
-  private readonly allowedForSession = new Set<string>();
-  private readonly permissionRules: PermissionRuleSet;
   private streamingMessageId: string | null = null;
   private nextTerminalId = 0;
 
@@ -96,13 +85,7 @@ export class TuiAcpClient {
       job: BackgroundJobView,
     ) => void | Promise<void>,
     private readonly onInteractionModeChange?: (mode: InteractionMode) => void,
-  ) {
-    const configured = readWorkspaceSettings(cwd).permissions;
-    this.permissionRules = {
-      allow: [...(configured?.allow ?? [])],
-      deny: [...(configured?.deny ?? [])],
-    };
-  }
+  ) {}
 
   context(): acp.AgentContext {
     return {
@@ -284,46 +267,33 @@ export class TuiAcpClient {
     if (!record.exitStatus) await terminateProcessTree(record.child);
   }
 
+  /**
+   * Only shows the agent's question: rules, modes and remembered approvals
+   * are the agent's permission policy, so every ACP client behaves the same.
+   */
   async requestPermission(
     params: RequestPermissionRequest,
   ): Promise<RequestPermissionResponse> {
-    const permissionMode = this.store.getState().permissionMode;
-    const toolName = params.toolCall.title ?? "tool";
+    const toolName = toolNameOf(params.toolCall) ?? "tool";
     const kind = params.toolCall.kind ?? "other";
     const args = toRecord(params.toolCall.rawInput);
-    const ruleDecision = evaluatePermissionRules(
-      this.permissionRules,
-      toolName,
-      args,
-    );
-    if (ruleDecision === "deny") return selected("reject");
-    if (ruleDecision === "allow") return selected("allow");
-    if (permissionMode === "bypassAll") return selected("allow");
-    if (permissionMode === "acceptEdits" && AUTO_EDIT_TOOL_NAMES.has(toolName))
-      return selected("allow");
-
-    const key = `${toolName}:${JSON.stringify(args)}`;
-    if (this.allowedForSession.has(key)) return selected("allow");
 
     return new Promise<RequestPermissionResponse>((resolve) => {
       this.store.setState({
         pendingPermission: {
           toolCallId: params.toolCall.toolCallId,
           toolName,
+          title: params.toolCall.title ?? toolName,
           kind,
           args,
           resolve: (allow, scope) => {
-            if (allow && scope === "session") this.allowedForSession.add(key);
-            if (allow && scope === "always") {
-              const rule = exactPermissionRule(toolName, args);
-              this.permissionRules.allow = [
-                ...(this.permissionRules.allow ?? []),
-                rule,
-              ];
-              addAllowedPermissionRule(this.cwd, rule);
-            }
             this.store.setState({ pendingPermission: null });
-            resolve(allow ? selected("allow") : selected("reject"));
+            const optionId = choosePermissionOption(params.options, allow, scope);
+            resolve(
+              optionId
+                ? selected(optionId)
+                : { outcome: { outcome: "cancelled" } },
+            );
           },
         },
       });
@@ -406,13 +376,13 @@ export class TuiAcpClient {
         // rendered message, but explicitly settle it before beginning the
         // tool card; otherwise its streaming marker can animate forever.
         this.resetStreaming();
-        if (update.title === "update_plan") return;
+        if (toolNameOf(update) === "update_plan") return;
         this.appendMessage({
           id: uid(),
           role: "tool",
           call: {
             toolCallId: update.toolCallId,
-            name: update.title,
+            name: toolNameOf(update) ?? update.title,
             mutating:
               typeof update._meta?.["nova-ai-cli/mutating"] === "boolean"
                 ? update._meta["nova-ai-cli/mutating"]
@@ -655,6 +625,48 @@ function insertBeforeQueuedMessages(
     message,
     ...messages.slice(queuedIndex),
   ];
+}
+
+/**
+ * Maps the dialog's answer to one of the agent's options: by Nova's option
+ * ids first, then by ACP option kind for other agents. Null when the agent
+ * offered nothing that fits (never read as consent).
+ */
+export function choosePermissionOption(
+  options: RequestPermissionRequest["options"],
+  allow: boolean,
+  scope: PermissionScope,
+): string | null {
+  const preferred = !allow
+    ? ["reject_once"]
+    : scope === "always"
+      ? ["allow_always", "allow_session", "allow_once"]
+      : scope === "session"
+        ? ["allow_session", "allow_once"]
+        : ["allow_once"];
+  for (const id of preferred) {
+    const byId = options.find((option) => option.optionId === id);
+    if (byId) return byId.optionId;
+  }
+  const kinds: string[] = !allow
+    ? ["reject_once", "reject_always"]
+    : scope === "once"
+      ? ["allow_once"]
+      : ["allow_always", "allow_once"];
+  for (const kind of kinds) {
+    const byKind = options.find((option) => option.kind === kind);
+    if (byKind) return byKind.optionId;
+  }
+  return null;
+}
+
+/** Nova agents put the real tool name in _meta; the title is human-readable. */
+function toolNameOf(call: {
+  title?: string | null;
+  _meta?: Record<string, unknown> | null;
+}): string | undefined {
+  const fromMeta = call._meta?.["nova-ai-cli/tool"];
+  return typeof fromMeta === "string" ? fromMeta : (call.title ?? undefined);
 }
 
 function selected(optionId: string): RequestPermissionResponse {

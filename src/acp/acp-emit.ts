@@ -3,7 +3,7 @@ import type { AgentEvent } from "../core/agent-events.js";
 import type { BackgroundJobSummary } from "../core/background.js";
 import type { McpConnection, McpConnectionFailure } from "../core/mcp.js";
 import type { SkillDefinition } from "../core/skills.js";
-import type { ToolDefinition } from "../core/tools/types.js";
+import { describeToolCall } from "../core/tools/describe.js";
 
 export async function notifyPlanUpdate(
   client: acp.AgentContext,
@@ -26,6 +26,7 @@ export async function emitToAcp(
   client: acp.AgentContext,
   sessionId: string,
   event: AgentEvent,
+  cwd = process.cwd(),
 ): Promise<void> {
   switch (event.type) {
     case "text":
@@ -70,20 +71,26 @@ export async function emitToAcp(
         },
       });
       return;
-    case "tool_pending":
+    case "tool_pending": {
+      const { title, locations } = describeToolCall(event.name, event.args, cwd);
       await client.notify("session/update", {
         sessionId,
         update: {
           sessionUpdate: "tool_call",
           toolCallId: event.toolCallId,
-          title: event.name,
+          title,
           kind: event.kind,
           status: "pending",
           rawInput: event.args,
-          _meta: { "nova-ai-cli/mutating": event.mutating },
+          ...(locations.length ? { locations } : {}),
+          _meta: {
+            "nova-ai-cli/tool": event.name,
+            "nova-ai-cli/mutating": event.mutating,
+          },
         },
       });
       return;
+    }
     case "tool_update":
       await client.notify("session/update", {
         sessionId,
@@ -121,39 +128,6 @@ export async function emitBackgroundUpdate(
   extra: Record<string, unknown> = {},
 ): Promise<void> {
   await client.notify("background/update", { event, job, ...extra });
-}
-
-export async function requestAcpPermission(
-  client: acp.AgentContext,
-  sessionId: string,
-  signal: AbortSignal,
-  toolCallId: string,
-  tool: ToolDefinition,
-  args: Record<string, unknown>,
-): Promise<boolean> {
-  const response = await client.request(
-    acp.methods.client.session.requestPermission,
-    {
-      sessionId,
-      toolCall: {
-        toolCallId,
-        title: tool.name,
-        kind: tool.kind,
-        status: "pending",
-        rawInput: args,
-      },
-      options: [
-        { optionId: "allow", name: "Allow", kind: "allow_once" },
-        { optionId: "reject", name: "Reject", kind: "reject_once" },
-      ],
-    },
-    { cancellationSignal: signal },
-  );
-
-  return (
-    response.outcome.outcome === "selected" &&
-    response.outcome.optionId === "allow"
-  );
 }
 
 export function sessionStatusMeta(

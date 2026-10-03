@@ -29,11 +29,12 @@ import {
   listSessionPickerItems,
   listSessionsForCwd,
 } from "../session/session-picker.js";
-import { SessionRunner } from "../session/session-runner.js";
 import {
-  setPermissionMode as persistPermissionMode,
-  readWorkspaceSettings,
-} from "../settings/workspace-settings.js";
+  fromAgentPermissionMode,
+  SessionRunner,
+} from "../session/session-runner.js";
+import { savedPermissionMode } from "../../core/policy/settings.js";
+import { setWorkspaceTrusted } from "../../core/nova-home.js";
 import { createStore, type Store } from "../state/store.js";
 import type {
   InteractionMode,
@@ -76,7 +77,6 @@ export async function runPiTui(
   args: string[],
   options: PiTuiRuntimeOptions = {},
 ): Promise<void> {
-  const workspaceSettings = readWorkspaceSettings(cwd);
   const store = createStore<UIState>({
     messages: [],
     plan: [],
@@ -85,7 +85,9 @@ export async function runPiTui(
     inputHistory: [],
     busy: false,
     mode: "chat",
-    permissionMode: workspaceSettings.permissionMode ?? "ask",
+    // Never from the repository's .nova-ai/settings.json: a cloned repo must
+    // not be able to start Nova with approvals switched off.
+    permissionMode: fromAgentPermissionMode(savedPermissionMode(cwd)),
     interactionMode: "agent",
     sessionId: "",
     cwd,
@@ -307,11 +309,8 @@ export async function runPiTui(
   };
 
   const setPermissionMode = (mode: PermissionMode) => {
-    persistPermissionMode(runner.cwd, mode);
-    store.setState({
-      permissionMode: mode,
-      statusLine: `Permission mode: ${mode}`,
-    });
+    runner.setPermissionMode(mode);
+    store.setState({ statusLine: `Permission mode: ${mode}` });
   };
 
   const openPermissionModes = () => {
@@ -520,6 +519,10 @@ export async function runPiTui(
     getPermissionMode: () => store.getState().permissionMode,
     setPermissionMode,
     openPermissionPicker: openPermissionModes,
+    trustWorkspace: () => {
+      setWorkspaceTrusted(runner.cwd, true);
+      return "Workspace trusted: its allow rules apply now; MCP servers it declares start with the next session (/clear).";
+    },
     openToolInspector,
     openMcpInspector,
     openSkillInspector,

@@ -22,6 +22,8 @@ export type SlashCommandContext = {
   getPermissionMode(): PermissionMode;
   setPermissionMode(mode: PermissionMode): void;
   openPermissionPicker(): void;
+  /** Trusts the workspace (its MCP servers and allow rules); returns a message. */
+  trustWorkspace(): string;
   openToolInspector(): void;
   openMcpInspector(): void;
   openSkillInspector(): void;

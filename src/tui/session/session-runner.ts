@@ -21,6 +21,10 @@ import type {
 import type { StoredCredentials } from "../../core/credentials.js";
 import type { PromptQueueEntryView } from "../../core/prompt-queue.js";
 import { saveDefaultModel } from "../../core/credentials.js";
+import {
+  savePermissionMode,
+  type PermissionMode as AgentPermissionMode,
+} from "../../core/policy/settings.js";
 import { loadStoredSession } from "../../core/sessions.js";
 import type { SessionCheckpoint } from "../../core/sessions.js";
 import { discoverSkills } from "../../core/skills.js";
@@ -41,6 +45,7 @@ import { readWorkspaceMcpConfiguration } from "../settings/workspace-mcp.js";
 import type { Store } from "../state/store.js";
 import type {
   InteractionMode,
+  PermissionMode,
   ToolCallView,
   UIMessage,
   UIState,
@@ -322,6 +327,7 @@ export class SessionRunner {
           sessionId: this.sessionId,
           modeId: this.interactionMode,
         });
+        this.applyPermissionMode(this.sessionId);
         this.updateContextUsage();
         void this.refreshContextUsage().catch(() => {});
       });
@@ -501,6 +507,32 @@ export class SessionRunner {
     saveDefaultModel(model);
     if (this.agentSessionLoaded) this.updateContextUsage();
     void this.refreshContextUsage().catch(() => {});
+  }
+
+  /**
+   * Hands the mode to the agent's permission policy (which decides) and
+   * remembers it in the private per-project settings; bypass is never stored.
+   */
+  setPermissionMode(mode: PermissionMode): void {
+    this.store.setState({ permissionMode: mode });
+    try {
+      savePermissionMode(this.cwd, toAgentPermissionMode(mode));
+    } catch {
+      // Remembering is a convenience; the session still uses the mode.
+    }
+    if (this.agentSessionLoaded) this.applyPermissionMode(this.sessionId);
+  }
+
+  private applyPermissionMode(sessionId: string): void {
+    void this.agent
+      .setSessionConfigOption({
+        sessionId,
+        configId: "permission_mode",
+        value: toAgentPermissionMode(this.store.getState().permissionMode),
+      })
+      .catch(() => {
+        this.acpClient.appendError("Could not change the permission mode.");
+      });
   }
 
   setInteractionMode(mode: InteractionMode): void {
@@ -900,6 +932,7 @@ export class SessionRunner {
       sessionId,
       modeId: this.interactionMode,
     });
+    this.applyPermissionMode(sessionId);
     this.updateContextUsage();
     void this.refreshContextUsage().catch(() => {});
     if (this.mcpStatus.failures.length > 0) {
@@ -1099,4 +1132,13 @@ function silentContext(context: acp.AgentContext): acp.AgentContext {
     ) => context.request(method, params, options),
     notify: async () => {},
   } as unknown as acp.AgentContext;
+}
+
+/** The TUI's mode names ↔ the agent's permission_mode values. */
+export function toAgentPermissionMode(mode: PermissionMode): AgentPermissionMode {
+  return mode === "bypassAll" ? "bypassPermissions" : mode === "acceptEdits" ? "acceptEdits" : "default";
+}
+
+export function fromAgentPermissionMode(mode: AgentPermissionMode): PermissionMode {
+  return mode === "bypassPermissions" ? "bypassAll" : mode === "acceptEdits" ? "acceptEdits" : "ask";
 }

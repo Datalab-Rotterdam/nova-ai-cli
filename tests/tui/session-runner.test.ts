@@ -10,6 +10,7 @@ import {
 } from "../../src/tui/session/session-runner.js";
 import { TuiAcpClient } from "../../src/tui/session/tui-acp-client.js";
 import { createStore } from "../../src/tui/state/store.js";
+import { setWorkspaceTrusted } from "../../src/core/nova-home.js";
 import type { UIState } from "../../src/tui/state/types.js";
 import { installFakeAgentQueue } from "./fake-agent-queue.js";
 import {
@@ -545,6 +546,7 @@ test("session runner attaches mentioned file contents to the model prompt", asyn
 
 test("session runner exposes project .mcp.json servers and configuration failures", () => {
   const cwd = mkdtempSync(join(tmpdir(), "nova-session-mcp-"));
+  setWorkspaceTrusted(cwd, true);
   try {
     writeFileSync(
       join(cwd, ".mcp.json"),

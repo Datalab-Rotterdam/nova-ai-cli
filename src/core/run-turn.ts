@@ -21,7 +21,11 @@ import { ReasoningTagFilter, stripReasoningTags } from "./reasoning-tags.js";
 import type { ToolHost } from "./tool-host.js";
 import { toLegacyMessages } from "./history.js";
 import { runNativeTurn } from "./native-turn.js";
-import { formatBatchResults, runToolBatch } from "./tool-batch.js";
+import {
+  formatBatchResults,
+  runToolBatch,
+  type ToolBatchContext,
+} from "./tool-batch.js";
 
 const DEFAULT_MAX_TOOL_ROUNDS = 64;
 const MAX_EMPTY_COMPLETION_RETRIES = 2;
@@ -50,6 +54,8 @@ export type RunTurnDeps = {
     tool: ToolDefinition,
     args: Record<string, unknown>,
   ): Promise<boolean>;
+  /** See ToolBatchContext.authorize; the agent passes its permission policy here. */
+  authorize?: ToolBatchContext["authorize"];
   compactContext?(
     messages: ChatMessage[],
     /** null when compaction is proactive rather than error-driven. */
@@ -512,6 +518,7 @@ export async function runTurn(
         signal,
         findTool,
         requestPermission,
+        authorize: deps.authorize,
         emit,
         disableTools: () => {
           toolsEnabled = false;

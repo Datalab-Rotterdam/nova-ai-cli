@@ -1,5 +1,6 @@
 import type * as acp from "@agentclientprotocol/sdk";
 import type { InteractionMode } from "../core/interaction-modes.js";
+import type { PermissionMode } from "../core/policy/settings.js";
 
 const AVAILABLE_MODES: acp.SessionMode[] = [
   {
@@ -25,5 +26,25 @@ export function sessionModeState(
   return {
     currentModeId,
     availableModes: AVAILABLE_MODES.map((mode) => ({ ...mode })),
+  };
+}
+
+export const PERMISSION_MODE_CONFIG_ID = "permission_mode";
+
+/** The permission mode as an ACP session config option. */
+export function permissionModeOption(
+  current: PermissionMode,
+): acp.SessionConfigOption {
+  return {
+    id: PERMISSION_MODE_CONFIG_ID,
+    name: "Permissions",
+    description: "Which tool calls Nova may run without asking.",
+    type: "select",
+    currentValue: current,
+    options: [
+      { value: "default", name: "Ask", description: "Ask before every change or command." },
+      { value: "acceptEdits", name: "Accept edits", description: "Apply file edits without asking; ask for commands." },
+      { value: "bypassPermissions", name: "Bypass", description: "Run everything without asking (deny rules still apply). Not remembered." },
+    ],
   };
 }

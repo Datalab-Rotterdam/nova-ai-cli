@@ -1,18 +1,10 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import test from "node:test";
-import type { RequestPermissionRequest } from "@agentclientprotocol/sdk";
 import {
   analyzeShellCommand,
   evaluatePermissionRules,
   exactPermissionRule,
 } from "../../src/core/policy/rules.js";
-import { writeWorkspaceSettings } from "../../src/tui/settings/workspace-settings.js";
-import { TuiAcpClient } from "../../src/tui/session/tui-acp-client.js";
-import { createStore } from "../../src/tui/state/store.js";
-import type { UIState } from "../../src/tui/state/types.js";
 
 test("Claude-style Bash allow rules match command arguments instead of the whole tool", () => {
   const permissions = {
@@ -195,95 +187,3 @@ test("path aliases normalize Windows separators and exact rules escape shell wil
     "ask",
   );
 });
-
-test("TUI permission requests enforce deny before bypass mode", async () => {
-  const cwd = mkdtempSync(join(tmpdir(), "nova-permission-deny-"));
-  try {
-    writeWorkspaceSettings(cwd, {
-      permissions: { deny: ["Bash(npm publish*)"] },
-    });
-    const store = createStore(state("bypassAll", cwd));
-    const client = new TuiAcpClient(store, cwd);
-    const response = await client.requestPermission(
-      permissionRequest("npm publish"),
-    );
-
-    assert.deepEqual(response.outcome, {
-      outcome: "selected",
-      optionId: "reject",
-    });
-    assert.equal(store.getState().pendingPermission, null);
-  } finally {
-    rmSync(cwd, { recursive: true, force: true });
-  }
-});
-
-test("always allow persists an exact argument-aware permission rule", async () => {
-  const cwd = mkdtempSync(join(tmpdir(), "nova-permission-always-"));
-  try {
-    writeWorkspaceSettings(cwd, {
-      permissionMode: "ask",
-      permissions: { allow: [] },
-    });
-    const store = createStore(state("ask", cwd));
-    const client = new TuiAcpClient(store, cwd);
-    const pending = client.requestPermission(permissionRequest("npm test"));
-    store.getState().pendingPermission?.resolve(true, "always");
-    await pending;
-
-    const persisted = JSON.parse(
-      readFileSync(join(cwd, ".nova-ai", "settings.json"), "utf8"),
-    ) as {
-      permissions?: { allow?: string[] };
-    };
-    assert.deepEqual(persisted.permissions?.allow, ["run_command(npm test)"]);
-
-    const nextClient = new TuiAcpClient(createStore(state("ask", cwd)), cwd);
-    const response = await nextClient.requestPermission(
-      permissionRequest("npm test"),
-    );
-    assert.deepEqual(response.outcome, {
-      outcome: "selected",
-      optionId: "allow",
-    });
-  } finally {
-    rmSync(cwd, { recursive: true, force: true });
-  }
-});
-
-function permissionRequest(command: string): RequestPermissionRequest {
-  return {
-    sessionId: "test-session",
-    toolCall: {
-      toolCallId: "call-1",
-      title: "run_command",
-      kind: "execute",
-      status: "pending",
-      rawInput: { command },
-    },
-    options: [],
-  };
-}
-
-function state(
-  permissionMode: UIState["permissionMode"],
-  cwd: string,
-): UIState {
-  return {
-    messages: [],
-    plan: [],
-    pendingPermission: null,
-    pendingQuestion: null,
-    inputHistory: [],
-    busy: false,
-    mode: "chat",
-    permissionMode,
-    interactionMode: "agent",
-    sessionId: "test-session",
-    cwd,
-    statusLine: null,
-    queuedCount: 0,
-    contextUsage: null,
-    updateAvailable: null,
-  };
-}

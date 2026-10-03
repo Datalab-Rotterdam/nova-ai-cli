@@ -36,7 +36,8 @@ import {
 import type { ToolDefinition } from "../core/tools/types.js";
 import { truncateToolOutput } from "../core/tool-output.js";
 import { AcpToolHost } from "./acp-tool-host.js";
-import { emitBackgroundUpdate, requestAcpPermission } from "./acp-emit.js";
+import { emitBackgroundUpdate } from "./acp-emit.js";
+import { authorizeToolCall } from "./permission-flow.js";
 import type { AgentRuntime } from "./agent-runtime.js";
 import {
   contentBlocksToNovaContent,
@@ -361,19 +362,29 @@ export class BackgroundService {
       userMessage,
     ];
     const host = new AcpToolHost(client, params.sessionId);
-    const requestPermission = (
+    const authorize = (
       toolCallId: string,
       tool: ToolDefinition,
       args: Record<string, unknown>,
     ) =>
-      requestAcpPermission(
-        client,
-        params.sessionId,
-        abortController.signal,
+      authorizeToolCall(
+        {
+          client,
+          sessionId: params.sessionId,
+          cwd: session.cwd,
+          host,
+          policy: session.policy,
+          signal: abortController.signal,
+        },
         toolCallId,
         tool,
         args,
       );
+    const requestPermission = async (
+      toolCallId: string,
+      tool: ToolDefinition,
+      args: Record<string, unknown>,
+    ) => (await authorize(toolCallId, tool, args)).allowed;
     const emit = async (event: AgentEvent) => {
       this.backgroundJobs.recordPromptEvent(jobId, event);
     };
@@ -398,6 +409,7 @@ export class BackgroundService {
             background,
             tools,
             requestPermission,
+            authorize,
             contextWindow,
             emit,
             novaClient,

@@ -1,6 +1,8 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type * as acp from "@agentclientprotocol/sdk";
+import { isWorkspaceTrusted } from "../../core/nova-home.js";
+import { readSettings } from "../../core/policy/settings.js";
 import { readWorkspaceSettings } from "./workspace-settings.js";
 
 export type McpConfigurationFailure = {
@@ -11,14 +13,52 @@ export type McpConfigurationFailure = {
 export type WorkspaceMcpConfiguration = {
   servers: acp.McpServer[];
   failures: McpConfigurationFailure[];
+  /** Servers the workspace declares that were not started because it is not trusted. */
+  untrusted?: string[];
 };
 
-export function readWorkspaceMcpConfiguration(cwd: string): WorkspaceMcpConfiguration {
+export const UNTRUSTED_MCP_MESSAGE =
+  "Not started: MCP servers declared by this workspace only run once you trust it (/trust in the TUI, --trust-workspace headless).";
+
+/**
+ * MCP servers the workspace declares (`.mcp.json`, `mcpServers` in
+ * .nova-ai/settings.json). Declaring a stdio server means running a command,
+ * so a cloned repository's servers only start in a trusted workspace.
+ */
+export function readWorkspaceMcpConfiguration(
+  cwd: string,
+  options: { trusted?: boolean } = {},
+): WorkspaceMcpConfiguration {
   const configured = readWorkspaceSettings(cwd).mcpServers ?? [];
   const project = readProjectMcpConfiguration(cwd);
   const servers = new Map(configured.map((server) => [server.name, server]));
   for (const server of project.servers) servers.set(server.name, server);
-  return { servers: [...servers.values()], failures: project.failures };
+  const declared = [...servers.values()];
+  if (declared.length && !(options.trusted ?? isWorkspaceTrusted(cwd))) {
+    return {
+      servers: [],
+      failures: [
+        ...project.failures,
+        ...declared.map((server) => ({ serverName: server.name, message: UNTRUSTED_MCP_MESSAGE })),
+      ],
+      untrusted: declared.map((server) => server.name),
+    };
+  }
+  return { servers: declared, failures: project.failures };
+}
+
+/** Whether this workspace asks for anything that needs trust. */
+export function workspaceNeedsTrust(cwd: string): boolean {
+  if (isWorkspaceTrusted(cwd)) return false;
+  if (readWorkspaceMcpConfiguration(cwd, { trusted: true }).servers.length) return true;
+  return loadWorkspaceAllowRules(cwd).length > 0;
+}
+
+function loadWorkspaceAllowRules(cwd: string): string[] {
+  return ["settings.json", "settings.local.json"].flatMap((name) => {
+    const allow = readSettings(join(cwd, ".nova-ai", name))?.permissions?.allow;
+    return Array.isArray(allow) ? allow : [];
+  });
 }
 
 export function readProjectMcpConfiguration(cwd: string): WorkspaceMcpConfiguration {

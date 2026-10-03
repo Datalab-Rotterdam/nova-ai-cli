@@ -1,5 +1,6 @@
 import type { ChatMessage } from "@datalabrotterdam/nova-sdk";
 import type { InteractionMode } from "../interaction-modes.js";
+import type { PermissionPolicy } from "../policy/policy.js";
 import type { McpConnection, McpConnectionFailure } from "../mcp.js";
 import type { MemorySnapshot } from "../memory.js";
 import type { PromptQueue } from "../prompt-queue.js";
@@ -28,5 +29,7 @@ export type Session = {
   skills: SkillDefinition[];
   memory: MemorySnapshot;
   mode: InteractionMode;
+  /** Permission rules, mode and approvals of this session. */
+  policy: PermissionPolicy;
   model: string | null;
 };

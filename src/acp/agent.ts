@@ -68,9 +68,18 @@ import { AcpToolHost } from "./acp-tool-host.js";
 import {
   emitToAcp,
   notifyPlanUpdate,
-  requestAcpPermission,
   sessionStatusMeta,
 } from "./acp-emit.js";
+import { authorizeToolCall } from "./permission-flow.js";
+import {
+  PERMISSION_MODE_CONFIG_ID,
+  permissionModeOption,
+} from "./session-modes.js";
+import { PermissionPolicy } from "../core/policy/policy.js";
+import {
+  isPermissionMode,
+  PERMISSION_MODES,
+} from "../core/policy/settings.js";
 import type { AgentRuntime } from "./agent-runtime.js";
 import { runBrowserAuth } from "./auth-server.js";
 import { BackgroundService } from "./background-service.js";
@@ -190,6 +199,9 @@ export class NovaAgent implements AgentRuntime {
     return {
       sessionId,
       modes: sessionModeState("agent"),
+      configOptions: [
+        permissionModeOption(this.requireSession(sessionId).policy.mode),
+      ],
       _meta: sessionStatusMeta(
         params.mcpServers,
         mcpConnections,
@@ -238,6 +250,7 @@ export class NovaAgent implements AgentRuntime {
       skills,
       memory,
       mode: "agent",
+      policy: new PermissionPolicy(params.cwd),
       model: null,
     });
     return { mcpConnections, mcpFailures, skills };
@@ -290,6 +303,9 @@ export class NovaAgent implements AgentRuntime {
 
     return {
       modes: sessionModeState("agent"),
+      configOptions: [
+        permissionModeOption(this.requireSession(params.sessionId).policy.mode),
+      ],
       _meta: sessionStatusMeta(
         params.mcpServers,
         mcpConnections,
@@ -402,7 +418,7 @@ export class NovaAgent implements AgentRuntime {
     return {
       sessionId: newSessionId,
       modes: sessionModeState("agent"),
-      configOptions: await this.models.buildConfigOptions(
+      configOptions: await this.configOptions(
         this.requireSession(newSessionId),
       ),
     };
@@ -426,7 +442,7 @@ export class NovaAgent implements AgentRuntime {
     );
     return {
       modes: sessionModeState("agent"),
-      configOptions: await this.models.buildConfigOptions(
+      configOptions: await this.configOptions(
         this.requireSession(params.sessionId),
       ),
     };
@@ -436,6 +452,17 @@ export class NovaAgent implements AgentRuntime {
     params: acp.SetSessionConfigOptionRequest,
   ): Promise<acp.SetSessionConfigOptionResponse> {
     const session = this.requireSession(params.sessionId);
+    if (params.configId === PERMISSION_MODE_CONFIG_ID) {
+      if (!isPermissionMode(params.value)) {
+        throw acp.RequestError.invalidParams(
+          params,
+          `permission_mode must be one of: ${PERMISSION_MODES.join(", ")}`,
+        );
+      }
+      // Clients choose for this session; the TUI remembers a default itself.
+      session.policy.setMode(params.value, false);
+      return { configOptions: await this.configOptions(session) };
+    }
     if (params.configId !== "model") {
       throw acp.RequestError.invalidParams(
         params,
@@ -449,7 +476,17 @@ export class NovaAgent implements AgentRuntime {
       );
     }
     session.model = params.value;
-    return { configOptions: await this.models.buildConfigOptions(session) };
+    return { configOptions: await this.configOptions(session) };
+  }
+
+  /** Permission mode (always) and model (when the model list can be fetched). */
+  private async configOptions(
+    session: Session,
+  ): Promise<acp.SessionConfigOption[]> {
+    return [
+      permissionModeOption(session.policy.mode),
+      ...(await this.models.buildConfigOptions(session)),
+    ];
   }
 
   contextUsage(params: {
@@ -616,20 +653,30 @@ export class NovaAgent implements AgentRuntime {
 
     const host = new AcpToolHost(client, params.sessionId);
     const emit = (event: AgentEvent) =>
-      emitToAcp(client, params.sessionId, event);
-    const requestPermission = (
+      emitToAcp(client, params.sessionId, event, session.cwd);
+    const authorize = (
       toolCallId: string,
       tool: ToolDefinition,
       args: Record<string, unknown>,
     ) =>
-      requestAcpPermission(
-        client,
-        params.sessionId,
-        abortController.signal,
+      authorizeToolCall(
+        {
+          client,
+          sessionId: params.sessionId,
+          cwd: session.cwd,
+          host,
+          policy: session.policy,
+          signal: abortController.signal,
+        },
         toolCallId,
         tool,
         args,
       );
+    const requestPermission = async (
+      toolCallId: string,
+      tool: ToolDefinition,
+      args: Record<string, unknown>,
+    ) => (await authorize(toolCallId, tool, args)).allowed;
 
     let turnMessages: ChatMessage[] = [];
     let contextCompacted = false;
@@ -653,6 +700,7 @@ export class NovaAgent implements AgentRuntime {
             background,
             tools,
             requestPermission,
+            authorize,
             compactContext: async (currentMessages, error) => {
               const compaction = await compactConversation(
                 currentMessages.slice(systemMessageCount),

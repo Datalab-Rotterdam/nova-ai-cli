@@ -1,6 +1,8 @@
 import { resolve } from "node:path";
 import * as acp from "@agentclientprotocol/sdk";
 import { NovaAgent } from "../acp/agent.js";
+import type { PermissionMode } from "../core/policy/settings.js";
+import { setWorkspaceTrusted } from "../core/nova-home.js";
 import { loadStoredSession } from "../core/sessions.js";
 import { readWorkspaceMcpConfiguration } from "../tui/settings/workspace-mcp.js";
 import {
@@ -16,6 +18,8 @@ export type HeadlessOptions = {
   resume: string | null;
   json: boolean;
   mcp: boolean;
+  /** Persistently trust the workspace (its MCP servers and allow rules). */
+  trustWorkspace: boolean;
   permissionMode: HeadlessPermissionMode;
   help: boolean;
 };
@@ -36,7 +40,14 @@ type HeadlessAgentLike = Pick<
   | "prompt"
   | "cancel"
   | "closeSession"
->;
+> &
+  Partial<Pick<NovaAgent, "setSessionConfigOption">>;
+
+const AGENT_PERMISSION_MODE: Record<HeadlessPermissionMode, PermissionMode> = {
+  "read-only": "default",
+  "accept-edits": "acceptEdits",
+  "bypass-all": "bypassPermissions",
+};
 
 export type HeadlessDependencies = {
   agent?: HeadlessAgentLike;
@@ -116,6 +127,7 @@ export async function runHeadless(
     clientCapabilities: client.capabilities,
   });
 
+  if (options.trustWorkspace) setWorkspaceTrusted(options.cwd, true);
   const mcpConfiguration = options.mcp
     ? readWorkspaceMcpConfiguration(options.cwd)
     : { servers: [], failures: [] };
@@ -151,6 +163,13 @@ export async function runHeadless(
       });
       sessionId = created.sessionId;
     }
+    // The agent's policy decides; the headless client only answers what is
+    // left (see HeadlessAcpClient.requestPermission).
+    await agent.setSessionConfigOption?.({
+      sessionId,
+      configId: "permission_mode",
+      value: AGENT_PERMISSION_MODE[options.permissionMode],
+    });
 
     output.write({
       type: "session.started",
@@ -210,6 +229,7 @@ export function parseHeadlessArgs(
     resume: null,
     json: false,
     mcp: true,
+    trustWorkspace: false,
     permissionMode: "read-only",
     help: false,
   };
@@ -223,6 +243,7 @@ export function parseHeadlessArgs(
     }
     if (arg === "--json") options.json = true;
     else if (arg === "--no-mcp") options.mcp = false;
+    else if (arg === "--trust-workspace") options.trustWorkspace = true;
     else if (arg === "--help" || arg === "-h") options.help = true;
     else if (arg === "--prompt" || arg === "-p")
       options.prompt = takeValue(args, ++index, arg);
@@ -431,6 +452,8 @@ Options:
       --model <id>                 Override the configured model
       --resume <session-id>        Continue a persisted session
       --no-mcp                     Ignore workspace MCP configuration
+      --trust-workspace            Trust this workspace (remembered): start the MCP
+                                   servers and apply the allow rules it declares
       --permission-mode <mode>     read-only (default), accept-edits, or bypass-all
   -h, --help                       Show this help
 

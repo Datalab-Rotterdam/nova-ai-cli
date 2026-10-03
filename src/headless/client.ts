@@ -4,11 +4,9 @@ import type {
   RequestPermissionResponse,
 } from "@agentclientprotocol/sdk";
 import {
-  evaluatePermissionRules,
-  type PermissionDecision,
-} from "../core/policy/rules.js";
-import { readWorkspaceSettings } from "../tui/settings/workspace-settings.js";
-import { TuiAcpClient } from "../tui/session/tui-acp-client.js";
+  choosePermissionOption,
+  TuiAcpClient,
+} from "../tui/session/tui-acp-client.js";
 import { createStore } from "../tui/state/store.js";
 import type { UIState } from "../tui/state/types.js";
 
@@ -25,13 +23,6 @@ export type HeadlessEvent =
     }
   | { type: "notification"; method: string; params: unknown };
 
-const EDIT_TOOL_NAMES = new Set([
-  "write_file",
-  "edit_file",
-  "memory_write",
-  "save_memory",
-]);
-
 export class HeadlessAcpClient {
   readonly capabilities = {
     fs: { readTextFile: true, writeTextFile: true },
@@ -40,7 +31,7 @@ export class HeadlessAcpClient {
 
   private readonly base: TuiAcpClient;
   private readonly baseContext: acp.AgentContext;
-  private readonly permissionRules;
+  private readonly toolNames = new Map<string, string>();
 
   constructor(
     cwd: string,
@@ -66,7 +57,6 @@ export class HeadlessAcpClient {
     });
     this.base = new TuiAcpClient(store, cwd);
     this.baseContext = this.base.context();
-    this.permissionRules = readWorkspaceSettings(cwd).permissions;
   }
 
   context(): acp.AgentContext {
@@ -105,56 +95,59 @@ export class HeadlessAcpClient {
     params?: unknown,
   ): Promise<void> {
     await this.emit({ type: "notification", method, params });
+    if (method === "session/update") await this.reportAgentDecision(params);
     await this.baseContext.notify(method, params);
   }
 
+  /**
+   * The agent's policy already applied rules and the mode (set from
+   * --permission-mode); what still reaches us needs a person, and there is
+   * none: only bypass-all approves it.
+   */
   private async requestPermission(
     params: RequestPermissionRequest,
   ): Promise<RequestPermissionResponse> {
-    const toolName = params.toolCall.title ?? "tool";
-    const args = toRecord(params.toolCall.rawInput);
-    const ruleDecision = evaluatePermissionRules(
-      this.permissionRules,
-      toolName,
-      args,
-    );
-    const { allow, source } = this.permissionDecision(ruleDecision, toolName);
+    const toolName = this.toolName(params.toolCall);
+    const allow = this.permissionMode === "bypass-all";
+    const optionId =
+      choosePermissionOption(params.options, allow, "once") ??
+      (allow ? "allow_once" : "reject_once");
     await this.emit({
       type: "permission",
       toolCallId: params.toolCall.toolCallId,
       toolName,
       decision: allow ? "allow" : "reject",
-      source,
+      source: this.permissionMode,
     });
-    return {
-      outcome: {
-        outcome: "selected",
-        optionId: allow ? "allow" : "reject",
-      },
-    };
+    return { outcome: { outcome: "selected", optionId } };
   }
 
-  private permissionDecision(
-    ruleDecision: PermissionDecision,
-    toolName: string,
-  ): { allow: boolean; source: "rule" | HeadlessPermissionMode } {
-    if (ruleDecision === "deny") return { allow: false, source: "rule" };
-    if (ruleDecision === "allow") return { allow: true, source: "rule" };
-    if (this.permissionMode === "bypass-all") {
-      return { allow: true, source: "bypass-all" };
+  /** Reports decisions the agent's policy made without asking. */
+  private async reportAgentDecision(params: unknown): Promise<void> {
+    const update = (params as { update?: Record<string, unknown> })?.update;
+    if (!update) return;
+    const toolCallId = typeof update.toolCallId === "string" ? update.toolCallId : null;
+    if (!toolCallId) return;
+    if (update.sessionUpdate === "tool_call") {
+      this.toolNames.set(toolCallId, this.toolName(update as { title?: string; _meta?: Record<string, unknown> }));
+      return;
     }
-    if (
-      this.permissionMode === "accept-edits" &&
-      EDIT_TOOL_NAMES.has(toolName)
-    ) {
-      return { allow: true, source: "accept-edits" };
-    }
-    return { allow: false, source: this.permissionMode };
+    const permission = (update._meta as Record<string, unknown> | undefined)?.[
+      "nova-ai-cli/permission"
+    ] as { decision?: string; reason?: string } | undefined;
+    if (update.sessionUpdate !== "tool_call_update" || !permission) return;
+    await this.emit({
+      type: "permission",
+      toolCallId,
+      toolName: this.toolNames.get(toolCallId) ?? "tool",
+      decision: permission.decision === "allow" ? "allow" : "reject",
+      source: permission.reason === "mode" ? this.permissionMode : "rule",
+    });
   }
-}
 
-function toRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
+  private toolName(call: { title?: string | null; _meta?: Record<string, unknown> | null }): string {
+    const fromMeta = call._meta?.["nova-ai-cli/tool"];
+    return typeof fromMeta === "string" ? fromMeta : (call.title ?? "tool");
+  }
+
 }

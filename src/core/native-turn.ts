@@ -290,6 +290,7 @@ export async function runNativeTurn(
           signal,
           findTool,
           requestPermission: deps.requestPermission,
+          authorize: deps.authorize,
           emit,
           disableTools: () => {
             toolsEnabled = false;

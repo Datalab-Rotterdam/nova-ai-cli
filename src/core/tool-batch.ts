@@ -19,6 +19,11 @@ export type BatchEntry = {
   body: string;
 };
 
+/** Outcome of the permission policy for one call. */
+export type ToolAuthorization =
+  | { allowed: true }
+  | { allowed: false; reason: "rule" | "user" };
+
 export type ToolBatchContext = {
   host: ToolHost;
   sessionId: string;
@@ -35,6 +40,16 @@ export type ToolBatchContext = {
   emit(event: AgentEvent): void | Promise<void>;
   /** Called when a tool asks to stop every later tool (least-privilege mode change). */
   disableTools(): void;
+  /**
+   * The agent's permission policy, consulted for every call (deny rules also
+   * cover read-only tools). Without it, only mutating tools go through
+   * requestPermission.
+   */
+  authorize?(
+    toolCallId: string,
+    tool: ToolDefinition,
+    args: Record<string, unknown>,
+  ): Promise<ToolAuthorization>;
 };
 
 /**
@@ -143,10 +158,26 @@ export async function runToolBatch(
       requestPermission: ctx.requestPermission,
     };
     try {
-      const allowed =
-        !tool.mutating ||
-        (await ctx.requestPermission(toolCallId, tool, args));
-      if (!allowed) {
+      const authorization: ToolAuthorization = ctx.authorize
+        ? await ctx.authorize(toolCallId, tool, args)
+        : !tool.mutating || (await ctx.requestPermission(toolCallId, tool, args))
+          ? { allowed: true }
+          : { allowed: false, reason: "user" };
+      if (!authorization.allowed && authorization.reason === "rule") {
+        await ctx.emit({
+          type: "tool_update",
+          toolCallId,
+          status: "failed",
+          output: "Blocked by a deny rule in the Nova settings.",
+        });
+        entries.push({
+          name: block.name,
+          status: "rejected",
+          body: "Tool call blocked by a deny rule in the user's Nova settings. Do not retry it; take another approach or ask the user.",
+        });
+        continue;
+      }
+      if (!authorization.allowed) {
         await ctx.emit({
           type: "tool_update",
           toolCallId,
