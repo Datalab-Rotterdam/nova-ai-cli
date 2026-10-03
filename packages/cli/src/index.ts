@@ -1,5 +1,38 @@
 #!/usr/bin/env node
 import { MAIN_HELP, parseCli, parseTuiArgs, versionText } from "./cli.js";
+import type { UpdateAvailable } from "./tui/state/types.js";
+
+type UpdateCheck = { result: Promise<UpdateAvailable | null>; cancel(): void };
+
+/** Starts the npm check alongside the command, only when a person is watching (stderr is a terminal). */
+function startUpdateCheck(): UpdateCheck | null {
+  if (!process.stderr.isTTY) return null;
+  const abort = new AbortController();
+  const result = import("./update-check.js")
+    .then(({ checkForUpdate }) => checkForUpdate({ signal: abort.signal }))
+    .catch(() => null);
+  return { result, cancel: () => abort.abort() };
+}
+
+/**
+ * Prints "Update available" to stderr after `-p` and `--version`. Waits for
+ * the check only briefly and then cancels it, so it never holds up a script
+ * or keeps the process alive.
+ */
+async function noticeUpdate(check: UpdateCheck, waitMs: number): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const update = await Promise.race([
+    check.result,
+    new Promise<null>((resolve) => {
+      timer = setTimeout(() => resolve(null), waitMs);
+    }),
+  ]);
+  clearTimeout(timer);
+  check.cancel();
+  if (!update) return;
+  const { formatUpdateNotice } = await import("./update-check.js");
+  process.stderr.write(`\n${formatUpdateNotice(update)}\n`);
+}
 
 async function main(): Promise<number> {
   const command = parseCli(process.argv.slice(2));
@@ -10,9 +43,12 @@ async function main(): Promise<number> {
     case "help":
       process.stdout.write(`${MAIN_HELP}\n`);
       return 0;
-    case "version":
+    case "version": {
+      const update = startUpdateCheck();
       process.stdout.write(`${versionText()}\n`);
+      if (update) await noticeUpdate(update, 800);
       return 0;
+    }
     case "acp": {
       if (command.args.length) {
         process.stderr.write(`--acp takes no other arguments (got ${command.args.join(" ")}).\n`);
@@ -23,8 +59,11 @@ async function main(): Promise<number> {
       return 0;
     }
     case "print": {
+      const update = startUpdateCheck();
       const { default: runHeadless } = await import("./headless/index.js");
-      return runHeadless(command.args);
+      const code = await runHeadless(command.args);
+      if (update) await noticeUpdate(update, 500);
+      return code;
     }
     case "login": {
       const { runLogin } = await import("@datalabrotterdam/nova-ai-agent/commands/login.js");
