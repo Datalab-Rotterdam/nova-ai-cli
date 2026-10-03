@@ -1,4 +1,5 @@
 import type { PackageManager } from "./environment.js";
+import { formatCommandResult } from "./run-command.js";
 import type { ToolDefinition } from "./types.js";
 
 export const runPackageScriptTool: ToolDefinition = {
@@ -17,7 +18,7 @@ export const runPackageScriptTool: ToolDefinition = {
     !!caps?.terminal && !!environment?.packageManager && environment.packageScripts.length > 0,
   mutating: true,
   kind: "execute",
-  async execute({ host, signal, environment }, args) {
+  async execute({ host, signal, environment, cwd, toolCallId }, args) {
     const script = typeof args.script === "string" ? args.script : "";
     if (!script) return { error: "run_package_script requires a 'script' argument." };
     if (!environment.packageManager) return { error: "No package manager is available for this workspace." };
@@ -33,9 +34,8 @@ export const runPackageScriptTool: ToolDefinition = {
     const command = buildPackageScriptCommand(environment.packageManager, script, extraArgs, environment.platform);
 
     try {
-      const { output, truncated, exitCode } = await host.runCommand(command, signal);
-      const exitNote = exitCode !== null ? ` (exit code ${exitCode})` : "";
-      return { output: `${output}${truncated ? "\n[output truncated]" : ""}${exitNote}` };
+      const result = await host.runCommand(command, signal, { cwd, toolCallId });
+      return { output: formatCommandResult(result) };
     } catch (err) {
       return { error: err instanceof Error ? err.message : "Failed to run package script." };
     }

@@ -41,6 +41,15 @@ describe("runCommandTool", () => {
     assert.deepEqual(result, { output: "lots of output\n[output truncated] (exit code 1)" });
   });
 
+  it("notes commands that were stopped by their timeout", async () => {
+    const ctx = makeContext(async (_command, _signal, options) => {
+      assert.equal(options?.timeoutMs, 5_000);
+      return { output: "partial", truncated: false, exitCode: null, timedOut: true };
+    });
+    const result = await runCommandTool.execute(ctx, { command: "slow", timeout_seconds: 5 });
+    assert.deepEqual(result, { output: "partial\n[timed out: the command was stopped]" });
+  });
+
   it("returns an error when the host run rejects", async () => {
     const ctx = makeContext(async () => {
       throw new Error("spawn failed");

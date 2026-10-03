@@ -66,6 +66,8 @@ export class BackgroundService {
     const created = await client.request(acp.methods.client.terminal.create, {
       sessionId: params.sessionId,
       command: params.command,
+      cwd: session.cwd,
+      outputByteLimit: 1_000_000,
     });
     const job = this.backgroundJobs.createTerminalJob({
       sessionId: params.sessionId,
