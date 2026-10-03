@@ -187,3 +187,30 @@ test("path aliases normalize Windows separators and exact rules escape shell wil
     "ask",
   );
 });
+
+test("tools named differently in nova-ai-vscode match each other's rules", () => {
+  // create_file / list_dir / todo_write are the VS Code extension's names.
+  assert.equal(
+    evaluatePermissionRules({ allow: ["create_file(src/*)"] }, "write_file", { path: "src/a.ts" }),
+    "allow",
+  );
+  assert.equal(
+    evaluatePermissionRules({ deny: ["write_file(.env)"] }, "create_file", { path: ".env" }),
+    "deny",
+  );
+  assert.equal(
+    evaluatePermissionRules({ deny: ["list_dir(secrets/*)"] }, "list_directory", { path: "secrets/keys" }),
+    "deny",
+  );
+  assert.equal(evaluatePermissionRules({ allow: ["todo_write"] }, "update_plan", { plan: [] }), "allow");
+  assert.equal(
+    evaluatePermissionRules({ deny: ["find_files(**/.env*)"] }, "find_files", { pattern: "**/.env*" }),
+    "deny",
+  );
+  assert.equal(
+    evaluatePermissionRules({ allow: ["fetch_url(https://docs.example.com/*)"] }, "fetch_url", {
+      url: "https://evil.example.net/?q=secret",
+    }),
+    "ask",
+  );
+});
