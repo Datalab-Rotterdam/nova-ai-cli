@@ -147,3 +147,6 @@ dist-test/
 # IDEA folders
 .idea
 .vscode
+
+# Local MCP servers of your own IDE (machine-specific ports)
+/.mcp.json
