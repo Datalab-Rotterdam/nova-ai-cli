@@ -156,6 +156,3 @@ ext
 .nova-ai/
 .claude/
 .mcp.json
-
-# Local MCP servers of your own IDE (machine-specific ports)
-/.mcp.json
