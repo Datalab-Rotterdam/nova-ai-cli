@@ -157,8 +157,12 @@ describe("NovaAgent.newSession", () => {
       mcpServers: [],
     });
 
-    assert.ok(agent.contextUsage({ sessionId }).categories.tools > 0);
+    const agentTools = agent.contextUsage({ sessionId }).categories.tools;
+    assert.ok(agentTools > 0);
     assert.deepEqual(agent.setSessionMode({ sessionId, modeId: "plan" }), {});
+    const planTools = agent.contextUsage({ sessionId }).categories.tools;
+    assert.ok(planTools > 0 && planTools < agentTools, "plan mode keeps only the read-only tools");
+    assert.deepEqual(agent.setSessionMode({ sessionId, modeId: "ask" }), {});
     assert.equal(agent.contextUsage({ sessionId }).categories.tools, 0);
     assert.throws(
       () => agent.setSessionMode({ sessionId, modeId: "bypassAll" }),

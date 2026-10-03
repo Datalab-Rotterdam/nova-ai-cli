@@ -273,9 +273,11 @@ Built-in and session tools (`src/acp/tools/registry.ts` plus mode-scoped tools):
 Tools are filtered per-session by the client's advertised `clientCapabilities`, the detected workspace environment, and available host services. Background tools are offered only when the agent has a background job service for the session.
 
 Nova AI advertises `agent`, `ask`, and `plan` through standard ACP session
-modes. `enter_plan_mode` is offered only in agent mode; ask and plan mode expose
-no tools. Permission policy is client-owned and deliberately absent from this
-mode API, so the model cannot select `acceptEdits` or `bypassAll`.
+modes. `enter_plan_mode` is offered only in agent mode. Ask mode exposes no
+tools; plan mode exposes only the read-only workspace tools (`read_file`,
+`list_directory`, `search_text`, `memory_read`, `load_skill`) plus `ask_user`
+and `update_plan`. The permission mode is a separate setting the model cannot
+change, so it can never select `acceptEdits` or `bypassAll`.
 
 `ask_user` is offered only when the client advertises ACP form elicitation.
 The TUI renders it as a bordered, keyboard-driven dialog and always adds an

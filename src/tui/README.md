@@ -136,8 +136,11 @@ same inspector.
 Interaction modes and permission modes are separate security domains. The
 agent can call the argument-free `enter_plan_mode` tool to move itself from
 `agent` to `plan`; this is a one-way least-privilege transition. The call
-immediately blocks later tools in the current turn, and `ask`/`plan` turns are
-started without any tools. Mode state is exposed through standard ACP session
+immediately blocks later tools in the current turn. `ask` turns get no tools;
+`plan` turns get only `read_file`, `list_directory`, `search_text`,
+`memory_read`, `load_skill`, `ask_user` and `update_plan`, so the agent can
+investigate, ask and keep a task list but never edit files, run commands or
+call MCP tools. Mode state is exposed through standard ACP session
 modes and `current_mode_update` notifications.
 
 The agent cannot change the permission mode. Only the user-facing Ctrl+K and

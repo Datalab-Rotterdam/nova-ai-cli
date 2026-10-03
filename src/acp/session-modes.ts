@@ -16,7 +16,8 @@ const AVAILABLE_MODES: acp.SessionMode[] = [
   {
     id: "plan",
     name: "Plan",
-    description: "Develop an implementation plan without calling tools or changing files.",
+    description:
+      "Read the workspace, ask questions and track tasks to develop a plan, without changing files or running commands.",
   },
 ];
 

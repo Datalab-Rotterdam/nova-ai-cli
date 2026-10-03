@@ -31,17 +31,38 @@ function session(): Session {
 const names = (tools: { name: string }[]) => tools.map((tool) => tool.name);
 
 describe("buildSessionTools", () => {
-  it("gives ask and plan mode no tools at all", () => {
-    for (const mode of ["ask", "plan"] as const) {
-      assert.deepEqual(
-        buildSessionTools(session(), FULL_CAPABILITIES, {
-          mode,
-          updatePlan: () => {},
-          enterPlanMode: () => {},
-        }),
-        [],
-      );
-    }
+  it("gives ask mode no tools at all", () => {
+    assert.deepEqual(
+      buildSessionTools(session(), FULL_CAPABILITIES, {
+        mode: "ask",
+        updatePlan: () => {},
+        enterPlanMode: () => {},
+      }),
+      [],
+    );
+  });
+
+  it("gives plan mode reading, questions and the task list, nothing that changes things", () => {
+    const withMcp = session();
+    // An MCP tool that borrows a built-in name still stays out of plan mode.
+    withMcp.mcpTools = [
+      { name: "read_file", description: "mcp", parameters: { type: "object" }, mutating: false, kind: "read", execute: async () => ({ output: "" }) },
+    ] as Session["mcpTools"];
+    const tools = buildSessionTools(withMcp, FULL_CAPABILITIES, {
+      mode: "plan",
+      updatePlan: () => {},
+      enterPlanMode: () => {},
+    });
+    assert.deepEqual(names(tools).sort(), [
+      "ask_user",
+      "list_directory",
+      "memory_read",
+      "read_file",
+      "search_text",
+      "update_plan",
+    ]);
+    assert.ok(!tools.some((tool) => tool.mutating), "no mutating tool");
+    assert.ok(!tools.some((tool) => tool.description === "mcp"), "not the MCP read_file");
   });
 
   it("gives agent mode enter_plan_mode first, then update_plan and the rest", () => {

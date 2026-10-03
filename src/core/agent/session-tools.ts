@@ -1,6 +1,6 @@
 import type * as acp from "@agentclientprotocol/sdk";
 import type { InteractionMode } from "../interaction-modes.js";
-import { interactionModeAllowsTools } from "../interaction-modes.js";
+import { PLAN_MODE_TOOLS } from "../interaction-modes.js";
 import {
   createMemoryReadTool,
   createMemoryWriteTool,
@@ -24,8 +24,9 @@ export function createMemoryTools(session: Session): ToolDefinition[] {
 
 export type SessionToolOptions = {
   /**
-   * Interaction mode gating the tools: ask/plan get none, agent mode also
-   * gets enter_plan_mode. null skips gating entirely (background agents).
+   * Interaction mode gating the tools: ask gets none, plan gets the
+   * read-only PLAN_MODE_TOOLS, agent mode gets everything plus
+   * enter_plan_mode. null skips gating entirely (background agents).
    */
   mode: InteractionMode | null;
   updatePlan?: (entries: acp.PlanEntry[]) => void | Promise<void>;
@@ -50,7 +51,13 @@ export function buildSessionTools(
     ...session.mcpTools,
   ];
   if (options.mode === null) return baseTools;
-  if (!interactionModeAllowsTools(options.mode)) return [];
+  if (options.mode === "plan") {
+    // By identity as well as name: an MCP server could name a tool read_file.
+    return baseTools.filter(
+      (tool) => PLAN_MODE_TOOLS.has(tool.name) && !session.mcpTools.includes(tool),
+    );
+  }
+  if (options.mode !== "agent") return [];
   return [
     ...(options.enterPlanMode
       ? [createEnterPlanModeTool(options.enterPlanMode)]
