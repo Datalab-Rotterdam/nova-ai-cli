@@ -398,7 +398,11 @@ export class TuiController {
     if (!discoverSkills(cwd).some((skill) => skill.name === name)) {
       return `No skill named "${name}". /skills lists them.`;
     }
-    setSkillEnabled(cwd, global ? "global" : "project", name, enabled);
+    try {
+      setSkillEnabled(cwd, global ? "global" : "project", name, enabled);
+    } catch (error) {
+      return errorMessage(error, "Could not change the skill.");
+    }
     const stillOff = enabled && disabledSkillNames(cwd).has(name);
     return (
       stillOff

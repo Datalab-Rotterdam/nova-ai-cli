@@ -169,6 +169,10 @@ test("skills are switched on and off per scope without touching other settings",
 
     setSkillEnabled(cwd, "global", "review", true, novaHome);
     assert.deepEqual([...disabledSkillNames(cwd, novaHome)], ["deploy"]);
+
+    writeFileSync(join(novaHome, "settings.json"), "{ broken");
+    assert.throws(() => setSkillEnabled(cwd, "global", "review", false, novaHome), /not valid JSON/);
+    assert.equal(readFileSync(join(novaHome, "settings.json"), "utf8"), "{ broken");
   } finally {
     if (previousHome === undefined) delete process.env.NOVA_AI_HOME;
     else process.env.NOVA_AI_HOME = previousHome;

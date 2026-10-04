@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -66,15 +66,19 @@ export function setSkillEnabled(
   novaHome = novaHomeRoot(),
 ): string {
   const path = scope === "global" ? join(novaHome, "settings.json") : projectPaths(cwd).settings;
-  const settings = readSettings(path) ?? {};
-  const skills = settings.skills && typeof settings.skills === "object" && !Array.isArray(settings.skills)
+  const settings = readSettings(path);
+  if (!settings && existsSync(path)) {
+    // Never replace a file we cannot read: it holds the permission rules too.
+    throw new Error(`${path} is not valid JSON; fix it before changing skills.`);
+  }
+  const skills = settings?.skills && typeof settings.skills === "object" && !Array.isArray(settings.skills)
     ? (settings.skills as Record<string, unknown>)
     : {};
   const disabled = Array.isArray(skills.disabled)
     ? skills.disabled.filter((entry): entry is string => typeof entry === "string" && entry !== name)
     : [];
   if (!enabled) disabled.push(name);
-  writePrivateFile(path, `${JSON.stringify({ ...settings, skills: { ...skills, disabled } }, null, 2)}\n`);
+  writePrivateFile(path, `${JSON.stringify({ ...(settings ?? {}), skills: { ...skills, disabled } }, null, 2)}\n`);
   return path;
 }
 
