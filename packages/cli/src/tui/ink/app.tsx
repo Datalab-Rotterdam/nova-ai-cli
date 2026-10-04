@@ -5,7 +5,7 @@ import { savedPermissionMode } from "@datalabrotterdam/nova-ai-agent/core/policy
 import { fromAgentPermissionMode, SessionRunner } from "../session/session-runner.js";
 import { createStore, type Store } from "../state/store.js";
 import type { UIState, UpdateAvailable } from "../state/types.js";
-import { checkForUpdate } from "../update-check.js";
+import { checkForUpdate } from "../../update-check.js";
 import { detectKittyKeyboard, kittyKeyboardOverride } from "./terminal-keyboard.js";
 import { PromptInput } from "./components/prompt-input.js";
 import { StatusLine } from "./components/status-line.js";

@@ -92,6 +92,29 @@ export function modelSupportsImageInput(
   );
 }
 
+/**
+ * The model's context window in tokens, or null when the gateway does not
+ * say. Nova's gateway sends `contextWindow`; OpenAI-compatible servers use
+ * `context_window` or `max_model_len`.
+ */
+export function modelContextWindow(model: object | null | undefined): number | null {
+  return positiveNumber(model, ["contextWindow", "context_window", "max_model_len"]);
+}
+
+/** Most tokens the model may generate in one answer, or null when unknown. */
+export function modelMaxOutputTokens(model: object | null | undefined): number | null {
+  return positiveNumber(model, ["maxOutputTokens", "max_output_tokens"]);
+}
+
+function positiveNumber(model: object | null | undefined, keys: string[]): number | null {
+  if (!model) return null;
+  for (const key of keys) {
+    const value = (model as Record<string, unknown>)[key];
+    if (typeof value === "number" && Number.isFinite(value) && value > 0) return value;
+  }
+  return null;
+}
+
 export function findModelMetadata(
   models: ModelResponse[],
   modelId: string,

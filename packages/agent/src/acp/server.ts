@@ -110,6 +110,9 @@ export function createAgentApp(agentImpl: NovaAgent): acp.AgentApp {
     .onRequest(NOVA_METHODS.sessionContextUsage, parseContextUsageParams, (ctx) =>
       agentImpl.contextUsage(ctx.params),
     )
+    .onRequest(NOVA_METHODS.sessionSetSettings, parseSetSettingsParams, (ctx) =>
+      agentImpl.setSessionSettings(ctx.params),
+    )
     .onNotification("session/cancel", (ctx) => agentImpl.cancel(ctx.params));
 }
 
@@ -135,6 +138,15 @@ function parseContextUsageParams(params: unknown): {
     contextWindow: typeof value.contextWindow === "number" ? value.contextWindow : null,
     ...(value.mode !== undefined ? { mode: value.mode as InteractionMode } : {}),
   };
+}
+
+function parseSetSettingsParams(params: unknown): { sessionId: string; settings: Record<string, unknown> } {
+  const value = requireSessionParams(params);
+  const settings = value.settings;
+  if (!settings || typeof settings !== "object" || Array.isArray(settings)) {
+    throw acp.RequestError.invalidParams({ settings }, "settings must be an object.");
+  }
+  return { sessionId: value.sessionId, settings: settings as Record<string, unknown> };
 }
 
 function requireSessionParams(params: unknown): Record<string, unknown> & { sessionId: string } {

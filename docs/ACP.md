@@ -62,7 +62,7 @@ needs Nova without credentials fails with `authRequired`.
 | `session/load` | Replays the stored conversation: user and agent text, and tool calls with their final status, diff and (truncated) output. |
 | `session/resume` | Like load, without the replay. |
 | `session/fork` | Copies a stored session under a new id. |
-| `session/list` | 50 per page with an opaque `cursor`; optional `cwd` filter. |
+| `session/list` | 50 per page with an opaque `cursor`; optional `cwd` filter. With a `cwd`, it first imports the VS Code panel's chats of that workspace that are not imported yet (see below). |
 | `session/close` / `session/delete` | Close cancels a running turn and stops the session's MCP servers; delete also removes the stored file. Background jobs keep running until killed or the agent exits. |
 | `session/prompt` | One turn. Prompts for the same session are queued and run one after another. |
 | `session/cancel` | Aborts the model request and running tools, answers pending permission requests as cancelled, marks open tool calls failed ("Cancelled"), then returns `stopReason: "cancelled"`. |
@@ -74,12 +74,45 @@ Unknown sessions give `resourceNotFound`. Sessions are stored as JSONL under
 `~/.nova-ai/projects/<project-key>/cli-sessions/` (see
 [NOVA_HOME.md](./NOVA_HOME.md)).
 
+**Chats of the VS Code panel.** The extension's built-in chat panel keeps its
+chats in `projects/<key>/sessions/`. Listing a workspace's sessions
+(`session/list` with a `cwd`, and the CLI's `/resume` and `--continue`)
+imports the ones not imported before: same id and title, one turn per user
+prompt (so checkpoints and rewind work), tool calls with their results, the
+extension's tool names mapped to the agent's. Imported ids are recorded in
+`cli-sessions/extension-import.json`, so a deleted import does not come back;
+the extension's files are not changed.
+
+### Prompts
+
+Text, images (`promptCapabilities.image`) and files
+(`embeddedContext`). An embedded `resource` reaches the model as
+`<attached_file path="/abs/path" lines="10-20">…</attached_file>`, a
+`resource_link` as `[Attached file, not included: /abs/path, lines 10-20]`
+(the model reads it with `read_file` when needed). File URIs become paths; a
+`#L10-L20` or `#L10` fragment is the selected line range.
+
+### Session settings
+
+Clients can tune a session with `_meta["nova-ai-cli/settings"]` on
+`session/new`, `load`, `resume` and `fork`, and change it later with
+`_nova/session/set_settings`. Keys left out keep the agent's defaults;
+numbers are clamped to the range shown, other types are ignored.
+
+| Key | Range | Default | Effect |
+|---|---|---|---|
+| `maxToolRounds` | 1–200 | 64 | Tool rounds per turn before the model must answer (`stopReason: "max_turn_requests"`) |
+| `autoCompact` | boolean | `true` | Summarize older messages when the context runs full; `false` lets an overflow fail the turn |
+| `compactThreshold` | 0.3–0.95 | 0.8 | Share of the context window at which a turn compacts before calling the model |
+| `memory` | boolean | `true` | Memory, `NOVA.md` and `AGENTS.md` in the prompt, and the memory tools |
+| `commandTimeoutSeconds` | 5–600 | 120 | Time limit for commands that set no `timeout_seconds` |
+
 ### Modes
 
 | Mode | Tools |
 |---|---|
 | `agent` | All tools, plus `enter_plan_mode` |
-| `plan` | Read-only: `read_file`, `list_directory`, `search_text`, `memory_read`, `load_skill`, plus `ask_user` and `update_plan` |
+| `plan` | Read-only: `read_file`, `list_directory`, `find_files`, `search_text`, `memory_read`, `load_skill`, plus `ask_user` and `update_plan` |
 | `ask` | None |
 
 The model can move itself from `agent` to `plan` with `enter_plan_mode`
@@ -132,19 +165,28 @@ reported on the tool call as `_meta["nova-ai-cli/permission"]`.
 
 | Capability | Used for |
 |---|---|
-| `fs.readTextFile` / `fs.writeTextFile` | `read_file`, `list_directory`, `search_text` / `write_file`, `edit_file` (unsaved editor buffers are seen) |
+| `fs.readTextFile` / `fs.writeTextFile` | `read_file`, `list_directory`, `find_files`, `search_text` / `write_file`, `edit_file` (unsaved editor buffers are seen) |
 | `terminal` | `run_command`, `run_package_script`, background commands: created with `cwd`, an output limit and a timeout, then killed |
 | `elicitation.form` | `ask_user`: 1–4 questions, single or multiple choice, option descriptions, a recommended option and a free-text "Other" answer |
 
 Without a capability the matching tools are not offered.
+
+`fetch_url` (read a web page as text, or JSON and other text as it is) needs
+no capability: the agent fetches it itself. It always asks for approval
+unless a rule allows the URL, because a URL can carry data out. It only
+follows redirects on the same site; a redirect elsewhere is reported and needs
+its own call.
+
+MCP tools ask for approval unless the server marks them
+`annotations.readOnlyHint: true`.
 
 ## Tool calling
 
 Nova uses the gateway's native function calling (`tools` / `tool_calls`). For
 models that reject it, it falls back to a text protocol and remembers that per
 model in `~/.nova-ai/model-capabilities.json`. `NOVA_TOOL_PROTOCOL=native|text`
-forces one. A turn ends after 64 tool rounds with `stopReason:
-"max_turn_requests"`.
+forces one. A turn ends after 64 tool rounds (the `maxToolRounds` setting)
+with `stopReason: "max_turn_requests"`.
 
 ## Nova extensions (`_nova/…`)
 
@@ -164,7 +206,7 @@ A `steer` entry is injected into the running turn at the next tool boundary.
 | `_nova/queue/enqueue` | `text`, `prompt` (content blocks), `kind?`, `front?` | `{ entry, entries }` |
 | `_nova/queue/list` | | `{ entries }` |
 | `_nova/queue/edit_begin` | `id` | `{ updated, entries }`; locks the entry against being taken |
-| `_nova/queue/update` | `id`, `text?`, `prompt?`, `editing?`, `expectedVersion?` | `{ updated, entries }`; refused on a version mismatch |
+| `_nova/queue/update` | `id`, `text?`, `prompt?`, `editing?`, `kind?`, `front?`, `expectedVersion?` | `{ updated, entries }`; refused on a version mismatch. `kind` switches between follow-up and steer; `front: true` moves the entry first (with `kind: "steer"`: "send now") |
 | `_nova/queue/remove` | `id` | `{ removed, entries }` |
 | `_nova/queue/clear` | | `{ cleared, entries }` |
 | `_nova/queue/take_next` | | `{ entry }` (with its `prompt`), or `{ entry: null }` |
@@ -179,6 +221,7 @@ Notification `_nova/queue/changed`: `{ sessionId, entries }`.
 | `_nova/session/rewind` | `turns?` (default 1) | `{ removedCheckpoints, remainingCheckpoints, messageCount }`; clears the queue |
 | `_nova/session/compact` | `model?` | `{ compacted, removedMessages, keptMessages }` |
 | `_nova/session/context_usage` | `contextWindow?`, `mode?` | Estimated tokens per category (system, conversation, agents, thinking, tools, skills, memory) and the total |
+| `_nova/session/set_settings` | `settings` (see Session settings) | `{ settings }`: the settings now in force, with `null` for "the agent's default". Merged over the current ones; applies from the next turn |
 
 Notification `_nova/session/rewound`: `{ sessionId, removedCheckpoints,
 remainingCheckpoints, messageCount }`. Rewind and compaction are refused while
@@ -207,10 +250,11 @@ also written under `~/.nova-ai/background-jobs/`.
 
 | Where | Key | Meaning |
 |---|---|---|
+| `session/new` / `load` / `resume` / `fork` params | `nova-ai-cli/settings` | Session settings (see Sessions) |
 | `session/prompt` params | `nova-ai-cli/model` | Model for this prompt only |
 | `session/new` / `load` result | `nova-ai-cli/mcp`, `nova-ai-cli/skills` | MCP servers (configured, connected, failures) and discovered skills |
 | tool calls | `nova-ai-cli/tool`, `nova-ai-cli/permission`, `nova-ai-cli/replayed` | Tool name, policy decision, replayed from history |
-| `providers/list` result | `nova-ai-cli/models` | Chat models with their provider |
+| `providers/list` result | `nova-ai-cli/models` | Chat models: `id`, `label`, `providerId`, `providerName`, `enabled`, `contextWindow` and `maxOutputTokens` (tokens, `null` when the gateway does not say) |
 
 ## Unstable SDK features
 

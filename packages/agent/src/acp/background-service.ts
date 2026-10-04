@@ -18,11 +18,11 @@ import {
 } from "../core/background.js";
 import { chatContentToText } from "../core/chat-content.js";
 import { readCredentials } from "../core/credentials.js";
-import { buildMemorySystemPrompt, loadMemory } from "../core/memory.js";
+import { buildMemorySystemPrompt, sessionMemory } from "../core/memory.js";
 import { stripReasoningTags } from "../core/reasoning-tags.js";
 import { runTurn } from "../core/run-turn.js";
 import { deriveTitle } from "../core/sessions.js";
-import { buildSkillsSystemPrompt, discoverSkills } from "../core/skills.js";
+import { buildSkillsSystemPrompt, discoverEnabledSkills } from "../core/skills.js";
 import { detectToolEnvironment } from "../core/tools/environment.js";
 import { stripToolCallMarkup } from "../core/tools/marker.js";
 import {
@@ -327,8 +327,8 @@ export class BackgroundService {
       session.cwd,
       this.runtime.clientCapabilities,
     );
-    session.skills = discoverSkills(session.cwd);
-    session.memory = loadMemory(session.cwd);
+    session.skills = discoverEnabledSkills(session.cwd);
+    session.memory = sessionMemory(session.cwd, session.settings.memory);
     const contextWindow = await this.runtime.models.resolveContextWindow(
       novaClient,
       model,
@@ -340,8 +340,8 @@ export class BackgroundService {
     const systemPromptFor = (protocol: ToolProtocol) =>
       [
         buildModeSystemPrompt(getPromptMode(params)),
-        buildSkillsSystemPrompt(session.skills),
-        buildMemorySystemPrompt(session.memory),
+        buildSkillsSystemPrompt(session.skills, contentBlocksToText(params.prompt)),
+        buildMemorySystemPrompt(session.memory, session.settings.memory),
         protocol === "native"
           ? buildNativeToolsSystemPrompt(tools, session.cwd)
           : buildToolsSystemPrompt(tools, session.cwd),
@@ -364,7 +364,9 @@ export class BackgroundService {
       ...session.history,
       userMessage,
     ];
-    const host = new AcpToolHost(client, params.sessionId);
+    const host = new AcpToolHost(client, params.sessionId, {
+      defaultTimeoutMs: session.settings.commandTimeoutMs ?? undefined,
+    });
     const authorize = (
       toolCallId: string,
       tool: ToolDefinition,
@@ -414,6 +416,7 @@ export class BackgroundService {
             requestPermission,
             authorize,
             contextWindow,
+            maxToolRounds: session.settings.maxToolRounds ?? undefined,
             emit,
             novaClient,
             model,

@@ -27,7 +27,12 @@ import {
   type McpConnection,
   type McpConnectionFailure,
 } from "../core/mcp.js";
-import { buildMemorySystemPrompt, loadMemory } from "../core/memory.js";
+import { buildMemorySystemPrompt, sessionMemory } from "../core/memory.js";
+import {
+  applySessionSettings,
+  sessionSettingsView,
+  settingsFromMeta,
+} from "../core/agent/session-settings.js";
 import { PromptQueue } from "../core/prompt-queue.js";
 import { runTurn } from "../core/run-turn.js";
 import {
@@ -45,7 +50,7 @@ import {
 } from "../core/sessions.js";
 import {
   buildSkillsSystemPrompt,
-  discoverSkills,
+  discoverEnabledSkills,
   type SkillDefinition,
 } from "../core/skills.js";
 import { detectToolEnvironment } from "../core/tools/environment.js";
@@ -87,6 +92,7 @@ import { NesService } from "./nes-service.js";
 import { selectPositionEncoding } from "./nes.js";
 import {
   contentBlocksToNovaContent,
+  contentBlocksToText,
   getPromptModel,
 } from "./prompt-content.js";
 import { QueueService } from "./queue-service.js";
@@ -325,7 +331,7 @@ export class NovaAgent implements AgentRuntime {
    */
   private async setupSession(
     sessionId: string,
-    params: { cwd: string; mcpServers?: acp.McpServer[] },
+    params: { cwd: string; mcpServers?: acp.McpServer[]; _meta?: Record<string, unknown> | null },
     history: ChatMessage[],
     title: string | null,
   ): Promise<{
@@ -342,8 +348,9 @@ export class NovaAgent implements AgentRuntime {
       params.cwd,
       this.clientCapabilities,
     );
-    const skills = discoverSkills(params.cwd);
-    const memory = loadMemory(params.cwd);
+    const skills = discoverEnabledSkills(params.cwd);
+    const settings = settingsFromMeta(params._meta);
+    const memory = sessionMemory(params.cwd, settings.memory);
     this.sessions.set(sessionId, {
       pendingPrompt: null,
       activeTurns: new Set(),
@@ -362,6 +369,7 @@ export class NovaAgent implements AgentRuntime {
       mode: "agent",
       policy: new PermissionPolicy(params.cwd),
       model: null,
+      settings,
     });
     return { mcpConnections, mcpFailures, skills };
   }
@@ -604,7 +612,7 @@ export class NovaAgent implements AgentRuntime {
       history: session.history,
       systemPrompt: buildModeSystemPrompt(mode),
       skillsPrompt: buildSkillsSystemPrompt(session.skills),
-      memoryPrompt: buildMemorySystemPrompt(session.memory),
+      memoryPrompt: buildMemorySystemPrompt(session.memory, session.settings.memory),
       toolsPrompt: buildToolsSystemPrompt(tools, session.cwd),
       contextWindow: params.contextWindow,
     });
@@ -641,6 +649,18 @@ export class NovaAgent implements AgentRuntime {
     }
     await runBrowserAuth();
     return {};
+  }
+
+  /**
+   * Changes a session's settings; keys left out keep their value. Takes effect
+   * from the next turn. Answers with the settings now in force.
+   */
+  setSessionSettings(params: { sessionId: string; settings: Record<string, unknown> }): {
+    settings: ReturnType<typeof sessionSettingsView>;
+  } {
+    const session = this.requireSession(params.sessionId);
+    session.settings = applySessionSettings(session.settings, params.settings);
+    return { settings: sessionSettingsView(session.settings) };
   }
 
   async compactSession(params: {
@@ -744,8 +764,8 @@ export class NovaAgent implements AgentRuntime {
       session.cwd,
       this.clientCapabilities,
     );
-    session.skills = discoverSkills(session.cwd);
-    session.memory = loadMemory(session.cwd);
+    session.skills = discoverEnabledSkills(session.cwd);
+    session.memory = sessionMemory(session.cwd, session.settings.memory);
     const background = this.background.createBackgroundToolApi(params.sessionId, client);
     const tools = buildSessionTools(session, this.clientCapabilities, {
       mode: session.mode,
@@ -770,8 +790,8 @@ export class NovaAgent implements AgentRuntime {
     const systemPromptFor = (protocol: ToolProtocol) =>
       [
         buildModeSystemPrompt(session.mode),
-        buildSkillsSystemPrompt(session.skills),
-        buildMemorySystemPrompt(session.memory),
+        buildSkillsSystemPrompt(session.skills, contentBlocksToText(params.prompt)),
+        buildMemorySystemPrompt(session.memory, session.settings.memory),
         protocol === "native"
           ? buildNativeToolsSystemPrompt(tools, session.cwd)
           : buildToolsSystemPrompt(tools, session.cwd),
@@ -799,7 +819,9 @@ export class NovaAgent implements AgentRuntime {
     ];
     const systemMessageCount = systemPrompt ? 1 : 0;
 
-    const host = new AcpToolHost(client, params.sessionId);
+    const host = new AcpToolHost(client, params.sessionId, {
+      defaultTimeoutMs: session.settings.commandTimeoutMs ?? undefined,
+    });
     let reportedUsage = false;
     const emit = async (event: AgentEvent) => {
       if (event.type === "usage") {
@@ -861,7 +883,9 @@ export class NovaAgent implements AgentRuntime {
             tools,
             requestPermission,
             authorize,
-            compactContext: async (currentMessages, error) => {
+            maxToolRounds: session.settings.maxToolRounds ?? undefined,
+            compactThreshold: session.settings.compactThreshold ?? undefined,
+            compactContext: !session.settings.autoCompact ? undefined : async (currentMessages, error) => {
               const compaction = await compactConversation(
                 currentMessages.slice(systemMessageCount),
                 novaClient,

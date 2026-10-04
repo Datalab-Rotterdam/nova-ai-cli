@@ -29,6 +29,10 @@ export type UpdateQueuedPromptParams = QueueEntryParams & {
   prompt?: acp.ContentBlock[];
   editing?: boolean;
   expectedVersion?: number;
+  /** Switch between follow-up and steering. */
+  kind?: PromptQueueKind;
+  /** Move the entry to the front ("send now"). */
+  front?: boolean;
 };
 
 /**
@@ -81,6 +85,11 @@ export class PromptQueue {
     if (patch.text !== undefined) entry.text = patch.text;
     if (patch.prompt !== undefined) entry.prompt = clonePrompt(patch.prompt);
     if (patch.editing !== undefined) entry.editing = patch.editing;
+    if (patch.kind !== undefined) entry.kind = patch.kind;
+    if (patch.front) {
+      this.entries.splice(this.entries.indexOf(entry), 1);
+      this.entries.unshift(entry);
+    }
     entry.version++;
     return true;
   }
@@ -163,6 +172,8 @@ export function parseUpdateQueuedPromptParams(
     prompt: prompt as acp.ContentBlock[] | undefined,
     editing: optionalBoolean(value.editing, "editing"),
     expectedVersion: optionalNumber(value.expectedVersion, "expectedVersion"),
+    kind: optionalKind(value.kind),
+    front: optionalBoolean(value.front, "front"),
   };
 }
 
@@ -192,6 +203,14 @@ function requireString(value: unknown, name: string): string {
 function optionalString(value: unknown, name: string): string | undefined {
   if (value === undefined) return undefined;
   if (typeof value !== "string") throw new Error(`${name} must be a string`);
+  return value;
+}
+
+function optionalKind(value: unknown): PromptQueueKind | undefined {
+  if (value === undefined) return undefined;
+  if (value !== "steer" && value !== "followup") {
+    throw new Error('kind must be either "steer" or "followup"');
+  }
   return value;
 }
 

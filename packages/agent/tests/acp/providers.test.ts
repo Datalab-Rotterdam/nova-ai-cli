@@ -25,6 +25,9 @@ function fakeNovaClient(): NovaAI {
             owned_by: "nova-main",
             name: "Qwen 3.6",
             enabled: true,
+            // Nova's gateway spells these in camelCase.
+            contextWindow: 262144,
+            maxOutputTokens: 8192,
           },
           {
             id: "gpt-5",
@@ -53,6 +56,17 @@ describe("listJoinedModels", () => {
     assert.deepEqual(
       models.map((m) => m.label),
       ["Qwen 3.6 (qwen3.6:27b) [Nova]", "GPT-5 (gpt-5) [OpenAI]"],
+    );
+  });
+
+  it("includes each model's context window and output limit", async () => {
+    const models = await listJoinedModels(fakeNovaClient(), new Set());
+    assert.deepEqual(
+      models.map((m) => [m.id, m.contextWindow, m.maxOutputTokens]),
+      [
+        ["qwen3.6:27b", 262144, 8192],
+        ["gpt-5", null, null],
+      ],
     );
   });
 

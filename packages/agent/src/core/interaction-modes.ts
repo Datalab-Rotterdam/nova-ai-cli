@@ -17,6 +17,7 @@ export function isInteractionMode(value: unknown): value is InteractionMode {
 export const PLAN_MODE_TOOLS: ReadonlySet<string> = new Set([
   "read_file",
   "list_directory",
+  "find_files",
   "search_text",
   "memory_read",
   "load_skill",

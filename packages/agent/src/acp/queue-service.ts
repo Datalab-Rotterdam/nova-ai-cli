@@ -64,6 +64,8 @@ export class QueueService {
       prompt: params.prompt,
       editing: params.editing,
       expectedVersion: params.expectedVersion,
+      kind: params.kind,
+      front: params.front,
     });
     const entries = session.promptQueue.list();
     if (updated) this.notifyPromptQueue(params.sessionId, entries, client);

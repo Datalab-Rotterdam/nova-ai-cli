@@ -33,6 +33,8 @@ export type SlashCommandContext = {
   openToolInspector(): void;
   openMcpInspector(): void;
   openSkillInspector(): void;
+  /** Switches a skill on or off (this project, or everywhere); returns a message. */
+  switchSkill(name: string, enabled: boolean, global: boolean): string;
   openUsageInspector(): void | Promise<void>;
   steerMessage(message: string): boolean;
   queuedMessages(): string[];

@@ -5,9 +5,12 @@ import {
   chatModels,
   chooseDefaultModel,
   isChatModel,
+  modelContextWindow,
+  modelMaxOutputTokens,
   modelSupportsToolCalls,
   resolveDefaultModel,
 } from "../../src/core/model-capabilities.js";
+import { resolveModelContextWindow } from "../../src/core/context-compaction.js";
 
 /** Shaped like a real Nova catalog: the embedding model comes first. */
 const catalog = [
@@ -59,4 +62,24 @@ test("a saved model is kept unless the catalog knows it cannot chat", () => {
     "a disabled model is replaced",
   );
   assert.equal(resolveDefaultModel([], "bge-m3"), "bge-m3", "nothing better: keep it");
+});
+
+test("the context window is read in every spelling gateways use", () => {
+  assert.equal(modelContextWindow({ contextWindow: 262_144 }), 262_144, "Nova's gateway");
+  assert.equal(modelContextWindow({ context_window: 128_000 }), 128_000);
+  assert.equal(modelContextWindow({ max_model_len: 32_000 }), 32_000);
+  assert.equal(modelContextWindow({ contextWindow: null }), null);
+  assert.equal(modelContextWindow({ contextWindow: 0 }), null);
+  assert.equal(modelMaxOutputTokens({ maxOutputTokens: 8_192 }), 8_192);
+  assert.equal(modelMaxOutputTokens({}), null);
+});
+
+test("the agent sizes compaction by the real context window", async () => {
+  const client = {
+    models: {
+      list: async () => ({ data: [{ id: "big", contextWindow: 262_144 }, { id: "unknown", contextWindow: null }], has_more: false }),
+    },
+  } as never;
+  assert.equal(await resolveModelContextWindow(client, "big"), 262_144);
+  assert.equal(await resolveModelContextWindow(client, "unknown"), 32_768, "the default when the gateway does not say");
 });

@@ -180,19 +180,27 @@ function permissionTarget(
         shell: true,
       };
     }
+    // Tools with the same effect under another name in the other product
+    // match each other's rules, so one settings file works for both.
     case "write_file":
     case "create_file": // nova-ai-vscode
-      return { names: ["Write", toolName], value: pathArg(), path: true, shell: false };
+      return { names: ["Write", "write_file", "create_file"], value: pathArg(), path: true, shell: false };
     case "edit_file":
       return { names: ["Edit", toolName], value: pathArg(), path: true, shell: false };
     case "read_file":
       return { names: ["Read", toolName], value: pathArg(), path: true, shell: false };
     case "list_directory":
     case "list_dir": // nova-ai-vscode
+      return { names: ["list_directory", "list_dir"], value: pathArg(), path: true, shell: false };
     case "search_text":
       return { names: [toolName], value: pathArg(), path: true, shell: false };
+    case "find_files":
+      return { names: [toolName], value: stringArg(args.pattern), path: false, shell: false };
     case "fetch_url":
       return { names: [toolName], value: stringArg(args.url), path: false, shell: false };
+    case "update_plan":
+    case "todo_write": // nova-ai-vscode
+      return { names: ["update_plan", "todo_write"], value: "", path: false, shell: false };
     default:
       return {
         names: [toolName],

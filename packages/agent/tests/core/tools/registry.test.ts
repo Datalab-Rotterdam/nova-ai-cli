@@ -4,8 +4,8 @@ import { availableTools, findTool } from "../../../src/core/tools/registry.js";
 import { FULL_CAPABILITIES, makeEnvironment } from "./test-helpers.js";
 
 describe("availableTools", () => {
-  it("returns no tools when no capabilities are present", () => {
-    assert.deepEqual(availableTools(undefined), []);
+  it("offers only fetch_url (network, always approved first) when no capabilities are present", () => {
+    assert.deepEqual(availableTools(undefined).map((t) => t.name), ["fetch_url"]);
   });
 
   it("includes read_file only when fs.readTextFile is supported", () => {
@@ -19,6 +19,8 @@ describe("availableTools", () => {
       }),
     ).map((t) => t.name);
     assert.deepEqual(names.sort(), [
+      "fetch_url",
+      "find_files",
       "inspect_environment",
       "list_directory",
       "read_file",
@@ -30,19 +32,19 @@ describe("availableTools", () => {
     const names = availableTools({ fs: { writeTextFile: true } }).map(
       (t) => t.name,
     );
-    assert.deepEqual(names, ["write_file"]);
+    assert.deepEqual(names.sort(), ["fetch_url", "write_file"]);
   });
 
   it("includes edit_file only when fs read+write are supported", () => {
     const names = availableTools({
       fs: { readTextFile: true, writeTextFile: true },
     }).map((t) => t.name);
-    assert.deepEqual(names.sort(), ["edit_file", "read_file", "write_file"]);
+    assert.deepEqual(names.sort(), ["edit_file", "fetch_url", "read_file", "write_file"]);
   });
 
   it("includes run_command only when terminal is supported", () => {
     const names = availableTools({ terminal: true }).map((t) => t.name);
-    assert.deepEqual(names, ["run_command"]);
+    assert.deepEqual(names.sort(), ["fetch_url", "run_command"]);
   });
 
   it("includes all tools when all capabilities are present", () => {
@@ -52,6 +54,8 @@ describe("availableTools", () => {
     assert.deepEqual(names.sort(), [
       "ask_user",
       "edit_file",
+      "fetch_url",
+      "find_files",
       "inspect_environment",
       "list_directory",
       "read_file",

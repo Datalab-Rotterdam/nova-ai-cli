@@ -30,6 +30,18 @@ export function describeToolCall(
       return { title: `Read ${shown}`, locations };
     case "list_directory":
       return { title: `List ${shown || "."}`, locations };
+    case "find_files":
+      return { title: `Find files ${clip(str("pattern"))}`, locations: [] };
+    case "fetch_url": {
+      const url = str("url");
+      let host = url;
+      try {
+        host = new URL(url).host;
+      } catch {
+        // shown as given
+      }
+      return { title: `Fetch ${clip(host)}`, locations: [] };
+    }
     case "search_text":
       return { title: `Search for "${clip(str("query") || str("pattern"))}"`, locations };
     case "memory_write":

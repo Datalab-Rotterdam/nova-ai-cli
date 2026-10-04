@@ -10,6 +10,8 @@ import {
 } from "./background.js";
 import { askUserTool } from "./ask-user.js";
 import { editFileTool } from "./edit-file.js";
+import { fetchUrlTool } from "./fetch-url.js";
+import { findFilesTool } from "./find-files.js";
 import { inspectEnvironmentTool } from "./inspect-environment.js";
 import { listDirectoryTool } from "./list-directory.js";
 import { readFileTool } from "./read-file.js";
@@ -24,8 +26,10 @@ const TOOLS: ToolDefinition[] = [
   askUserTool,
   inspectEnvironmentTool,
   listDirectoryTool,
+  findFilesTool,
   searchTextTool,
   readFileTool,
+  fetchUrlTool,
   writeFileTool,
   editFileTool,
   runCommandTool,

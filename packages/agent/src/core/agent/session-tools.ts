@@ -47,7 +47,7 @@ export function buildSessionTools(
     ...(options.updatePlan ? [createUpdatePlanTool(options.updatePlan)] : []),
     ...availableTools(caps, session.environment, { background: true }),
     ...(session.skills.length ? [createLoadSkillTool(session.skills)] : []),
-    ...createMemoryTools(session),
+    ...(session.settings.memory ? createMemoryTools(session) : []),
     ...session.mcpTools,
   ];
   if (options.mode === null) return baseTools;
