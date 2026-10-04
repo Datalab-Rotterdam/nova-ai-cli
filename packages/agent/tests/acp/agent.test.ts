@@ -425,6 +425,45 @@ describe("NovaAgent.setSessionConfigOption", () => {
   });
 });
 
+describe("NovaAgent.setSessionSettings", () => {
+  it("starts from the settings sent on session/new and merges later changes", async () => {
+    const agent = new NovaAgent();
+    const { sessionId } = await agent.newSession({
+      cwd: "/repo",
+      mcpServers: [],
+      _meta: { "nova-ai-cli/settings": { maxToolRounds: 12, memory: false } },
+    });
+    assert.deepEqual(agent.setSessionSettings({ sessionId, settings: {} }).settings, {
+      maxToolRounds: 12,
+      autoCompact: true,
+      compactThreshold: null,
+      memory: false,
+      commandTimeoutSeconds: null,
+    });
+    assert.deepEqual(
+      agent.setSessionSettings({
+        sessionId,
+        settings: { autoCompact: false, compactThreshold: 0.6, commandTimeoutSeconds: 900 },
+      }).settings,
+      {
+        maxToolRounds: 12,
+        autoCompact: false,
+        compactThreshold: 0.6,
+        memory: false,
+        commandTimeoutSeconds: 600,
+      },
+    );
+    await agent.closeSession({ sessionId });
+  });
+
+  it("rejects an unknown session", () => {
+    const agent = new NovaAgent();
+    assert.throws(() =>
+      agent.setSessionSettings({ sessionId: "00000000-0000-4000-8000-000000000000", settings: {} }),
+    );
+  });
+});
+
 describe("NovaAgent.providers", () => {
   it("disableProvider is a synchronous, process-wide no-throw call", () => {
     const agent = new NovaAgent();

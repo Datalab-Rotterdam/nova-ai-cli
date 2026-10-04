@@ -1,3 +1,4 @@
+import type { SessionSettings } from "./session-settings.js";
 import type { ChatMessage } from "@datalabrotterdam/nova-sdk";
 import type { InteractionMode } from "../interaction-modes.js";
 import type { PermissionPolicy } from "../policy/policy.js";
@@ -37,4 +38,6 @@ export type Session = {
   /** Permission rules, mode and approvals of this session. */
   policy: PermissionPolicy;
   model: string | null;
+  /** Client-provided behaviour (tool rounds, compaction, memory, timeouts). */
+  settings: SessionSettings;
 };

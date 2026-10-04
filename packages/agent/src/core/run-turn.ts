@@ -63,6 +63,8 @@ export type RunTurnDeps = {
   ): Promise<ContextCompactionResult>;
   /** Enables proactive compaction before the estimate exceeds the window. */
   contextWindow?: number | null;
+  /** Share of contextWindow that triggers compaction before a model call (default 0.8). */
+  compactThreshold?: number;
   /**
    * Drains user guidance that arrived while a tool round was running. The
    * callback is only read between model requests, never during a stream or
@@ -160,7 +162,7 @@ export async function runTurn(
       typeof deps.contextWindow === "number" &&
       deps.contextWindow > 0 &&
       estimateMessagesTokens(messages) >
-        deps.contextWindow * PROACTIVE_COMPACTION_THRESHOLD
+        deps.contextWindow * (deps.compactThreshold ?? PROACTIVE_COMPACTION_THRESHOLD)
     ) {
       proactiveCompactionUsed = true;
       try {

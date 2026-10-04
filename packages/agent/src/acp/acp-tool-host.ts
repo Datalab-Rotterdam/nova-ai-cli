@@ -19,12 +19,25 @@ import {
   toElicitationRequest,
 } from "./user-questions.js";
 
+export type AcpToolHostOptions = {
+  /** Wait after terminal/kill before giving up on the exit (tests shorten it). */
+  killGraceMs?: number;
+  /** Time limit for commands that set none (the session's setting). */
+  defaultTimeoutMs?: number;
+};
+
 export class AcpToolHost implements ToolHost {
+  private readonly killGraceMs: number;
+  private readonly defaultTimeoutMs: number;
+
   constructor(
     private readonly client: acp.AgentContext,
     private readonly sessionId: string,
-    private readonly killGraceMs = KILL_EXIT_GRACE_MS,
-  ) {}
+    options: AcpToolHostOptions = {},
+  ) {
+    this.killGraceMs = options.killGraceMs ?? KILL_EXIT_GRACE_MS;
+    this.defaultTimeoutMs = options.defaultTimeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS;
+  }
 
   async readTextFile(path: string, signal: AbortSignal): Promise<string> {
     const result = await this.client.request(
@@ -107,7 +120,7 @@ export class AcpToolHost implements ToolHost {
       const timer = setTimeout(() => {
         timedOut = true;
         stop();
-      }, options.timeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS);
+      }, options.timeoutMs ?? this.defaultTimeoutMs);
 
       let exitCode: number | null = null;
       try {

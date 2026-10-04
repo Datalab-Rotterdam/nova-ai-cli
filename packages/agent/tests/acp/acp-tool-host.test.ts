@@ -59,9 +59,17 @@ describe("AcpToolHost.runCommand", () => {
     assert.ok(names(calls).includes("terminal/kill"));
   });
 
+  it("uses the session's default time limit when the command sets none", async () => {
+    const { client, calls } = fakeTerminalClient({ runsUntilKilled: true });
+    const host = new AcpToolHost(client, "s1", { defaultTimeoutMs: 20 });
+    const result = await host.runCommand("sleep 100", new AbortController().signal);
+    assert.equal(result.timedOut, true);
+    assert.ok(names(calls).includes("terminal/kill"));
+  });
+
   it("does not hang when the client never reports an exit after a kill", async () => {
     const { client } = fakeTerminalClient({ runsUntilKilled: true, exitAfterKill: false });
-    const host = new AcpToolHost(client, "s1", 30);
+    const host = new AcpToolHost(client, "s1", { killGraceMs: 30 });
     const started = Date.now();
     const result = await host.runCommand("hang", new AbortController().signal, { timeoutMs: 20 });
     assert.equal(result.timedOut, true);

@@ -19,6 +19,7 @@ import {
   createMemoryWriteTool,
   loadMemory,
   memoryPaths,
+  sessionMemory,
 } from "../../src/core/memory.js";
 import { projectPaths } from "../../src/core/nova-home.js";
 import { makeToolContext } from "./tools/test-helpers.js";
@@ -70,6 +71,14 @@ describe("memory layout (docs/NOVA_HOME.md)", () => {
         text: "- 2026-10-02: Bun is used for building the binary",
       },
     ]);
+  });
+
+  it("loads nothing, not even NOVA.md, when the session has memory switched off", () => {
+    writeFileSync(join(cwd, "NOVA.md"), "Use tabs.");
+    applyMemoryChange(cwd, "project", { action: "remember", text: "Project fact" });
+    assert.ok(sessionMemory(cwd, true).blocks.length > 0);
+    assert.deepEqual(sessionMemory(cwd, false), { blocks: [], notes: [], consolidate: [] });
+    assert.equal(buildMemorySystemPrompt(sessionMemory(cwd, false), false), null);
   });
 
   it("puts team instructions first, then project, then global memory", () => {

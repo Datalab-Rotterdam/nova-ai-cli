@@ -1548,6 +1548,48 @@ test("proactive compaction is skipped when usage stays under the threshold", asy
   assert.equal(compactCalls, 0);
 });
 
+test("a lower compactThreshold makes proactive compaction fire earlier", async () => {
+  const run = async (compactThreshold: number | undefined) => {
+    const rounds = [["All done."]];
+    const novaClient = {
+      chat: {
+        completions: {
+          stream: () => {
+            const chunks = rounds.shift() ?? [];
+            return (async function* () {
+              for (const content of chunks) {
+                yield { type: "chunk", data: { choices: [{ delta: { content } }] } };
+              }
+            })();
+          },
+        },
+      },
+    } as unknown as NovaAI;
+    let compactCalls = 0;
+    await runTurn([{ role: "user", content: "word ".repeat(800) }], new AbortController().signal, {
+      host: {} as ToolHost,
+      sessionId: "test-session",
+      cwd: ".",
+      environment: {} as ToolEnvironment,
+      tools: [],
+      requestPermission: async () => true,
+      compactContext: async () => {
+        compactCalls++;
+        return { compacted: false, history: [], removedMessages: 0, keptMessages: 1 };
+      },
+      contextWindow: 2_000,
+      compactThreshold,
+      emit: () => {},
+      novaClient,
+      model: "test-model",
+    });
+    return compactCalls;
+  };
+
+  assert.equal(await run(undefined), 0, "under the default 0.8");
+  assert.equal(await run(0.3), 1);
+});
+
 test("multiple back-to-back tool calls execute sequentially with one combined result", async () => {
   const rounds = [
     [

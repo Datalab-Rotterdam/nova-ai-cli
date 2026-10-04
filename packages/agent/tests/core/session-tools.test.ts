@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { Session } from "../../src/core/agent/session.js";
 import { buildSessionTools } from "../../src/core/agent/session-tools.js";
+import { DEFAULT_SESSION_SETTINGS } from "../../src/core/agent/session-settings.js";
 import { PromptQueue } from "../../src/core/prompt-queue.js";
 import { PermissionPolicy } from "../../src/core/policy/policy.js";
 import { FULL_CAPABILITIES, makeEnvironment } from "./tools/test-helpers.js";
@@ -25,6 +26,7 @@ function session(): Session {
     mode: "agent",
     policy: new PermissionPolicy(process.cwd(), "default"),
     model: null,
+    settings: { ...DEFAULT_SESSION_SETTINGS },
   };
 }
 
@@ -78,6 +80,20 @@ describe("buildSessionTools", () => {
     assert.equal(tools[1], "update_plan");
     assert.ok(tools.includes("read_file"));
     assert.ok(tools.includes("memory_read") && tools.includes("memory_write"));
+  });
+
+  it("leaves the memory tools out when the session has memory switched off", () => {
+    const withoutMemory = session();
+    withoutMemory.settings.memory = false;
+    const tools = names(
+      buildSessionTools(withoutMemory, FULL_CAPABILITIES, {
+        mode: "agent",
+        updatePlan: () => {},
+        enterPlanMode: () => {},
+      }),
+    );
+    assert.ok(tools.includes("read_file"));
+    assert.ok(!tools.some((name) => name.startsWith("memory_")));
   });
 
   it("skips mode gating and plan tools for background agents", () => {

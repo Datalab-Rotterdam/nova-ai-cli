@@ -1,5 +1,4 @@
 import {
-  DEFAULT_COMMAND_TIMEOUT_MS,
   MAX_COMMAND_TIMEOUT_MS,
   type RunCommandResult,
 } from "../tool-host.js";
@@ -40,9 +39,10 @@ export const runCommandTool: ToolDefinition = {
   },
 };
 
-export function commandTimeoutMs(seconds: unknown): number {
+/** The model's timeout_seconds, capped; undefined lets the host use the session's default. */
+export function commandTimeoutMs(seconds: unknown): number | undefined {
   if (typeof seconds !== "number" || !Number.isFinite(seconds) || seconds <= 0) {
-    return DEFAULT_COMMAND_TIMEOUT_MS;
+    return undefined;
   }
   return Math.min(Math.round(seconds * 1000), MAX_COMMAND_TIMEOUT_MS);
 }

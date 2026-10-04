@@ -22,6 +22,7 @@ export const NOVA_METHODS = {
   sessionRewind: "_nova/session/rewind",
   sessionCompact: "_nova/session/compact",
   sessionContextUsage: "_nova/session/context_usage",
+  sessionSetSettings: "_nova/session/set_settings",
 } as const;
 
 export const NOVA_NOTIFICATIONS = {

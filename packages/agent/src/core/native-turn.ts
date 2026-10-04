@@ -84,7 +84,7 @@ export async function runNativeTurn(
       typeof deps.contextWindow === "number" &&
       deps.contextWindow > 0 &&
       estimateMessagesTokens(messages) >
-        deps.contextWindow * PROACTIVE_COMPACTION_THRESHOLD
+        deps.contextWindow * (deps.compactThreshold ?? PROACTIVE_COMPACTION_THRESHOLD)
     ) {
       proactiveCompactionUsed = true;
       await runCompaction(compactContext, messages, null, emit);
