@@ -44,6 +44,11 @@ nova-ai                # start the terminal UI in your project
 Or without installing: `npx @datalabrotterdam/nova-ai-cli login`, then
 `npx @datalabrotterdam/nova-ai-cli`.
 
+When a newer version is on npm, the terminal UI says so, and so do `-p` and
+`--version` (on stderr, only in a terminal). npm is asked at most once a day;
+an alpha install also follows the `alpha` channel. `NOVA_NO_UPDATE_CHECK=1`
+turns it off (it is off in CI).
+
 ```
 nova-ai [options]                 Interactive terminal UI
 nova-ai -p [options] [prompt]     Run one request headless (see nova-ai -p --help)
@@ -131,7 +136,7 @@ always options, client file system and terminals, form questions, plans, usage
 and title updates, MCP servers (stdio, HTTP, SSE), image prompts, and three
 login methods (browser, `NOVA_API_KEY`, or `nova-ai login` in a terminal).
 Nova-specific features (prompt queue, rewind, compaction, context usage,
-background jobs) are `_nova/…` extension methods. The agent is also published
+per-session settings, background jobs) are `_nova/…` extension methods. The agent is also published
 on its own as
 [`@datalabrotterdam/nova-ai-agent`](https://www.npmjs.com/package/@datalabrotterdam/nova-ai-agent)
 (command `nova-ai-agent`), without the terminal UI, for integrations that only
@@ -153,6 +158,9 @@ need ACP. Everything is documented in
   private `~/.nova-ai/projects/<key>/settings.json`, outside the repository.
   Compound commands (`a && b`, pipes) are checked part by part; substitutions
   and nested shells need an exact rule.
+- **Web pages are fetched only with approval.** `fetch_url` asks every time
+  unless a rule allows that URL (a URL can carry data out), and a redirect to
+  another site needs its own approval.
 - **File access stays in the workspace** (symlinks resolved); commands run in
   their own process group with a timeout, and the whole tree is stopped on
   cancel.
@@ -195,6 +203,7 @@ hand).
 | `NOVA_TOOL_PROTOCOL` | Force `native` or `text` tool calling |
 | `NOVA_NES_MODEL` | Separate model for next-edit suggestions (ACP) |
 | `NOVA_KITTY_KEYBOARD` | `1`/`0`: force the kitty keyboard protocol on or off |
+| `NOVA_NO_UPDATE_CHECK` | Don't ask npm for a newer version (also `NO_UPDATE_NOTIFIER`, or `CI`) |
 
 ## Development
 

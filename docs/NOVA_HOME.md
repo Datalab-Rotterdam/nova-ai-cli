@@ -18,6 +18,7 @@ there), otherwise `~/.nova-ai`. Directories are created `0700`, files `0600`.
   settings.json                 user settings: permission rules, default mode
   credentials.json              CLI only: API key + default model
   model-capabilities.json       CLI only: learned native tool-call support
+  update-check.json             CLI only: npm's latest versions, asked at most daily
   background-jobs/              CLI only: background job transcripts
   sessions/<id>.jsonl           CLI only, legacy: sessions from before projects/
   projects/<slug>-<hash8>/      one folder per workspace (see "Project key")
@@ -27,6 +28,7 @@ there), otherwise `~/.nova-ai`. Directories are created `0700`, files `0600`.
     memory/<name>.md            project memory notes
     sessions/                   extension: chat panel sessions (index.json + <id>.json)
     cli-sessions/<id>.jsonl     CLI: sessions
+    cli-sessions/extension-import.json  CLI: panel chats already imported (see "Sessions")
     scratch/                    extension: scratch files (pruned after 7 days)
 <workspace>/.nova-ai/settings.json        team settings, committed
 <workspace>/.nova-ai/settings.local.json  personal settings, git-ignored
@@ -102,6 +104,7 @@ literal). Subjects:
 | `run_command`, `start_background_command` | the command line |
 | `run_package_script` | `npm run <script> [-- args]` |
 | `read_file`, `write_file`, `create_file`, `edit_file`, `list_directory`, `list_dir`, `search_text` | the path, workspace-relative with `/` (absolute outside the workspace) |
+| `find_files` | the glob pattern |
 | `fetch_url` | the URL |
 | others | none: only the bare tool name matches |
 
@@ -111,7 +114,10 @@ denies the whole line, and an allow rule must match every part. Lines with
 substitutions, subshells, heredocs or nested shells (`$( )`, backticks, `( )`,
 `{ }`, `<<`, `sh -c`, …) are only allowed by a rule that matches the whole
 line exactly. Rule names may also use the aliases `Bash` (command tools),
-`Read`, `Write` and `Edit`; Nova itself always writes real tool names.
+`Read`, `Write` and `Edit`; Nova itself always writes real tool names. Tools
+that have a different name in the other product match each other's rules:
+`write_file` = `create_file`, `list_directory` = `list_dir`, `update_plan` =
+`todo_write`.
 
 ## Memory
 
@@ -171,7 +177,10 @@ its generated header, at most 8,000 characters per file and 16,000 in total.
 Then the catalog of notes (name, type, scope, description); a note's content
 is only read with the `memory_read` tool. Memory is context, never
 instructions that override the user. When an index exceeds 40 entries or
-6,000 characters, the prompt suggests consolidating it.
+6,000 characters, the prompt suggests consolidating it. With memory switched
+off for a session (the extension's `nova.memory.enabled`, the agent's
+`memory` session setting) none of this is in the prompt and the tools are not
+offered.
 
 ### Tools
 
@@ -203,3 +212,13 @@ output to memory.
   already exists is left in place.
 - The scope name `workspace` (CLI ≤ 1.1) is accepted as `project`, and the tool
   names `load_memory`/`save_memory` as `memory_read`/`memory_write`.
+
+## Sessions
+
+Each product writes only its own folder: the extension's chat panel
+`projects/<key>/sessions/` (`index.json` plus `<id>.json`), the CLI and its
+ACP agent `projects/<key>/cli-sessions/<id>.jsonl`. When the agent lists the
+sessions of a workspace it imports the panel's chats it has not seen yet
+(same id and title), so one history shows both; the ids it has imported are
+kept in `cli-sessions/extension-import.json`, and the panel's files are not
+changed.
