@@ -1,7 +1,8 @@
 ﻿import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { after, describe, it } from "node:test";
 import * as acp from "@agentclientprotocol/sdk";
 import {
@@ -10,6 +11,7 @@ import {
   frameSteeringPrompt,
   NovaAgent,
 } from "../../src/acp/agent.js";
+import { describeResourceUri } from "../../src/acp/prompt-content.js";
 import {
   appendSessionTurn,
   deleteStoredSession,
@@ -71,6 +73,40 @@ describe("ACP image prompts", () => {
           image_url: { url: "data:image/png;base64,YWJj" },
         },
       ],
+    );
+  });
+});
+
+describe("ACP attachments", () => {
+  const file = resolve("repo", "src", "app.ts");
+  const uri = pathToFileURL(file).href;
+
+  it("reads a selection's path and line range from a file URI", () => {
+    assert.deepEqual(describeResourceUri(`${uri}#L10-L20`), { source: file, lines: "10-20" });
+    assert.deepEqual(describeResourceUri(`${uri}#L7`), { source: file, lines: "7" });
+    assert.deepEqual(describeResourceUri(`${uri}#L7-7`), { source: file, lines: "7" });
+    assert.deepEqual(describeResourceUri(uri), { source: file, lines: null });
+    assert.deepEqual(describeResourceUri("https://example.com/a#intro"), {
+      source: "https://example.com/a#intro",
+      lines: null,
+    });
+  });
+
+  it("gives the model the file and lines of embedded and linked attachments", () => {
+    const text = contentBlocksToText([
+      { type: "text", text: "Explain this:" },
+      { type: "resource", resource: { uri: `${uri}#L10-L12`, text: "const a = 1;" } },
+      { type: "resource_link", uri: `${uri}#L3`, name: "app.ts" },
+    ]);
+    assert.equal(
+      text,
+      [
+        "Explain this:",
+        `<attached_file path="${file}" lines="10-12">`,
+        "const a = 1;",
+        "</attached_file>",
+        `[Attached file, not included: ${file}, lines 3]`,
+      ].join("\n"),
     );
   });
 });

@@ -1,4 +1,43 @@
+import { fileURLToPath } from "node:url";
 import type * as acp from "@agentclientprotocol/sdk";
+
+/**
+ * Where an attachment comes from: a file path for file URIs (other URIs as
+ * they are) and the line range of a `#L10-L20` or `#L10` fragment, which is
+ * how editors send a selection.
+ */
+export function describeResourceUri(uri: string): { source: string; lines: string | null } {
+  const hashAt = uri.indexOf("#");
+  const base = hashAt >= 0 ? uri.slice(0, hashAt) : uri;
+  const range = /^L(\d+)(?:-L?(\d+))?$/.exec(hashAt >= 0 ? uri.slice(hashAt + 1) : "");
+  const lines = range ? (range[2] && range[2] !== range[1] ? `${range[1]}-${range[2]}` : range[1]!) : null;
+  let source = range ? base : uri;
+  if (source.startsWith("file:")) {
+    try {
+      source = fileURLToPath(source);
+    } catch {
+      // not a local file URI: keep it as sent
+    }
+  }
+  return { source, lines };
+}
+
+/** An embedded file (or selection) with its origin, so the model can cite and edit it. */
+function embeddedResourceText(resource: { uri: string; text: string }): string {
+  const { source, lines } = describeResourceUri(resource.uri);
+  const attributes = `path="${escapeAttribute(source)}"${lines ? ` lines="${lines}"` : ""}`;
+  return `<attached_file ${attributes}>\n${resource.text}\n</attached_file>`;
+}
+
+/** A file the client only links: the model reads it itself when needed. */
+function resourceLinkText(link: { uri: string }): string {
+  const { source, lines } = describeResourceUri(link.uri);
+  return `[Attached file, not included: ${source}${lines ? `, lines ${lines}` : ""}]`;
+}
+
+function escapeAttribute(value: string): string {
+  return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
+}
 
 export function contentBlocksToText(
   prompt: acp.PromptRequest["prompt"],
@@ -6,9 +45,9 @@ export function contentBlocksToText(
   return prompt
     .map((block) => {
       if (block.type === "text") return block.text;
-      if (block.type === "resource_link") return block.uri;
+      if (block.type === "resource_link") return resourceLinkText(block);
       if (block.type === "resource" && "text" in block.resource)
-        return block.resource.text;
+        return embeddedResourceText(block.resource);
       return "";
     })
     .filter(Boolean)
@@ -59,11 +98,11 @@ export function contentBlocksToNovaContent(
       continue;
     }
     if (block.type === "resource_link") {
-      content.push({ type: "text", text: block.uri });
+      content.push({ type: "text", text: resourceLinkText(block) });
       continue;
     }
     if (block.type === "resource" && "text" in block.resource) {
-      content.push({ type: "text", text: block.resource.text });
+      content.push({ type: "text", text: embeddedResourceText(block.resource) });
     }
   }
   return content;
