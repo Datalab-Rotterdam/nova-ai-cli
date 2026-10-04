@@ -1,3 +1,17 @@
+# [@datalabrotterdam/nova-ai-cli-v1.2.0-alpha.3](https://github.com/Datalab-Rotterdam/nova-ai-cli/compare/@datalabrotterdam/nova-ai-cli@1.2.0-alpha.2...@datalabrotterdam/nova-ai-cli@1.2.0-alpha.3) (2026-10-04)
+
+
+### Bug Fixes
+
+* **agent:** never overwrite an unreadable settings file when switching a skill ([ca989ef](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/ca989ef1810fc903cea069cdadf3041fe164e364))
+* **cli:** install the command as nova-ai only ([eda8064](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/eda806411af1738ff6f6b1404d23d4e84a74ced8))
+
+
+### Features
+
+* **agent,cli:** Nova skill folders, switching skills off, a budgeted skill list ([0891c79](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/0891c79248d3a645d638f12f46928a54652b0941))
+* **cli:** update notice from npm for every channel, cached daily ([c3a0014](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/c3a001473336aac14d216cdeec0bedde4df34427))
+
 # [@datalabrotterdam/nova-ai-cli-v1.2.0-alpha.2](https://github.com/Datalab-Rotterdam/nova-ai-cli/compare/@datalabrotterdam/nova-ai-cli@1.2.0-alpha.1...@datalabrotterdam/nova-ai-cli@1.2.0-alpha.2) (2026-10-03)
 
 
