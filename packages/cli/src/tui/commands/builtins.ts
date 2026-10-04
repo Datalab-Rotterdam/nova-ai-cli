@@ -161,9 +161,20 @@ export const builtinCommands: SlashCommand[] = [
   },
   {
     name: "skills",
-    description: "Inspect discovered user and workspace skills",
-    run(ctx) {
-      ctx.openSkillInspector();
+    description: "List skills, or switch one: /skills on|off <name> [--global]",
+    run(ctx, args) {
+      const words = args.trim().split(/\s+/).filter(Boolean);
+      if (!words.length) {
+        ctx.openSkillInspector();
+        return;
+      }
+      const global = words.includes("--global");
+      const [action, name] = words.filter((word) => word !== "--global");
+      if ((action !== "on" && action !== "off") || !name) {
+        ctx.print("Usage: /skills, or /skills on|off <name> [--global]");
+        return;
+      }
+      ctx.print(ctx.switchSkill(name, action === "on", global));
     },
   },
   {

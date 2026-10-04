@@ -85,3 +85,38 @@ test("/session and /sessions open the same session picker", async () => {
 
   assert.equal(opened, 2);
 });
+
+test("/skills lists skills, and switches one on or off in this project or everywhere", async () => {
+  const command = builtinCommands.find((entry) => entry.name === "skills");
+  assert.ok(command);
+  const printed: string[] = [];
+  const switched: Array<[string, boolean, boolean]> = [];
+  let opened = 0;
+  const context = {
+    openSkillInspector: () => {
+      opened++;
+    },
+    switchSkill: (name: string, enabled: boolean, global: boolean) => {
+      switched.push([name, enabled, global]);
+      return `switched ${name}`;
+    },
+    print: (text: string) => printed.push(text),
+  } as unknown as SlashCommandContext;
+
+  await command.run(context, "");
+  assert.equal(opened, 1);
+  await command.run(context, "off review");
+  await command.run(context, "on  deploy --global");
+  await command.run(context, "--global off release");
+  assert.deepEqual(switched, [
+    ["review", false, false],
+    ["deploy", true, true],
+    ["release", false, true],
+  ]);
+  assert.deepEqual(printed, ["switched review", "switched deploy", "switched release"]);
+
+  await command.run(context, "toggle review");
+  await command.run(context, "off");
+  assert.equal(switched.length, 3);
+  assert.match(printed.at(-1)!, /^Usage: \/skills/);
+});

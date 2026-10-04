@@ -22,7 +22,7 @@ import { buildMemorySystemPrompt, sessionMemory } from "../core/memory.js";
 import { stripReasoningTags } from "../core/reasoning-tags.js";
 import { runTurn } from "../core/run-turn.js";
 import { deriveTitle } from "../core/sessions.js";
-import { buildSkillsSystemPrompt, discoverSkills } from "../core/skills.js";
+import { buildSkillsSystemPrompt, discoverEnabledSkills } from "../core/skills.js";
 import { detectToolEnvironment } from "../core/tools/environment.js";
 import { stripToolCallMarkup } from "../core/tools/marker.js";
 import {
@@ -327,7 +327,7 @@ export class BackgroundService {
       session.cwd,
       this.runtime.clientCapabilities,
     );
-    session.skills = discoverSkills(session.cwd);
+    session.skills = discoverEnabledSkills(session.cwd);
     session.memory = sessionMemory(session.cwd, session.settings.memory);
     const contextWindow = await this.runtime.models.resolveContextWindow(
       novaClient,
@@ -340,7 +340,7 @@ export class BackgroundService {
     const systemPromptFor = (protocol: ToolProtocol) =>
       [
         buildModeSystemPrompt(getPromptMode(params)),
-        buildSkillsSystemPrompt(session.skills),
+        buildSkillsSystemPrompt(session.skills, contentBlocksToText(params.prompt)),
         buildMemorySystemPrompt(session.memory, session.settings.memory),
         protocol === "native"
           ? buildNativeToolsSystemPrompt(tools, session.cwd)

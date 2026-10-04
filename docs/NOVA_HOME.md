@@ -15,6 +15,7 @@ there), otherwise `~/.nova-ai`. Directories are created `0700`, files `0600`.
 ~/.nova-ai/
   MEMORY.md                     global memory index (always in the prompt)
   memory/<name>.md              global memory notes
+  skills/<name>/SKILL.md        global skills (see "Skills")
   settings.json                 user settings: permission rules, default mode
   credentials.json              CLI only: API key + default model
   model-capabilities.json       CLI only: learned native tool-call support
@@ -32,6 +33,7 @@ there), otherwise `~/.nova-ai`. Directories are created `0700`, files `0600`.
     scratch/                    extension: scratch files (pruned after 7 days)
 <workspace>/.nova-ai/settings.json        team settings, committed
 <workspace>/.nova-ai/settings.local.json  personal settings, git-ignored
+<workspace>/.nova-ai/skills/<name>/SKILL.md  project skills, committed
 <workspace>/NOVA.md             team instructions, committed, read-only for Nova
 <workspace>/AGENTS.md           team instructions, committed, read-only for Nova
 ```
@@ -222,3 +224,41 @@ sessions of a workspace it imports the panel's chats it has not seen yet
 (same id and title), so one history shows both; the ids it has imported are
 kept in `cli-sessions/extension-import.json`, and the panel's files are not
 changed.
+
+## Skills
+
+A skill is a folder with a `SKILL.md` and any files it refers to:
+
+```
+---
+name: release-notes
+description: "Write release notes from the merged pull requests"
+---
+
+<instructions>
+```
+
+`name` defaults to the folder name, `description` should say when to use it.
+Skills are read from these folders, lowest priority first; a skill with the
+same name in a later folder replaces the earlier one. Sub-folders are searched,
+symbolic links are not followed.
+
+| Scope | Folders |
+|---|---|
+| global | `~/.agents/skills`, `~/.claude/skills`, `~/.codex/skills`, then `$NOVA_AI_HOME/skills` |
+| project | `<workspace>/.agents/skills`, `.claude/skills`, `.codex/skills`, then `<workspace>/.nova-ai/skills` |
+
+Nova creates new skills in `$NOVA_AI_HOME/skills/<name>/` (global) or
+`<workspace>/.nova-ai/skills/<name>/` (project). `name` for new skills
+matches `^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$`.
+
+Switching a skill off keeps its files: `"skills": { "disabled": ["name"] }` in
+`~/.nova-ai/settings.json` (every workspace) or `projects/<key>/settings.json`
+(this workspace). A name listed in either is off.
+
+In the prompt only the list of skills that are on: name and description (at
+most 160 characters each), within about 4,000 characters. When there are more,
+the skills matching the user's message keep their description, others are listed
+by name only (about 1,000 characters), the rest are counted. The model reads a
+skill with `load_skill` (`{ name, resource? }`, at most 24,000 characters per
+file, only files inside the skill's folder).

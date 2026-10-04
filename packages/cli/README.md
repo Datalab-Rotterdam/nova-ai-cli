@@ -180,8 +180,11 @@ VS Code extension: settings, per-project trust, sessions and memory.
 - **Instructions**: `NOVA.md` and `AGENTS.md` in the workspace.
 - **Memory**: a `MEMORY.md` index plus notes, globally and per project,
   through the `memory_read` and `memory_write` tools (writes need approval).
-- **Skills**: `SKILL.md` files under `.agents/skills`, `.claude/skills` or
-  `.codex/skills`, in the workspace or your home folder.
+- **Skills**: `SKILL.md` files under `.nova-ai/skills` in the workspace or
+  `~/.nova-ai/skills` for every project (`.agents`, `.claude` and `.codex`
+  skills folders are read too). `/skills` lists them; `/skills off <name>`
+  switches one off in this project (`--global`: everywhere). Only names and
+  short descriptions go into the prompt; Nova loads a skill when it fits.
 - **MCP servers**: `.mcp.json` or `mcpServers` in `.nova-ai/settings.json`.
 
 The complete layout and rule syntax: [docs/NOVA_HOME.md](https://github.com/Datalab-Rotterdam/nova-ai-cli/blob/main/docs/NOVA_HOME.md).

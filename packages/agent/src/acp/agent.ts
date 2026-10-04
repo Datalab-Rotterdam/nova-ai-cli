@@ -50,7 +50,7 @@ import {
 } from "../core/sessions.js";
 import {
   buildSkillsSystemPrompt,
-  discoverSkills,
+  discoverEnabledSkills,
   type SkillDefinition,
 } from "../core/skills.js";
 import { detectToolEnvironment } from "../core/tools/environment.js";
@@ -92,6 +92,7 @@ import { NesService } from "./nes-service.js";
 import { selectPositionEncoding } from "./nes.js";
 import {
   contentBlocksToNovaContent,
+  contentBlocksToText,
   getPromptModel,
 } from "./prompt-content.js";
 import { QueueService } from "./queue-service.js";
@@ -347,7 +348,7 @@ export class NovaAgent implements AgentRuntime {
       params.cwd,
       this.clientCapabilities,
     );
-    const skills = discoverSkills(params.cwd);
+    const skills = discoverEnabledSkills(params.cwd);
     const settings = settingsFromMeta(params._meta);
     const memory = sessionMemory(params.cwd, settings.memory);
     this.sessions.set(sessionId, {
@@ -763,7 +764,7 @@ export class NovaAgent implements AgentRuntime {
       session.cwd,
       this.clientCapabilities,
     );
-    session.skills = discoverSkills(session.cwd);
+    session.skills = discoverEnabledSkills(session.cwd);
     session.memory = sessionMemory(session.cwd, session.settings.memory);
     const background = this.background.createBackgroundToolApi(params.sessionId, client);
     const tools = buildSessionTools(session, this.clientCapabilities, {
@@ -789,7 +790,7 @@ export class NovaAgent implements AgentRuntime {
     const systemPromptFor = (protocol: ToolProtocol) =>
       [
         buildModeSystemPrompt(session.mode),
-        buildSkillsSystemPrompt(session.skills),
+        buildSkillsSystemPrompt(session.skills, contentBlocksToText(params.prompt)),
         buildMemorySystemPrompt(session.memory, session.settings.memory),
         protocol === "native"
           ? buildNativeToolsSystemPrompt(tools, session.cwd)

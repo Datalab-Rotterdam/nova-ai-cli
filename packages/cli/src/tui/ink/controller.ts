@@ -1,5 +1,10 @@
 import type { McpServer } from "@agentclientprotocol/sdk";
 import { setWorkspaceTrusted } from "@datalabrotterdam/nova-ai-agent/core/nova-home.js";
+import {
+  disabledSkillNames,
+  discoverSkills,
+  setSkillEnabled,
+} from "@datalabrotterdam/nova-ai-agent/core/skills.js";
 import { INTERACTION_MODES } from "@datalabrotterdam/nova-ai-agent/core/interaction-modes.js";
 import {
   allCommands,
@@ -367,15 +372,38 @@ export class TuiController {
     );
   };
 
+  /** Every discovered skill with its state; switched-off skills stay listed. */
   openSkillInspector = (): void => {
-    const skills = this.runner.skillSessionStatus();
+    const cwd = this.runner.cwd;
+    const skills = discoverSkills(cwd);
+    const disabled = disabledSkillNames(cwd);
+    const on = skills.filter((skill) => !disabled.has(skill.name)).length;
     this.showText(
-      `Skills (${skills.length})`,
+      `Skills (${on} on, ${skills.length - on} off)`,
       skills.length
-        ? skills
-            .map((skill) => `${skill.name} [${skill.source}]\n${skill.description}\n${skill.path}`)
-            .join("\n\n")
-        : "No skills discovered. Add SKILL.md under .agents/skills, .claude/skills, or .codex/skills in the workspace or user profile.",
+        ? [
+            ...skills.map(
+              (skill) =>
+                `${skill.name} [${skill.source}]${disabled.has(skill.name) ? " (off)" : ""}\n${skill.description}\n${skill.path}`,
+            ),
+            "/skills off <name> switches one off in this project (--global: everywhere); /skills on <name> switches it back on.",
+          ].join("\n\n")
+        : "No skills discovered. Add SKILL.md under .nova-ai/skills (or .agents, .claude, .codex skills) in the workspace, or ~/.nova-ai/skills for all projects.",
+    );
+  };
+
+  /** /skills on|off <name> [--global]: applies from the next message. */
+  switchSkill = (name: string, enabled: boolean, global: boolean): string => {
+    const cwd = this.runner.cwd;
+    if (!discoverSkills(cwd).some((skill) => skill.name === name)) {
+      return `No skill named "${name}". /skills lists them.`;
+    }
+    setSkillEnabled(cwd, global ? "global" : "project", name, enabled);
+    const stillOff = enabled && disabledSkillNames(cwd).has(name);
+    return (
+      stillOff
+        ? `Switched "${name}" on ${global ? "globally" : "in this project"}, but it is still off ${global ? "in this project" : "globally"} (use ${global ? "/skills on " + name : "/skills on " + name + " --global"}).`
+        : `Skill "${name}" is ${enabled ? "on" : "off"} ${global ? "everywhere" : "in this project"} from the next message.`
     );
   };
 
@@ -480,6 +508,7 @@ export class TuiController {
     openToolInspector: this.openToolInspector,
     openMcpInspector: this.openMcpInspector,
     openSkillInspector: this.openSkillInspector,
+    switchSkill: this.switchSkill,
     openUsageInspector: this.openUsageInspector,
     steerMessage: (message) => this.runner.steer(message),
     queuedMessages: () => this.runner.queuedMessages(),
