@@ -85,7 +85,7 @@ export const builtinCommands: SlashCommand[] = [
   },
   {
     name: "exit",
-    description: "Exit nova-ai-cli",
+    description: "Exit nova-ai",
     run(ctx) {
       ctx.exit();
     },

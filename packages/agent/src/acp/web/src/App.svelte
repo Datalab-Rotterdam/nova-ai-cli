@@ -131,7 +131,7 @@
     {#if status === "success"}
       <p class="success">Connected. You can close this tab and return to the terminal.</p>
     {:else}
-      <p class="subtitle">Paste your DataLab Rotterdam Nova API key to connect nova-ai-cli.</p>
+      <p class="subtitle">Paste your DataLab Rotterdam Nova API key to connect nova-ai.</p>
 
       <form on:submit|preventDefault={submit}>
         <input

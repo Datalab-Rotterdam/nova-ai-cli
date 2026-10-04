@@ -28,7 +28,7 @@ integrators: [docs/ACP.md](./docs/ACP.md). The shared `~/.nova-ai` layout
 packages/agent/   core/ (agent loop, tools, policy, memory, sessions, MCP)
                   acp/ (ACP server, _nova/ extensions), client/ (in-process client),
                   commands/ (login/logout); bin: nova-ai-agent
-packages/cli/     tui/ (Ink), headless/, cli.ts; bin: nova-ai, nova-ai-cli
+packages/cli/     tui/ (Ink), headless/, cli.ts; bin: nova-ai
 test-support/     fake Nova gateway and test setup shared by both packages
 docs/             ACP.md, NOVA_HOME.md
 ```

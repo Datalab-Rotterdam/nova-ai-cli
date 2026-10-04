@@ -21,7 +21,6 @@
   },
   "homepage": "https://github.com/Datalab-Rotterdam/nova-ai-cli#readme",
   "bin": {
-    "nova-ai-cli": "dist/index.js",
     "nova-ai": "dist/index.js"
   },
   "files": [

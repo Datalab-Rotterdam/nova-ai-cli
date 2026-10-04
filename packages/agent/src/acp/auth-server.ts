@@ -207,7 +207,7 @@ function rejectUntrustedRequest(
     json(
       {
         message:
-          "Request not allowed. Open the setup link printed by nova-ai-cli.",
+          "Request not allowed. Open the setup link printed by nova-ai.",
       },
       { status: 403 },
     );
