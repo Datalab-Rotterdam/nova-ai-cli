@@ -10,6 +10,7 @@ import {
 import { dirname, join, resolve } from "node:path";
 import type { ChatMessage } from "@datalabrotterdam/nova-sdk";
 import { chatContentToText } from "./chat-content.js";
+import { importExtensionSessions } from "./extension-sessions.js";
 import { ensureProject, novaHomeRoot, projectsDir } from "./nova-home.js";
 import { truncateStoredToolMessage } from "./tool-output.js";
 
@@ -398,7 +399,12 @@ export type SessionSummary = {
 };
 
 /** All stored sessions, newest first, without loading their messages. */
+/**
+ * Sessions, newest first; with a `cwd` only that workspace's, after
+ * importing the VS Code panel's chats of it that are not imported yet.
+ */
 export function listStoredSessions(cwd?: string): SessionSummary[] {
+  if (cwd) importExtensionSessions(cwd);
   const sessions = new Map<string, SessionSummary>();
   for (const dir of sessionDirs()) {
     let files: string[];

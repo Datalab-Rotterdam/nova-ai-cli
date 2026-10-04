@@ -148,6 +148,15 @@ describe("importExtensionSessions", () => {
     assert.equal(loadStoredSession(ID), null);
   });
 
+  it("happens when a front end lists the workspace's sessions (session/list, /resume, --continue)", () => {
+    writePanelChats(panelChat());
+    assert.deepEqual(
+      listStoredSessions(cwd).map((summary) => summary.sessionId),
+      [ID],
+    );
+    assert.equal(importExtensionSessions(cwd), 0, "already imported by the listing");
+  });
+
   it("picks up chats the panel saved after the first import", () => {
     writePanelChats(panelChat());
     importExtensionSessions(cwd);

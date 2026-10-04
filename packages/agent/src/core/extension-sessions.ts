@@ -12,8 +12,9 @@ import {
 /**
  * The VS Code extension's chat panel keeps its chats in
  * `projects/<key>/sessions/` (index.json + <id>.json, docs/NOVA_HOME.md).
- * Once the panel runs on this agent, those chats are imported into the
- * agent's own format so one history list shows them all. The import is
+ * Listing a workspace's sessions (listStoredSessions with a cwd: ACP
+ * session/list, the TUI's /resume, --continue) imports those chats into the
+ * agent's own format, so one history list shows them all. The import is
  * one-time per chat: imported ids are recorded next to the agent's
  * sessions, and the extension's files are left untouched.
  */

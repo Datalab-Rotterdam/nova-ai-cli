@@ -62,7 +62,7 @@ needs Nova without credentials fails with `authRequired`.
 | `session/load` | Replays the stored conversation: user and agent text, and tool calls with their final status, diff and (truncated) output. |
 | `session/resume` | Like load, without the replay. |
 | `session/fork` | Copies a stored session under a new id. |
-| `session/list` | 50 per page with an opaque `cursor`; optional `cwd` filter. With a `cwd`, the first page also imports the VS Code panel's chats of that workspace once (see below). |
+| `session/list` | 50 per page with an opaque `cursor`; optional `cwd` filter. With a `cwd`, it first imports the VS Code panel's chats of that workspace that are not imported yet (see below). |
 | `session/close` / `session/delete` | Close cancels a running turn and stops the session's MCP servers; delete also removes the stored file. Background jobs keep running until killed or the agent exits. |
 | `session/prompt` | One turn. Prompts for the same session are queued and run one after another. |
 | `session/cancel` | Aborts the model request and running tools, answers pending permission requests as cancelled, marks open tool calls failed ("Cancelled"), then returns `stopReason: "cancelled"`. |
@@ -75,8 +75,9 @@ Unknown sessions give `resourceNotFound`. Sessions are stored as JSONL under
 [NOVA_HOME.md](./NOVA_HOME.md)).
 
 **Chats of the VS Code panel.** The extension's built-in chat panel keeps its
-chats in `projects/<key>/sessions/`. `session/list` with a `cwd` imports
-the ones it has not imported before: same id and title, one turn per user
+chats in `projects/<key>/sessions/`. Listing a workspace's sessions
+(`session/list` with a `cwd`, and the CLI's `/resume` and `--continue`)
+imports the ones not imported before: same id and title, one turn per user
 prompt (so checkpoints and rewind work), tool calls with their results, the
 extension's tool names mapped to the agent's. Imported ids are recorded in
 `cli-sessions/extension-import.json`, so a deleted import does not come back;
