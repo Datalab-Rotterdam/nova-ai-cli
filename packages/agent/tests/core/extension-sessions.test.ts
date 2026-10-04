@@ -8,6 +8,7 @@ import {
   importExtensionSessions,
   type ExtensionStoredSession,
 } from "../../src/core/extension-sessions.js";
+import { replayHistory } from "../../src/core/history.js";
 import { projectPaths } from "../../src/core/nova-home.js";
 import {
   deleteStoredSession,
@@ -45,7 +46,7 @@ function panelChat(id = ID): ExtensionStoredSession {
         role: "assistant",
         parts: [{ type: "toolCall", callId: "c3", name: "create_file", input: { path: "a.txt", content: "x" } }],
       },
-      { role: "user", parts: [{ type: "toolResult", callId: "c3", text: "Created a.txt" }] },
+      { role: "user", parts: [{ type: "toolResult", callId: "c3", text: "Error: a.txt already exists" }] },
       { role: "assistant", parts: [{ type: "text", value: "Done." }] },
     ],
   };
@@ -66,7 +67,7 @@ describe("extensionSessionToTurns", () => {
           { id: "c2", type: "function", function: { name: "read_file", arguments: '{"path":"package.json"}' } },
         ],
       },
-      { role: "tool", tool_call_id: "c1", content: "src/\npackage.json" },
+      { role: "tool", tool_call_id: "c1", content: "Tool result: src/\npackage.json" },
       // c2 had no stored result: answered, so the history stays valid for the model.
       { role: "tool", tool_call_id: "c2", content: "Tool error: Cancelled before this call completed." },
       // Steering during tool work stays in the running turn.
@@ -74,6 +75,11 @@ describe("extensionSessionToTurns", () => {
       { role: "assistant", content: "The script name is wrong." },
     ]);
     assert.equal(turns[1]!.messages[0]!.content, "Fix it.");
+    assert.deepEqual(turns[1]!.messages[2], {
+      role: "tool",
+      tool_call_id: "c3",
+      content: "Tool error: a.txt already exists",
+    });
     assert.equal(
       (turns[1]!.messages[1] as unknown as { tool_calls: Array<{ function: { name: string } }> }).tool_calls[0]!.function.name,
       "write_file",
@@ -136,6 +142,16 @@ describe("importExtensionSessions", () => {
     assert.equal(session.updatedAt, "2026-10-03T12:00:00.000Z");
     assert.equal(session.messages.length, 10);
     assert.equal(listSessionCheckpoints(ID).length, 2, "one checkpoint per turn, so rewind works");
+    assert.deepEqual(
+      replayHistory(session.messages)
+        .filter((item) => item.kind === "tool")
+        .map((item) => item.kind === "tool" && [item.name, item.status, item.output]),
+      [
+        ["list_directory", "completed", "src/\npackage.json"],
+        ["read_file", "failed", "Cancelled before this call completed."],
+        ["write_file", "failed", "a.txt already exists"],
+      ],
+    );
     assert.deepEqual(
       listStoredSessions(cwd).map((summary) => summary.sessionId),
       [ID],

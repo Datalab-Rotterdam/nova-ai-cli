@@ -149,7 +149,7 @@ export function extensionSessionToTurns(
 
     for (const part of parts) {
       // A result without its call (cut by compaction) would be rejected.
-      if (part.type === "toolResult" && pendingCalls.includes(part.callId)) answer(part.callId, part.text);
+      if (part.type === "toolResult" && pendingCalls.includes(part.callId)) answer(part.callId, toolBody(part.text));
     }
     answerRest();
     const text = parts
@@ -164,6 +164,18 @@ export function extensionSessionToTurns(
   }
   answerRest();
   return turns.map((messages) => ({ updatedAt, messages }));
+}
+
+/**
+ * The agent's tool message body ("Tool result: …" / "Tool error: …", read
+ * back by replay and the model alike); the panel stores the raw output and
+ * marks failures "Error: …".
+ */
+function toolBody(text: unknown): string {
+  const output = typeof text === "string" ? text : "";
+  return output.startsWith("Error:")
+    ? `Tool error: ${output.slice("Error:".length).trimStart()}`
+    : `Tool result: ${output}`;
 }
 
 function readIndexIds(path: string): string[] {
