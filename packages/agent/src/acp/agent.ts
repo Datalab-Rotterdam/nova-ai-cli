@@ -27,6 +27,7 @@ import {
   type McpConnection,
   type McpConnectionFailure,
 } from "../core/mcp.js";
+import { importExtensionSessions } from "../core/extension-sessions.js";
 import { buildMemorySystemPrompt, sessionMemory } from "../core/memory.js";
 import {
   applySessionSettings,
@@ -420,6 +421,8 @@ export class NovaAgent implements AgentRuntime {
   /** Newest first, SESSION_PAGE_SIZE per page; the cursor is opaque to clients. */
   listSessions(params: acp.ListSessionsRequest): acp.ListSessionsResponse {
     const offset = decodeCursor(params.cursor);
+    // The VS Code panel's own chats join the list the first time it asks.
+    if (params.cwd && offset === 0) importExtensionSessions(params.cwd);
     const all = listStoredSessions(params.cwd ?? undefined);
     const page = all.slice(offset, offset + SESSION_PAGE_SIZE).map((s) => ({
       sessionId: s.sessionId,

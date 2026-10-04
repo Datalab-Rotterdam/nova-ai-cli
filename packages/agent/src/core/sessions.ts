@@ -5,6 +5,7 @@ import {
   readdirSync,
   readFileSync,
   unlinkSync,
+  writeFileSync,
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import type { ChatMessage } from "@datalabrotterdam/nova-sdk";
@@ -79,6 +80,11 @@ const DIR_MODE = 0o700;
 /** Flat directory override (tests, custom setups); disables the project layout. */
 function overrideDir(): string | null {
   return process.env.NOVA_AI_CLI_SESSIONS_DIR?.trim() || null;
+}
+
+/** False when NOVA_AI_CLI_SESSIONS_DIR replaces the per-project layout. */
+export function sessionsUseProjectLayout(): boolean {
+  return overrideDir() === null;
 }
 
 /** Where sessions lived before the per-project layout; still read and appended to. */
@@ -321,6 +327,39 @@ export function appendSessionTurn(
     0,
     newMessages.length,
   );
+}
+
+/**
+ * Writes a whole session from another source (the extension's chats) as
+ * one turn line per turn, keeping their times. Returns false, writing
+ * nothing, when a session with this id already exists.
+ */
+export function writeImportedSession(
+  sessionId: string,
+  header: { cwd: string; title: string | null },
+  turns: Array<{ updatedAt: string; messages: ChatMessage[] }>,
+): boolean {
+  if (findSessionFile(sessionId)) return false;
+  const path = sessionFileForWrite(sessionId, header.cwd);
+  const lines = [
+    JSON.stringify({
+      kind: "header",
+      version: SESSION_FORMAT_VERSION,
+      cwd: header.cwd,
+      title: header.title,
+    } satisfies HeaderLine),
+    ...turns.map((turn) =>
+      JSON.stringify({
+        kind: "turn",
+        checkpointId: crypto.randomUUID(),
+        updatedAt: turn.updatedAt,
+        messages: turn.messages,
+      } satisfies TurnLine),
+    ),
+  ];
+  // "wx": never replace a file that appeared since the check above.
+  writeFileSync(path, `${lines.join("\n")}\n`, { mode: FILE_MODE, flag: "wx" });
+  return true;
 }
 
 /**
