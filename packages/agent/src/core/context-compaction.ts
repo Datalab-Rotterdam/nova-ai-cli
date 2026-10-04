@@ -1,6 +1,6 @@
 import type { ChatMessage, NovaAI } from "@datalabrotterdam/nova-sdk";
 import { isToolResultMessage, messageTextWithToolCalls } from "./history.js";
-import { resolveModelMetadata } from "./model-capabilities.js";
+import { modelContextWindow, resolveModelMetadata } from "./model-capabilities.js";
 import { stripReasoningTags } from "./reasoning-tags.js";
 
 const DEFAULT_CONTEXT_WINDOW = 32_768;
@@ -71,10 +71,7 @@ export async function resolveModelContextWindow(
 ): Promise<number> {
   try {
     const metadata = await resolveModelMetadata(novaClient, model);
-    const value = metadata?.context_window ?? metadata?.max_model_len;
-    return typeof value === "number" && value > 0
-      ? value
-      : DEFAULT_CONTEXT_WINDOW;
+    return modelContextWindow(metadata) ?? DEFAULT_CONTEXT_WINDOW;
   } catch {
     return DEFAULT_CONTEXT_WINDOW;
   }
