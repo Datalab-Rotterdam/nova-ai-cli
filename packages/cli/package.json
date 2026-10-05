@@ -25,6 +25,7 @@
   },
   "files": [
     "dist",
+    "browser-host",
     "LICENSE",
     "README.md",
     "CHANGELOG.md"
@@ -71,7 +72,7 @@
             "package.json",
             "CHANGELOG.md"
           ],
-          "message": "nova-ai-cli(release): 🚀 v${nextRelease.version}\n\n${nextRelease.notes}"
+          "message": "nova-ai-cli(release): \ud83d\ude80 v${nextRelease.version}\n\n${nextRelease.notes}"
         }
       ]
     ]
