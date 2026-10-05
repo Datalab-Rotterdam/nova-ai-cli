@@ -104,6 +104,8 @@ jobs:
       - name: Release the agent
         working-directory: packages/agent
         run: npx semantic-release ${{ inputs.release_dry_run && '--dry-run' || '' }}
+      - name: Point the CLI at the released agent
+        run: node scripts/sync-agent-dependency.mjs
       - name: Release the CLI
         working-directory: packages/cli
         run: npx semantic-release ${{ inputs.release_dry_run && '--dry-run' || '' }}
