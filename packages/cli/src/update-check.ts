@@ -25,7 +25,14 @@ export type UpdateCheckOptions = {
 };
 
 type DistTags = Record<string, string>;
-type CacheFile = { checkedAt: number; distTags: DistTags };
+type CacheFile = {
+  checkedAt: number;
+  distTags: DistTags;
+  /** "Skip this version" at the start-up prompt: not asked again for it. */
+  skippedVersion?: string;
+  /** "Not today" at the start-up prompt: not asked again before this time. */
+  snoozedUntil?: number;
+};
 
 export function updateCachePath(): string {
   return join(novaHomeRoot(), "update-check.json");
@@ -68,6 +75,7 @@ export function chooseUpdate(currentVersion: string, distTags: DistTags): Update
   return {
     currentVersion,
     latestVersion: best.version,
+    tag: best.tag,
     command: `npm install -g ${CLI_PACKAGE_NAME}@${best.tag}`,
   };
 }
@@ -89,7 +97,7 @@ async function readDistTags(options: UpdateCheckOptions): Promise<DistTags | nul
   if (!response.ok) return null;
   const payload: unknown = await response.json();
   if (!isDistTags(payload)) return null;
-  if (cachePath) writeCache(cachePath, { checkedAt: now, distTags: payload });
+  if (cachePath) writeCache(cachePath, { ...cached, checkedAt: now, distTags: payload });
   return payload;
 }
 
@@ -108,6 +116,43 @@ function readCache(path: string): CacheFile | null {
     // missing or unreadable: ask npm
   }
   return null;
+}
+
+const SNOOZE_MS = 24 * 60 * 60 * 1_000;
+
+export type UpdatePromptOptions = {
+  cachePath?: string | null;
+  now?: () => number;
+};
+
+/** Whether the start-up prompt may ask about this update (not skipped, not snoozed). */
+export function shouldAskAboutUpdate(update: UpdateAvailable, options: UpdatePromptOptions = {}): boolean {
+  const cachePath = options.cachePath === undefined ? updateCachePath() : options.cachePath;
+  const cached = cachePath ? readCache(cachePath) : null;
+  if (!cached) return true;
+  if (cached.skippedVersion === update.latestVersion) return false;
+  const now = (options.now ?? Date.now)();
+  return !(typeof cached.snoozedUntil === "number" && now < cached.snoozedUntil);
+}
+
+/** Remembers "not today" (asked again after a day) or "skip this version". */
+export function rememberUpdateAnswer(
+  answer: "later" | "skip",
+  update: UpdateAvailable,
+  options: UpdatePromptOptions = {},
+): void {
+  const cachePath = options.cachePath === undefined ? updateCachePath() : options.cachePath;
+  if (!cachePath) return;
+  const cached = readCache(cachePath);
+  // Without dist-tags the cache is stale, so the next start asks npm again.
+  const base: CacheFile = cached ?? { checkedAt: 0, distTags: {} };
+  const now = (options.now ?? Date.now)();
+  writeCache(
+    cachePath,
+    answer === "skip"
+      ? { ...base, skippedVersion: update.latestVersion, snoozedUntil: undefined }
+      : { ...base, snoozedUntil: now + SNOOZE_MS },
+  );
 }
 
 function writeCache(path: string, value: CacheFile): void {

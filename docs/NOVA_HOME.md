@@ -19,7 +19,7 @@ there), otherwise `~/.nova-ai`. Directories are created `0700`, files `0600`.
   settings.json                 user settings: permission rules, default mode
   credentials.json              CLI only: API key + default model
   model-capabilities.json       CLI only: learned native tool-call support
-  update-check.json             CLI only: npm's latest versions, asked at most daily
+  update-check.json             CLI only: npm's latest versions (asked at most daily), skipped/snoozed update
   background-jobs/              CLI only: background job transcripts
   sessions/<id>.jsonl           CLI only, legacy: sessions from before projects/
   projects/<slug>-<hash8>/      one folder per workspace (see "Project key")

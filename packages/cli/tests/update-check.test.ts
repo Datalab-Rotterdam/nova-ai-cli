@@ -9,6 +9,8 @@ import {
   formatUpdateNotice,
   isNewerVersion,
   readInstalledVersion,
+  rememberUpdateAnswer,
+  shouldAskAboutUpdate,
   updateChecksDisabled,
 } from "../src/update-check.js";
 
@@ -40,6 +42,7 @@ test("a stable install follows latest; a pre-release install also its own channe
   assert.deepEqual(chooseUpdate("1.0.1", tags), {
     currentVersion: "1.0.1",
     latestVersion: "1.1.0",
+    tag: "latest",
     command: "npm install -g @datalabrotterdam/nova-ai-cli@latest",
   });
   assert.equal(chooseUpdate("1.1.0", tags), null, "stable users are not pushed onto alpha");
@@ -135,4 +138,25 @@ test("update check stays silent when current, offline, cancelled or switched off
     );
   }
   assert.equal(asked, false, "switched off means no request at all");
+});
+
+test("the start-up prompt remembers 'not today' for a day and 'skip' for that version only", async () => {
+  const cachePath = join(mkdtempSync(join(tmpdir(), "nova-update-")), "update-check.json");
+  const day = 24 * 60 * 60 * 1_000;
+  const update = chooseUpdate("1.0.0", { latest: "1.1.0" })!;
+  assert.equal(shouldAskAboutUpdate(update, { cachePath, now: () => 0 }), true, "asked without a cache");
+
+  rememberUpdateAnswer("later", update, { cachePath, now: () => 1_000 });
+  assert.equal(shouldAskAboutUpdate(update, { cachePath, now: () => 1_000 + day - 1 }), false);
+  assert.equal(shouldAskAboutUpdate(update, { cachePath, now: () => 1_000 + day }), true);
+
+  rememberUpdateAnswer("skip", update, { cachePath, now: () => 2_000 });
+  assert.equal(shouldAskAboutUpdate(update, { cachePath, now: () => 2_000 + 10 * day }), false);
+  const newer = chooseUpdate("1.0.0", { latest: "1.2.0" })!;
+  assert.equal(shouldAskAboutUpdate(newer, { cachePath, now: () => 2_000 }), true, "a newer version is asked about");
+
+  // A daily npm refresh keeps the answer.
+  await checkForUpdate({ currentVersion: "1.0.0", cachePath, env: ENV, fetchImpl: npm({ latest: "1.1.0" }), now: () => 3 * day });
+  assert.equal(JSON.parse(readFileSync(cachePath, "utf8")).skippedVersion, "1.1.0");
+  assert.equal(shouldAskAboutUpdate(update, { cachePath, now: () => 3 * day }), false);
 });

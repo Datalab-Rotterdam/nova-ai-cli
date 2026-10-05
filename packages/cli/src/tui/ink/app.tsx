@@ -34,12 +34,18 @@ export type InkTuiOptions = {
 const FRAME_MS = 120;
 const RESIZE_SETTLE_MS = 100;
 
+export type InkTuiResult = {
+  sessionId: string;
+  /** /update: install the newer version and restart once the TUI is gone. */
+  updateRequested: boolean;
+};
+
 export async function runInkTui(
   credentials: StoredCredentials,
   cwd: string,
   args: string[],
   options: InkTuiOptions = {},
-): Promise<void> {
+): Promise<InkTuiResult> {
   const store = createStore<UIState>({
     messages: [],
     plan: [],
@@ -122,6 +128,7 @@ export async function runInkTui(
     await instance.waitUntilExit().catch(() => {});
   }
   stdout.write(`Resume this session with: nova-ai --resume ${runner.sessionId}\n`);
+  return { sessionId: runner.sessionId, updateRequested: controller.updateRequested };
 }
 
 export function App({ controller }: { controller: TuiController }) {

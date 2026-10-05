@@ -44,10 +44,17 @@ nova-ai                # start the terminal UI in your project
 Or without installing: `npx @datalabrotterdam/nova-ai-cli login`, then
 `npx @datalabrotterdam/nova-ai-cli`.
 
-When a newer version is on npm, the terminal UI says so, and so do `-p` and
-`--version` (on stderr, only in a terminal). npm is asked at most once a day;
-an alpha install also follows the `alpha` channel. `NOVA_NO_UPDATE_CHECK=1`
-turns it off (it is off in CI).
+When a newer version is on npm, `nova-ai` asks before the terminal UI opens:
+Enter installs it (`npm install -g`) and restarts, `n` asks again tomorrow, `s`
+skips that version. Until it is installed, the status line keeps reminding you,
+and `/update` installs it and restarts in the same session. `-p` and
+`--version` print a notice (on stderr, only in a terminal). npm is asked at
+most once a day; an alpha install also follows the `alpha` channel.
+`NOVA_NO_UPDATE_CHECK=1` turns it off (it is off in CI).
+
+nova-ai installs updates itself only when it was installed with
+`npm install -g`; with npx, another package manager or a project dependency it
+shows the command to run instead.
 
 ```
 nova-ai [options]                 Interactive terminal UI

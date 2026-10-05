@@ -1,8 +1,16 @@
 import { createInterface } from "node:readline/promises";
 import type { TuiOptions } from "../cli.js";
 import { readCredentials } from "@datalabrotterdam/nova-ai-agent/core/credentials.js";
-import { listStoredSessions } from "@datalabrotterdam/nova-ai-agent/core/sessions.js";
+import { listStoredSessions, loadStoredSession } from "@datalabrotterdam/nova-ai-agent/core/sessions.js";
 import { setWorkspaceTrusted } from "@datalabrotterdam/nova-ai-agent/core/nova-home.js";
+import { checkForUpdate } from "../update-check.js";
+import {
+  installAndRestart,
+  offerUpdateAtStart,
+  UPDATED_FROM_ENV,
+  withInstallability,
+} from "../update-install.js";
+import { cliVersion } from "../version.js";
 import { runInkTui } from "./ink/app.js";
 import { workspaceNeedsTrust } from "./settings/workspace-mcp.js";
 
@@ -13,6 +21,18 @@ export async function runChat(options: TuiOptions): Promise<number> {
     return 1;
   }
   const credentials = options.model ? { ...stored, defaultModel: options.model } : stored;
+
+  // One npm check per start: the prompt below and the TUI's reminder share it.
+  const updateCheck = checkForUpdate().then((update) => withInstallability(update));
+  const updatedFrom = process.env[UPDATED_FROM_ENV];
+  if (updatedFrom) {
+    // This is the restarted, updated process: say so, and don't ask again.
+    delete process.env[UPDATED_FROM_ENV];
+    console.log(`Updated nova-ai ${updatedFrom} → ${cliVersion() ?? "?"}.`);
+  } else {
+    const restartedCode = await offerUpdateAtStart(updateCheck, process.argv.slice(2));
+    if (restartedCode !== null) return restartedCode;
+  }
 
   const cwd = process.cwd();
   let resume = options.resume;
@@ -27,7 +47,19 @@ export async function runChat(options: TuiOptions): Promise<number> {
   if (workspaceNeedsTrust(cwd)) await askToTrust(cwd);
 
   const args = resume ? ["--resume", resume] : [];
-  await runInkTui(credentials, cwd, args);
+  const result = await runInkTui(credentials, cwd, args, { checkForUpdate: () => updateCheck });
+  if (result.updateRequested) {
+    const update = await updateCheck;
+    if (update) {
+      // Continue the same session in the new version (if it has been saved yet).
+      const restartArgs = [
+        ...(loadStoredSession(result.sessionId) ? ["--resume", result.sessionId] : []),
+        ...(options.model ? ["--model", options.model] : []),
+      ];
+      const restartedCode = installAndRestart(update, restartArgs);
+      if (restartedCode !== null) return restartedCode;
+    }
+  }
   return 0;
 }
 

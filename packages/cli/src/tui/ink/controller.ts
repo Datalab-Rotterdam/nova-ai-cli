@@ -111,6 +111,8 @@ export class TuiController {
   private stopped = false;
   private readonly unsubscribeStore: () => void;
   private resolveExit: () => void = () => {};
+  /** Set by /update: the caller installs and restarts after the TUI exits. */
+  updateRequested = false;
   /** Settles once the user asked to quit; `run` then tears the view down. */
   readonly exitRequested = new Promise<void>((resolve) => {
     this.resolveExit = resolve;
@@ -492,6 +494,19 @@ export class TuiController {
     clear: () => void this.runner.startNewSession(),
     newSession: () => this.runner.startNewSession(),
     exit: () => this.requestExit(),
+    requestUpdate: () => {
+      const update = this.store.getState().updateAvailable;
+      if (!update) return "No newer nova-ai found on npm.";
+      if (!update.installable) {
+        return `nova-ai ${update.latestVersion} is available, but this copy wasn't installed with npm -g, so it can't update itself. Run: ${update.command}`;
+      }
+      if (this.store.getState().busy) {
+        return "Wait for the current request to finish (or press Esc), then run /update again.";
+      }
+      this.updateRequested = true;
+      this.requestExit();
+      return null;
+    },
     resumeSession: (sessionId) => {
       const id = sessionId ?? listSessionsForCwd(this.runner.cwd)[0]?.sessionId;
       return id ? this.runner.resumeFrom(id) : false;

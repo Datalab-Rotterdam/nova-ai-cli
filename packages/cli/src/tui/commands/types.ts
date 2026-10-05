@@ -18,6 +18,8 @@ export type SlashCommandContext = {
   clear(): void;
   newSession(): Promise<void>;
   exit(): void;
+  /** Exits to install the newer version and restart; returns a message when it can't. */
+  requestUpdate(): string | null;
   resumeSession(sessionId?: string): boolean;
   openSessionSwitcher(): void;
   openModelPicker(): void;
