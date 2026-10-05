@@ -91,6 +91,14 @@ export const builtinCommands: SlashCommand[] = [
     },
   },
   {
+    name: "update",
+    description: "Install the newer nova-ai from npm and restart in this session",
+    run(ctx) {
+      const message = ctx.requestUpdate();
+      if (message) ctx.print(message);
+    },
+  },
+  {
     name: "mode",
     description: "Switch interaction mode (/mode agent|ask|plan)",
     run(ctx, args) {

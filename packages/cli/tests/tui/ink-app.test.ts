@@ -306,3 +306,68 @@ test("the terminal probe detects the kitty protocol and keeps keys typed meanwhi
   assert.equal(kittyKeyboardOverride({ NOVA_KITTY_KEYBOARD: "0" }), false);
   assert.equal(kittyKeyboardOverride({}), null);
 });
+
+test("/update exits the TUI and asks the caller to install and restart", async () => {
+  const terminal = new Terminal({ cols: 100, rows: 24, allowProposedApi: true, scrollback: 1_000, convertEol: true });
+  const stdout = new FakeTerminalOutput(terminal);
+  const stdin = new FakeTerminalInput();
+  const run = runInkTui({ apiKey: "test", defaultModel: "test-model" }, process.cwd(), [], {
+    stdin: stdin as unknown as NodeJS.ReadStream,
+    stdout: stdout as unknown as NodeJS.WriteStream,
+    checkForUpdate: async () => ({
+      currentVersion: "1.0.0",
+      latestVersion: "1.1.0",
+      tag: "latest",
+      command: "npm install -g @datalabrotterdam/nova-ai-cli@latest",
+      installable: true,
+    }),
+    kittyKeyboard: false,
+    createRunner(created) {
+      const runner = new SessionRunner(created, { apiKey: "test", defaultModel: "test-model" }, process.cwd());
+      installFakeAgentQueue(runner);
+      return runner;
+    },
+  });
+  const show = () => screen(terminal);
+  await waitFor(() => /Type \/update to install it\./.test(show()), show);
+
+  stdin.send("/update\r");
+  const result = await run;
+  assert.equal(result.updateRequested, true);
+  assert.ok(result.sessionId);
+  terminal.dispose();
+});
+
+test("/update without an installable update explains and keeps running", async () => {
+  const terminal = new Terminal({ cols: 100, rows: 24, allowProposedApi: true, scrollback: 1_000, convertEol: true });
+  const stdout = new FakeTerminalOutput(terminal);
+  const stdin = new FakeTerminalInput();
+  const run = runInkTui({ apiKey: "test", defaultModel: "test-model" }, process.cwd(), [], {
+    stdin: stdin as unknown as NodeJS.ReadStream,
+    stdout: stdout as unknown as NodeJS.WriteStream,
+    checkForUpdate: async () => ({
+      currentVersion: "1.0.0",
+      latestVersion: "1.1.0",
+      tag: "latest",
+      command: "npm install -g @datalabrotterdam/nova-ai-cli@latest",
+      installable: false,
+    }),
+    kittyKeyboard: false,
+    createRunner(created) {
+      const runner = new SessionRunner(created, { apiKey: "test", defaultModel: "test-model" }, process.cwd());
+      installFakeAgentQueue(runner);
+      return runner;
+    },
+  });
+  const show = () => screen(terminal);
+  await waitFor(() => /Run: npm install -g/.test(show()), show);
+
+  stdin.send("/update\r");
+  await waitFor(() => /wasn't installed with npm -g/.test(text(terminal)), () => text(terminal));
+  stdin.send("\u0003");
+  await waitFor(() => /Press Ctrl\+C again/.test(show()), show);
+  stdin.send("\u0003");
+  const result = await run;
+  assert.equal(result.updateRequested, false);
+  terminal.dispose();
+});

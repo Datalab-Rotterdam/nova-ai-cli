@@ -77,7 +77,11 @@ export type SessionMeta = {
 export type UpdateAvailable = {
   currentVersion: string;
   latestVersion: string;
+  /** The npm dist-tag that has latestVersion (latest, alpha, …). */
+  tag: string;
   command: string;
+  /** This is a global npm install that nova-ai can update itself (/update). */
+  installable?: boolean;
 };
 
 export type Mode =

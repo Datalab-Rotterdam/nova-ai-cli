@@ -21,7 +21,9 @@ export function StatusLine({
     <Box flexDirection="column">
       {ui.updateAvailable ? (
         <Text color={palette.warning}>
-          {`Update ${ui.updateAvailable.latestVersion} available (current ${ui.updateAvailable.currentVersion}). Run: ${ui.updateAvailable.command}`}
+          {`Update ${ui.updateAvailable.latestVersion} available (current ${ui.updateAvailable.currentVersion}). ${
+            ui.updateAvailable.installable ? "Type /update to install it." : `Run: ${ui.updateAvailable.command}`
+          }`}
         </Text>
       ) : null}
       {ui.statusLine ? <Text color={palette.muted}>{ui.statusLine}</Text> : null}

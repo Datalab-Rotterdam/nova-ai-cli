@@ -399,7 +399,7 @@ test("status shows model, modes and counts on one row, with messages and updates
       totalTokens: 12_345,
       contextWindow: 128_000,
     } as UIState["contextUsage"],
-    updateAvailable: { currentVersion: "1.0.0", latestVersion: "1.1.0", command: "npm i -g @datalabrotterdam/nova-ai-cli" },
+    updateAvailable: { currentVersion: "1.0.0", latestVersion: "1.1.0", tag: "latest", command: "npm i -g @datalabrotterdam/nova-ai-cli" },
   });
   const rendered = plain(
     renderToString(
@@ -418,6 +418,28 @@ test("status shows model, modes and counts on one row, with messages and updates
     lines[2],
     "nova-large | agent | ask | working | ctx:12k/128k | queued:2 | mcp:1/2 !1 | skills:3",
   );
+});
+
+test("an update nova-ai can install itself points at /update", () => {
+  const rendered = plain(
+    renderToString(
+      createElement(StatusLine, {
+        ui: state({
+          updateAvailable: {
+            currentVersion: "1.0.0",
+            latestVersion: "1.1.0",
+            tag: "latest",
+            command: "npm install -g @datalabrotterdam/nova-ai-cli@latest",
+            installable: true,
+          },
+        }),
+        model: "nova-large",
+        mcp: { configured: 0, connected: 0, failed: 0, skills: 0 },
+      }),
+      { columns: 120 },
+    ),
+  );
+  assert.match(rendered.split("\n")[0]!, /Update 1\.1\.0 available \(current 1\.0\.0\)\. Type \/update to install it\./);
 });
 
 test("elapsed time and token counts format compactly", () => {
