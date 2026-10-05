@@ -1,3 +1,15 @@
+# [@datalabrotterdam/nova-ai-cli-v1.2.0-alpha.4](https://github.com/Datalab-Rotterdam/nova-ai-cli/compare/@datalabrotterdam/nova-ai-cli@1.2.0-alpha.3...@datalabrotterdam/nova-ai-cli@1.2.0-alpha.4) (2026-10-05)
+
+
+### Bug Fixes
+
+* **cli:** depend on the agent version the CLI was released with ([4931439](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/4931439d106063b81e24367d6aa9c3f285f4ad15))
+
+
+### Features
+
+* **cli:** offer npm updates at start-up, remind until installed, /update ([18defca](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/18defcaea988698f9d0909419bb2aa1fdedfa5a9))
+
 # [@datalabrotterdam/nova-ai-cli-v1.2.0-alpha.3](https://github.com/Datalab-Rotterdam/nova-ai-cli/compare/@datalabrotterdam/nova-ai-cli@1.2.0-alpha.2...@datalabrotterdam/nova-ai-cli@1.2.0-alpha.3) (2026-10-04)
 
 
