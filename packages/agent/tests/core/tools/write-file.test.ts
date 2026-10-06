@@ -49,3 +49,31 @@ describe("writeFileTool", () => {
     assert.deepEqual(result, { error: "permission denied" });
   });
 });
+
+describe("bundled skills", () => {
+  it("refuses to write into a bundled skill, without calling the host", async () => {
+    const { mkdirSync, mkdtempSync, rmSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const cwd = mkdtempSync(join(tmpdir(), "nova-bundled-"));
+    try {
+      const skill = join(cwd, ".nova-ai", "skills", "team-browser");
+      mkdirSync(skill, { recursive: true });
+      writeFileSync(join(skill, "SKILL.md"), "---\nname: team-browser\n---\nbody");
+      writeFileSync(join(skill, ".nova-bundled.json"), JSON.stringify({ bundledBy: "Nova AI Browser" }));
+      let called = false;
+      const ctx = makeToolContext({ host: { writeTextFile: async () => { called = true; } }, cwd });
+
+      const result = await writeFileTool.execute(ctx, { path: ".nova-ai/skills/team-browser/SKILL.md", content: "changed" });
+      assert.ok("error" in result);
+      assert.match(result.error, /bundled with Nova AI Browser.*only switched off/);
+      assert.equal(called, false);
+
+      const other = await writeFileTool.execute(ctx, { path: "notes.md", content: "ok" });
+      assert.ok(!("error" in other));
+      assert.equal(called, true);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+});

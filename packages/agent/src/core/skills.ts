@@ -12,7 +12,44 @@ export type SkillDefinition = {
   path: string;
   root: string;
   source: "user" | "workspace";
+  /** Bundled with a Nova app, which keeps it up to date: read-only, can only be switched off. */
+  bundledBy?: string;
 };
+
+/** Marks a bundled skill (docs/NOVA_HOME.md in nova-ai-vscode, "Bundled skills"). */
+export const BUNDLE_FILE = ".nova-bundled.json";
+
+/** The app a skill folder is bundled with, if it is a bundled skill. */
+export function readBundledBy(root: string): string | undefined {
+  try {
+    const parsed = JSON.parse(readFileSync(join(root, BUNDLE_FILE), "utf8")) as { bundledBy?: unknown };
+    return typeof parsed.bundledBy === "string" && parsed.bundledBy.trim() ? parsed.bundledBy : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The bundled skill a file belongs to, if any: the nearest folder above it with a SKILL.md
+ * and a bundle marker. The agent's file tools refuse to change such files.
+ */
+export function bundledSkillOf(file: string): { name: string; bundledBy: string } | undefined {
+  let dir = dirname(resolve(file));
+  for (let depth = 0; depth < 6; depth++) {
+    if (existsSync(join(dir, "SKILL.md"))) {
+      const bundledBy = readBundledBy(dir);
+      return bundledBy ? { name: basename(dir), bundledBy } : undefined;
+    }
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return undefined;
+}
+
+export function bundledSkillMessage(skill: { name: string; bundledBy: string }): string {
+  return `"${skill.name}" is bundled with ${skill.bundledBy}, which keeps it up to date; it cannot be edited, only switched off (/skills off ${skill.name}).`;
+}
 
 /**
  * Skill folders, lowest priority first (docs/NOVA_HOME.md, "Skills"): the
@@ -98,11 +135,13 @@ export function discoverSkills(cwd: string, home = homedir(), novaHome = novaHom
       if (!metadata) continue;
       // Later roots have higher priority, so workspace skills override a user
       // skill with the same name.
+      const bundledBy = readBundledBy(dirname(path));
       skills.set(metadata.name, {
         ...metadata,
         path,
         root: dirname(path),
         source: root.source,
+        ...(bundledBy ? { bundledBy } : {}),
       });
     }
   }

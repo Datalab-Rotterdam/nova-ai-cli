@@ -6,6 +6,7 @@ import test from "node:test";
 import { projectPaths } from "../../src/core/nova-home.js";
 import {
   buildSkillsSystemPrompt,
+  bundledSkillOf,
   createLoadSkillTool,
   disabledSkillNames,
   discoverSkills,
@@ -176,6 +177,29 @@ test("skills are switched on and off per scope without touching other settings",
   } finally {
     if (previousHome === undefined) delete process.env.NOVA_AI_HOME;
     else process.env.NOVA_AI_HOME = previousHome;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("bundled skills are recognized by their marker", () => {
+  const root = mkdtempSync(join(tmpdir(), "nova-skills-"));
+  const home = join(root, "home");
+  const cwd = join(root, "workspace");
+  try {
+    const bundled = join(home, ".nova-ai", "skills", "nova-browser");
+    mkdirSync(join(bundled, "references"), { recursive: true });
+    writeFileSync(join(bundled, "SKILL.md"), "---\nname: nova-browser\ndescription: Use the browser.\n---\nbody");
+    writeFileSync(join(bundled, ".nova-bundled.json"), JSON.stringify({ bundledBy: "Nova AI Browser", version: "0.1.0", hash: "x" }));
+    const own = join(home, ".nova-ai", "skills", "review");
+    mkdirSync(own, { recursive: true });
+    writeFileSync(join(own, "SKILL.md"), "---\nname: review\ndescription: Review.\n---\nbody");
+
+    const skills = discoverSkills(cwd, home, join(home, ".nova-ai"));
+    assert.equal(skills.find((skill) => skill.name === "nova-browser")?.bundledBy, "Nova AI Browser");
+    assert.equal(skills.find((skill) => skill.name === "review")?.bundledBy, undefined);
+    assert.deepEqual(bundledSkillOf(join(bundled, "references", "tools.md")), { name: "nova-browser", bundledBy: "Nova AI Browser" });
+    assert.equal(bundledSkillOf(join(own, "SKILL.md")), undefined);
+  } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });
