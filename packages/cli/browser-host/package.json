@@ -1,0 +1,7 @@
+{
+  "name": "@datalabrotterdam/nova-ai-browser-host",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Vendored copy of the Nova AI Browser host. Do not edit; update with `npm run vendor:host` in nova-ai-browser."
+}

@@ -262,3 +262,21 @@ the skills matching the user's message keep their description, others are listed
 by name only (about 1,000 characters), the rest are counted. The model reads a
 skill with `load_skill` (`{ name, resource? }`, at most 24,000 characters per
 file, only files inside the skill's folder).
+
+### Bundled skills
+
+A Nova app may ship a skill and keep it up to date: a *bundled* skill. Example:
+`nova-browser`, installed by the Nova AI Browser host that Nova AI for VS Code and
+nova-ai-cli carry. Its folder holds `.nova-bundled.json`:
+
+```json
+{ "bundledBy": "Nova AI Browser", "version": "0.1.0", "hash": "<sha256 over the files>" }
+```
+
+- Users can only switch a bundled skill off (by name, as above). Every Nova tool
+  must show it as bundled and must not offer to edit, move or delete it, and the
+  agent's file tools refuse to change its files.
+- The app that bundles it makes its files read-only and reinstalls it whenever
+  the version or the content hash no longer matches (an update, or a local edit).
+  The `disabled` setting is kept, so a switched-off skill stays off after updates.
+- An installer never touches a skill folder without its own marker.
