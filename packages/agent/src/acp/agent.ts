@@ -32,6 +32,8 @@ import { FileOAuthProvider, oauthConfigOf } from "../core/mcp-oauth.js";
 import { buildMemorySystemPrompt, sessionMemory } from "../core/memory.js";
 import { isWorkspaceTrusted, setWorkspaceTrusted } from "../core/nova-home.js";
 import { readWorkspaceMcpConfiguration, workspaceNeedsTrust } from "../core/workspace-mcp.js";
+import { MAX_STOP_HOOK_ROUNDS, runHooks } from "../core/hooks.js";
+import type { ToolHooks } from "../core/tool-batch.js";
 import {
   applySessionSettings,
   sessionSettingsView,
@@ -920,6 +922,38 @@ export class NovaAgent implements AgentRuntime {
     if (slashCommandName(params.prompt) === "compact") {
       return this.runCompactCommand(session, params.sessionId, client);
     }
+    // Hooks may block the message or add context; SessionStart only before a chat's first message.
+    const hookOptions = { cwd: session.cwd, sessionId: params.sessionId, signal: abortController.signal };
+    const notice = (text: string) =>
+      emitToAcp(client, params.sessionId, { type: "notice", text }, session.cwd).catch(() => {});
+    const started = session.history.length
+      ? undefined
+      : await runHooks("SessionStart", { source: "startup" }, hookOptions);
+    const submitted = await runHooks("UserPromptSubmit", { prompt: contentBlocksToText(params.prompt) }, hookOptions);
+    for (const warning of [...(started?.warnings ?? []), ...submitted.warnings]) await notice(warning);
+    if (abortController.signal.aborted) return { stopReason: "cancelled" };
+    if (submitted.block) {
+      await client
+        .notify("session/update", {
+          sessionId: params.sessionId,
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: `A hook blocked this message: ${submitted.block}` },
+          },
+        })
+        .catch(() => {});
+      return { stopReason: "end_turn" };
+    }
+    const hookContext = [started?.context, submitted.context].filter(Boolean).join("\n");
+    const hookMessages: ChatMessage[] = hookContext
+      ? [{ role: "user", content: `Context from the user's hooks:\n${hookContext}` }]
+      : [];
+    const toolHooks: ToolHooks = {
+      before: (tool, args) => runHooks("PreToolUse", { tool_name: tool.name, tool_input: args }, hookOptions),
+      after: (tool, args, response) =>
+        runHooks("PostToolUse", { tool_name: tool.name, tool_input: args, tool_response: response }, hookOptions),
+    };
+
     const credentials = readCredentials();
     if (!credentials) {
       throw acp.RequestError.authRequired();
@@ -994,7 +1028,7 @@ export class NovaAgent implements AgentRuntime {
     // Finished background jobs hand their notes to the next foreground turn
     // here, keeping history and the session file in the order the model saw.
     const backgroundHandoffs = session.pendingBackgroundHandoffs.splice(0);
-    session.history.push(...backgroundHandoffs, userMessage);
+    session.history.push(...backgroundHandoffs, userMessage, ...hookMessages);
 
     const messages: ChatMessage[] = [
       ...(systemPrompt
@@ -1025,6 +1059,7 @@ export class NovaAgent implements AgentRuntime {
       toolCallId: string,
       tool: ToolDefinition,
       args: Record<string, unknown>,
+      hookAllowed?: boolean,
     ) =>
       authorizeToolCall(
         {
@@ -1038,6 +1073,7 @@ export class NovaAgent implements AgentRuntime {
         toolCallId,
         tool,
         args,
+        hookAllowed,
       );
     const requestPermission = async (
       toolCallId: string,
@@ -1048,7 +1084,7 @@ export class NovaAgent implements AgentRuntime {
     let turnMessages: ChatMessage[] = [];
     let contextCompacted = false;
     try {
-      const result = await runWithToolProtocol({
+      const runOnce = () => runWithToolProtocol({
         model,
         support: this.models.toolSupport,
         hasTools: tools.length > 0,
@@ -1068,6 +1104,7 @@ export class NovaAgent implements AgentRuntime {
             tools,
             requestPermission,
             authorize,
+            hooks: toolHooks,
             maxToolRounds: session.settings.maxToolRounds ?? undefined,
             compactThreshold: session.settings.compactThreshold ?? undefined,
             compactContext: !session.settings.autoCompact ? undefined : async (currentMessages, error) => {
@@ -1104,7 +1141,27 @@ export class NovaAgent implements AgentRuntime {
           });
         },
       });
-      turnMessages = result.turnMessages;
+      let result = await runOnce();
+      turnMessages = [...result.turnMessages];
+      // A Stop hook can send the agent back to work (until the tests pass, say), a few times at most.
+      for (
+        let round = 0;
+        round < MAX_STOP_HOOK_ROUNDS && result.stopReason === "end_turn" && !abortController.signal.aborted;
+        round++
+      ) {
+        const stop = await runHooks("Stop", { stop_hook_active: round > 0 }, hookOptions);
+        for (const warning of stop.warnings) await notice(warning);
+        if (!stop.block || abortController.signal.aborted) break;
+        await notice(`A Stop hook asked Nova to continue: ${stop.block}`);
+        const nudge: ChatMessage = {
+          role: "user",
+          content: `A Stop hook did not let you finish yet:\n${stop.block}\nContinue the task.`,
+        };
+        messages.push(nudge);
+        turnMessages.push(nudge);
+        result = await runOnce();
+        turnMessages.push(...result.turnMessages);
+      }
       return { stopReason: result.stopReason };
     } catch (err) {
       if (abortController.signal.aborted) {
@@ -1127,7 +1184,7 @@ export class NovaAgent implements AgentRuntime {
         appendSessionTurn(
           params.sessionId,
           { cwd: session.cwd, title: session.title },
-          [...backgroundHandoffs, userMessage, ...turnMessages],
+          [...backgroundHandoffs, userMessage, ...hookMessages, ...turnMessages],
         );
       }
       await this.announceTurnEnd(params.sessionId, session, client, {

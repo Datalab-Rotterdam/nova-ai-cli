@@ -249,6 +249,19 @@ a prompt runs. Session files are append-only; a rewind appends a reset record.
 | `_nova/skills/list` | `cwd` (no session id needed) | `{ skills: [{ name, description, source, path, enabled }] }`: every skill discovered for the workspace, switched-off ones included |
 | `_nova/skills/set_enabled` | `cwd`, `name`, `enabled`, `scope?` (`"project"`, the default, or `"global"`) | `{ skills }` after the change; sessions use it from their next turn. An unknown name is `invalidParams` |
 
+### Hooks
+
+The agent runs the user's hooks (Claude Code's format, `hooks` in the Nova
+settings files; a workspace's own only when it is trusted; see NOVA_HOME.md,
+"Hooks") for every client: `SessionStart` and `UserPromptSubmit` before a
+prompt, `PreToolUse` before the permission check (exit 2 or a `deny` blocks
+the call; an `allow` answers in place of `session/request_permission`, deny
+rules still win), `PostToolUse` after a tool ran (feedback for the model),
+and `Stop` when the turn would end (a block continues the turn, at most three
+times), also for background agents' tool calls. A blocked prompt ends the
+turn with an `agent_message_chunk` saying why; hook warnings and Stop
+decisions arrive as `agent_thought_chunk`.
+
 ### MCP sign-in
 
 HTTP and SSE servers that answer 401 are signed in with OAuth (discovery,

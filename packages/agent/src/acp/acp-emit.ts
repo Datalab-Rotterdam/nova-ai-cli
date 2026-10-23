@@ -72,6 +72,15 @@ export async function emitToAcp(
         },
       });
       return;
+    case "notice":
+      await client.notify("session/update", {
+        sessionId,
+        update: {
+          sessionUpdate: "agent_thought_chunk",
+          content: { type: "text", text: event.text },
+        },
+      });
+      return;
     case "tool_pending": {
       const { title, locations } = describeToolCall(event.name, event.args, cwd);
       await client.notify("session/update", {
