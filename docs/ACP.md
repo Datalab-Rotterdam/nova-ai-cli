@@ -240,6 +240,12 @@ a prompt runs. Session files are append-only; a rewind appends a reset record.
 | `_nova/skills/list` | `cwd` (no session id needed) | `{ skills: [{ name, description, source, path, enabled }] }`: every skill discovered for the workspace, switched-off ones included |
 | `_nova/skills/set_enabled` | `cwd`, `name`, `enabled`, `scope?` (`"project"`, the default, or `"global"`) | `{ skills }` after the change; sessions use it from their next turn. An unknown name is `invalidParams` |
 
+### Workspace trust
+
+| Method | Params | Result |
+|---|---|---|
+| `_nova/workspace/trust` | `cwd`, `trusted?` (no session id needed) | `{ trusted, needsTrust }`. Trust lets the workspace's `.nova-ai` allow rules apply and its MCP servers start (from the next session); remembered in `~/.nova-ai` (see NOVA_HOME.md). Without `trusted` it only reports; `needsTrust` is true when the workspace is untrusted and declares MCP servers or allow rules |
+
 ### Background jobs
 
 Jobs: `{ jobId, sessionId, kind: "terminal" | "prompt", title, status:

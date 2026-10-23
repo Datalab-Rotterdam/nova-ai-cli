@@ -95,6 +95,9 @@ export class NovaAgentClient {
   }) {
     return this.ext<ContextUsage>(NOVA_METHODS.sessionContextUsage, params);
   }
+  workspaceTrust(params: { cwd: string; trusted?: boolean }) {
+    return this.ext<{ trusted: boolean; needsTrust: boolean }>(NOVA_METHODS.workspaceTrust, params);
+  }
   skillsList(params: { cwd: string }) {
     return this.ext<{ skills: SkillState[] }>(NOVA_METHODS.skillsList, params);
   }

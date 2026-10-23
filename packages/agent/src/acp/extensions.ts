@@ -26,6 +26,7 @@ export const NOVA_METHODS = {
   modelsList: "_nova/models/list",
   skillsList: "_nova/skills/list",
   skillsSetEnabled: "_nova/skills/set_enabled",
+  workspaceTrust: "_nova/workspace/trust",
 } as const;
 
 export const NOVA_NOTIFICATIONS = {

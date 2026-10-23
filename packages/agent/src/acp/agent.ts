@@ -28,7 +28,8 @@ import {
   type McpConnectionFailure,
 } from "../core/mcp.js";
 import { buildMemorySystemPrompt, sessionMemory } from "../core/memory.js";
-import { readWorkspaceMcpConfiguration } from "../core/workspace-mcp.js";
+import { isWorkspaceTrusted, setWorkspaceTrusted } from "../core/nova-home.js";
+import { readWorkspaceMcpConfiguration, workspaceNeedsTrust } from "../core/workspace-mcp.js";
 import {
   applySessionSettings,
   sessionSettingsView,
@@ -617,6 +618,19 @@ export class NovaAgent implements AgentRuntime {
       permissionModeOption(session.policy.mode),
       ...(await this.models.buildConfigOptions(session)),
     ];
+  }
+
+  /**
+   * `_nova/workspace/trust`: trusting a workspace lets its allow rules apply
+   * and its MCP servers start (from the next session); without `trusted` it
+   * only reports the state. `needsTrust`: untrusted and asking for either.
+   */
+  workspaceTrust(params: { cwd: string; trusted?: boolean }): {
+    trusted: boolean;
+    needsTrust: boolean;
+  } {
+    if (params.trusted !== undefined) setWorkspaceTrusted(params.cwd, params.trusted);
+    return { trusted: isWorkspaceTrusted(params.cwd), needsTrust: workspaceNeedsTrust(params.cwd) };
   }
 
   /** `_nova/skills/list`: every skill discovered for `cwd`, switched-off ones included. */

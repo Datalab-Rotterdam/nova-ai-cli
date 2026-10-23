@@ -402,6 +402,11 @@ export class SessionRunner {
     return this.skills.map((skill) => ({ ...skill }));
   }
 
+  async trustWorkspace(): Promise<void> {
+    await this.initialized;
+    await this.nova.workspaceTrust({ cwd: this.cwd, trusted: true });
+  }
+
   /** Every skill of the workspace with its on/off state, from the agent. */
   async listSkills() {
     await this.initialized;

@@ -5,7 +5,6 @@ import { NovaAgent } from "@datalabrotterdam/nova-ai-agent/acp/agent.js";
 import { clientFromContext } from "@datalabrotterdam/nova-ai-agent/client/context-client.js";
 import { startInProcessAgent } from "@datalabrotterdam/nova-ai-agent/client/in-process.js";
 import type { PermissionMode } from "@datalabrotterdam/nova-ai-agent/core/policy/settings.js";
-import { setWorkspaceTrusted } from "@datalabrotterdam/nova-ai-agent/core/nova-home.js";
 import { listStoredSessions, loadStoredSession } from "@datalabrotterdam/nova-ai-agent/core/sessions.js";
 import {
   HeadlessAcpClient,
@@ -150,7 +149,6 @@ export async function runHeadless(
   );
   const agent = connection.client;
 
-  if (options.trustWorkspace) setWorkspaceTrusted(options.cwd, true);
   // The agent reads the workspace's MCP servers itself; --no-mcp opts out.
   const sessionMeta = { "nova-ai-cli/workspaceMcp": options.mcp };
   const reportMcpFailures = (meta: Record<string, unknown> | null | undefined) => {
@@ -181,6 +179,7 @@ export async function runHeadless(
       clientCapabilities: client.capabilities,
       clientInfo: { name: "nova-ai-cli-headless", version: "1" },
     });
+    if (options.trustWorkspace) await agent.workspaceTrust({ cwd: options.cwd, trusted: true });
     if (options.resume) {
       const resumed = await agent.resumeSession({
         sessionId: options.resume,

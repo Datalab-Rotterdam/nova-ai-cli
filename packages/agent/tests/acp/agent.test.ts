@@ -1030,3 +1030,18 @@ describe("NovaAgent skills", () => {
     }
   });
 });
+
+describe("NovaAgent workspace trust", () => {
+  it("reports and sets trust; a workspace asking for nothing needs none", () => {
+    const cwd = mkdtempSync(join(tmpdir(), "nova-agent-trust-"));
+    try {
+      const agent = new NovaAgent();
+      assert.deepEqual(agent.workspaceTrust({ cwd }), { trusted: false, needsTrust: false });
+      writeFileSync(join(cwd, ".mcp.json"), JSON.stringify({ mcpServers: { s: { command: "x" } } }));
+      assert.deepEqual(agent.workspaceTrust({ cwd }), { trusted: false, needsTrust: true });
+      assert.deepEqual(agent.workspaceTrust({ cwd, trusted: true }), { trusted: true, needsTrust: false });
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+});

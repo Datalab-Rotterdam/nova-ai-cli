@@ -31,7 +31,7 @@ export type SlashCommandContext = {
   setPermissionMode(mode: PermissionMode): void;
   openPermissionPicker(): void;
   /** Trusts the workspace (its MCP servers and allow rules); returns a message. */
-  trustWorkspace(): string;
+  trustWorkspace(): string | Promise<string>;
   openToolInspector(): void;
   openMcpInspector(): void;
   openSkillInspector(): void | Promise<void>;

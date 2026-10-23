@@ -1,4 +1,3 @@
-import { setWorkspaceTrusted } from "@datalabrotterdam/nova-ai-agent/core/nova-home.js";
 import { INTERACTION_MODES } from "@datalabrotterdam/nova-ai-agent/core/interaction-modes.js";
 import {
   allCommands,
@@ -539,8 +538,12 @@ export class TuiController {
     getPermissionMode: () => this.store.getState().permissionMode,
     setPermissionMode: (mode) => this.setPermissionMode(mode),
     openPermissionPicker: this.openPermissionModes,
-    trustWorkspace: () => {
-      setWorkspaceTrusted(this.runner.cwd, true);
+    trustWorkspace: async () => {
+      try {
+        await this.runner.trustWorkspace();
+      } catch (error) {
+        return errorMessage(error, "Could not trust the workspace.");
+      }
       return "Workspace trusted: its allow rules apply now; MCP servers it declares start with the next session (/clear).";
     },
     openToolInspector: this.openToolInspector,

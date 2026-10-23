@@ -114,6 +114,9 @@ export function createAgentApp(agentImpl: NovaAgent): acp.AgentApp {
     .onRequest(NOVA_METHODS.modelsList, parseModelsListParams, (ctx) =>
       agentImpl.listModels(ctx.params),
     )
+    .onRequest(NOVA_METHODS.workspaceTrust, parseTrustParams, (ctx) =>
+      agentImpl.workspaceTrust(ctx.params),
+    )
     .onRequest(NOVA_METHODS.skillsList, parseCwdParams, (ctx) => agentImpl.listSkills(ctx.params))
     .onRequest(NOVA_METHODS.skillsSetEnabled, parseSetSkillParams, (ctx) =>
       agentImpl.setSkillEnabled(ctx.params),
@@ -161,6 +164,15 @@ function parseCwdParams(params: unknown): { cwd: string } {
     throw acp.RequestError.invalidParams({ cwd: value.cwd }, "cwd must be an absolute path.");
   }
   return { cwd: value.cwd };
+}
+
+function parseTrustParams(params: unknown): { cwd: string; trusted?: boolean } {
+  const { cwd } = parseCwdParams(params);
+  const trusted = (params as Record<string, unknown>).trusted;
+  if (trusted !== undefined && typeof trusted !== "boolean") {
+    throw acp.RequestError.invalidParams({ trusted }, "trusted must be a boolean.");
+  }
+  return trusted === undefined ? { cwd } : { cwd, trusted };
 }
 
 function parseSetSkillParams(params: unknown): {
