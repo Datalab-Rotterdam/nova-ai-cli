@@ -1,3 +1,10 @@
+# [@datalabrotterdam/nova-ai-agent-v1.0.0-alpha.3](https://github.com/Datalab-Rotterdam/nova-ai-cli/compare/@datalabrotterdam/nova-ai-agent@1.0.0-alpha.2...@datalabrotterdam/nova-ai-agent@1.0.0-alpha.3) (2026-10-23)
+
+
+### Features
+
+* **agent:** set workspace trust over ACP ([cec4a89](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/cec4a8949a4232f46448219e4d5363289651215d))
+
 # [@datalabrotterdam/nova-ai-agent-v1.0.0-alpha.2](https://github.com/Datalab-Rotterdam/nova-ai-cli/compare/@datalabrotterdam/nova-ai-agent@1.0.0-alpha.1...@datalabrotterdam/nova-ai-agent@1.0.0-alpha.2) (2026-10-04)
 
 
