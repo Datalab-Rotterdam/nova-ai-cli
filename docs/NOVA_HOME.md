@@ -16,7 +16,9 @@ there), otherwise `~/.nova-ai`. Directories are created `0700`, files `0600`.
   MEMORY.md                     global memory index (always in the prompt)
   memory/<name>.md              global memory notes
   skills/<name>/SKILL.md        global skills (see "Skills")
+  agents/<name>.agent.md        extension: global agents (see "Agents")
   settings.json                 user settings: permission rules, default mode
+  mcp.json                      extension: user MCP servers (see "MCP servers")
   credentials.json              CLI only: API key + default model and thinking level
   model-capabilities.json       CLI only: learned native tool-call support
   update-check.json             CLI only: npm's latest versions (asked at most daily), skipped/snoozed update
@@ -32,6 +34,7 @@ there), otherwise `~/.nova-ai`. Directories are created `0700`, files `0600`.
     cli-sessions/<id>.jsonl     CLI: sessions
     cli-sessions/extension-import.json  CLI: panel chats already imported (see "Sessions")
     scratch/                    extension: scratch files (pruned after 7 days)
+    worktrees/<id6>/            extension: git worktrees of coding agents (branch nova/<name>-<id6>)
 <workspace>/.nova-ai/settings.json        team settings, committed
 <workspace>/.nova-ai/settings.local.json  personal settings, git-ignored
 <workspace>/.nova-ai/skills/<name>/SKILL.md  project skills, committed
@@ -92,15 +95,15 @@ Sources, all merged:
   accepted), `bypassPermissions` (everything is accepted). `bypassPermissions`
   is never stored; it must be chosen in each session. `memory_write` is always
   confirmed unless an allow rule names it.
-- Trust also gates MCP servers the workspace declares (`.mcp.json`,
-  `mcpServers` in `.nova-ai/settings.json`): they are only started in a
-  trusted workspace.
+- Trust also gates MCP servers the workspace declares (see "MCP servers"):
+  they are only started in a trusted workspace.
 
 ### Hooks
 
 Claude Code's format, under `hooks` in any of the settings files above
 (merged; the workspace's two only in a trusted workspace, as a hook runs any
-command). Read by the extension and by the agent (nova-ai-cli, every ACP client); either keeps the key.
+command). Read by the extension and by nova-ai-cli's agent (so by every ACP
+client); each product keeps the key.
 
 ```json
 { "hooks": {
@@ -114,10 +117,10 @@ command). Read by the extension and by the agent (nova-ai-cli, every ACP client)
   message), `Stop` (the agent wants to finish).
 - `matcher` (tool events only) is a regular expression over the whole tool
   name; it also matches Claude Code's names (`Bash`, `Read`, `Edit`, `Write`,
-  `Glob`, `Grep`, `LS`, `WebFetch`, `WebSearch`, `TodoWrite`), for both
-  products' tool names (`create_file`/`write_file`, `list_dir`/`list_directory`,
-  `todo_write`/`update_plan`). Empty or `*`
-  matches every tool.
+  `Glob`, `Grep`, `LS`, `WebFetch`, `WebSearch`, `TodoWrite`) for each
+  product's own tools (`Write` is `create_file` in the extension and
+  `write_file` in the CLI, `LS` is `list_dir`/`list_directory`, `TodoWrite`
+  is `todo_write`/`update_plan`). Empty or `*` matches every tool.
 - The hook runs in the workspace root with the event as JSON on stdin:
   `session_id`, `hook_event_name`, `cwd`, and `tool_name`, `tool_input`
   (with an absolute `file_path` when the tool has a `path`),
@@ -135,6 +138,45 @@ command). Read by the extension and by the agent (nova-ai-cli, every ACP client)
   context. A PreToolUse `allow` skips the approval card; deny rules still win.
 - Any other exit code is a warning in the chat; the call goes on.
 
+### MCP servers
+
+Claude's format, in these files (a later file replaces a server of the same
+name):
+
+| File | Scope | Read by |
+|---|---|---|
+| `~/.nova-ai/mcp.json` | the user's, every workspace | extension |
+| `<workspace>/.mcp.json` | team, committed (also read by Claude Code) | both |
+| `<workspace>/.nova-ai/mcp.json` | team, committed | extension |
+| `mcpServers` in `<workspace>/.nova-ai/settings.json` | team, ACP format (`[{ name, command, args, env }]`) | CLI |
+
+```json
+{ "mcpServers": {
+    "files":  { "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "."], "env": { "DEBUG": "1" } },
+    "github": { "type": "http", "url": "https://api.githubcopilot.com/mcp/", "headers": { "Authorization": "Bearer ${GITHUB_TOKEN}" } },
+    "remote": { "type": "http", "url": "https://mcp.example.com/mcp", "oauth": { "clientId": "…", "callbackPort": 33418 } } } }
+```
+
+- `type` is `stdio` (default when `command` is set), `http` (Streamable
+  HTTP; default when `url` is set) or `sse`. The extension falls back from
+  `http` to SSE; the CLI connects with the given type only.
+- Extension: `${VAR}` and `${VAR:-default}` expand from the environment in
+  `command`, `args`, `env`, `url` and `headers`. The CLI takes values as
+  written.
+- OAuth: servers that answer 401 are signed in to through the browser with a
+  loopback redirect `http://127.0.0.1:<port>/callback`, from the extension's
+  **Nova AI: MCP Servers** command or the CLI's `/mcp login <server>` (any
+  ACP client: `_nova/mcp/login`). Nova registers itself (dynamic client
+  registration) unless `oauth.clientId` is set; a client registered by hand
+  needs a fixed `oauth.callbackPort`. Tokens never go in these files: the
+  extension keeps them in the editor's secret storage, the CLI in
+  `~/.nova-ai/mcp-auth/` (0600).
+- Extension: `"disabledMcpServers": ["name"]` in `projects/<key>/settings.json`
+  turns servers off for that workspace.
+- Tools are named `mcp__<server>__<tool>` (outside `[A-Za-z0-9_-]` replaced by
+  `_`; the extension cuts names at 64 characters). A rule `mcp__<server>` or
+  `mcp__<server>__*` covers every tool of the server.
+
 ### Rules
 
 `tool` matches every call of the tool, `tool(glob)` when the call's subject
@@ -148,7 +190,8 @@ literal). Subjects:
 | `read_file`, `write_file`, `create_file`, `edit_file`, `list_directory`, `list_dir`, `search_text` | the path, workspace-relative with `/` (absolute outside the workspace) |
 | `find_files` | the glob pattern |
 | `fetch_url` | the URL |
-| `web_search` | the query |
+| `web_search` | the query (CLI; the extension never asks for it) |
+| `mcp__<server>__<tool>` | none; `mcp__<server>` or `mcp__<server>__*` matches every tool of the server |
 | others | none: only the bare tool name matches |
 
 Command rules are checked per command: a command line is split at `;`, `&&`,
@@ -303,3 +346,49 @@ the skills matching the user's message keep their description, others are listed
 by name only (about 1,000 characters), the rest are counted. The model reads a
 skill with `load_skill` (`{ name, resource? }`, at most 24,000 characters per
 file, only files inside the skill's folder).
+
+### Bundled skills
+
+A Nova app may ship a skill and keep it up to date: a *bundled* skill. Example:
+`nova-browser`, installed by the Nova AI Browser host that Nova AI for VS Code and
+nova-ai-cli carry. Its folder holds `.nova-bundled.json`:
+
+```json
+{ "bundledBy": "Nova AI Browser", "version": "0.1.0", "hash": "<sha256 over the files>" }
+```
+
+- Users can only switch a bundled skill off (by name, as above). Every Nova tool
+  must show it as bundled and must not offer to edit, move or delete it, and the
+  agent's file tools refuse to change its files.
+- The app that bundles it makes its files read-only and reinstalls it whenever
+  the version or the content hash no longer matches (an update, or a local edit).
+  The `disabled` setting is kept, so a switched-off skill stays off after updates.
+- An installer never touches a skill folder without its own marker.
+- nova-ai-cli does not mark or protect bundled skills yet: it lists them as
+  ordinary skills.
+
+## Agents
+
+Extension only: nova-ai-cli does not read agent files yet (its `/agent`
+command starts a background agent, which is something else).
+
+An agent is a markdown file whose body is added to Nova's system prompt. The chat's
+mode menu (and Shift+Tab) switches between the built-in agents (Interactive, Plan,
+Autopilot, Ask) and your own. Put your own in `~/.nova-ai/agents/<name>.agent.md`
+(all projects) or `~/.nova-ai/projects/<key>/agents/<name>.agent.md` (one project);
+a project agent replaces a global one with the same file name. The built-in agents are bundled with the extension and cannot be replaced, edited or deleted (a file with a built-in name is ignored). **Nova AI: Manage Agents** lists, edits and deletes them.
+
+```markdown
+---
+name: Reviewer
+description: Reviews changes without editing
+icon: eye            # a codicon name
+tools: [read, search, web, ask]   # optional; omit for all tools
+readOnly: true       # optional; only tools that change nothing
+autopilot: false     # optional; no tool round limit, ask_user answers itself
+---
+Instructions for the agent.
+```
+
+Tool groups: `read`, `search`, `edit`, `run`, `web`, `memory`, `ask`, `todo`, `skills`,
+and `mcp` for MCP tools; or list tool names such as `read_file`.
