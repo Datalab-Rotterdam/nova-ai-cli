@@ -1,3 +1,16 @@
+# [@datalabrotterdam/nova-ai-cli-v1.2.0-alpha.5](https://github.com/Datalab-Rotterdam/nova-ai-cli/compare/@datalabrotterdam/nova-ai-cli@1.2.0-alpha.4...@datalabrotterdam/nova-ai-cli@1.2.0-alpha.5) (2026-10-23)
+
+
+### Bug Fixes
+
+* **cli:** keep the full-screen frame one row short of the terminal ([37355f4](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/37355f4efb8a237f204c061ad7008faf54a0dd9e))
+* **cli:** pick the account's default model when none is set ([fb0f34c](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/fb0f34c7bac26f1b59c4b6b2245e6fb8365f99f1))
+
+
+### Features
+
+* **cli:** full-screen TUI with a pinned prompt and mouse-wheel scrolling ([a68d693](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/a68d6930945bd6440de22c709fc14ae32a9c9f65))
+
 # [@datalabrotterdam/nova-ai-cli-v1.2.0-alpha.4](https://github.com/Datalab-Rotterdam/nova-ai-cli/compare/@datalabrotterdam/nova-ai-cli@1.2.0-alpha.3...@datalabrotterdam/nova-ai-cli@1.2.0-alpha.4) (2026-10-05)
 
 
