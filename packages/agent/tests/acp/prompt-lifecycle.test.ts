@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 import * as acp from "@agentclientprotocol/sdk";
@@ -136,6 +136,57 @@ describe("thinking effort", () => {
         const { agent, sessionId } = await start(home);
         await ask(agent, sessionId, "plain model");
         assert.equal("reasoning_effort" in requests[0]!.body, false);
+      },
+    );
+  });
+});
+
+describe("hooks in a turn", () => {
+  const nodeHook = (script: string) => `"${process.execPath}" -e "${script}"`;
+  const writeHooks = (home: string, hooks: Record<string, unknown>) =>
+    writeFileSync(join(home, "settings.json"), JSON.stringify({ hooks }));
+  const toolCallChunk = (name: string, args: unknown) => ({
+    choices: [{ delta: { tool_calls: [{ index: 0, id: "c1", type: "function", function: { name, arguments: JSON.stringify(args) } }] } }],
+  });
+
+  it("a UserPromptSubmit hook adds context, or blocks the message before any request", async () => {
+    await withFakeNova(
+      () => sse([text("ok")]),
+      async (requests, home) => {
+        writeHooks(home, {
+          UserPromptSubmit: [{ hooks: [{ command: nodeHook("const p = JSON.parse(require('fs').readFileSync(0, 'utf8')).prompt; if (p === 'secret') { process.stderr.write('no secrets'); process.exit(2) } process.stdout.write('branch: main')") }] }],
+        });
+        const { agent, sessionId } = await start(home);
+        await ask(agent, sessionId, "hello");
+        const sent = (requests[0]!.body.messages as Array<{ role: string; content: string }>).map((m) => m.content);
+        assert.ok(sent.includes("Context from the user's hooks:\nbranch: main"));
+
+        assert.deepEqual(await ask(agent, sessionId, "secret"), { stopReason: "end_turn" });
+        assert.equal(requests.length, 1, "a blocked message never reaches the model");
+      },
+    );
+  });
+
+  it("a PreToolUse hook blocks a tool call by Claude Code's name, and a Stop hook sends the agent back once", async () => {
+    await withFakeNova(
+      (_request, index) =>
+        index === 0
+          ? sse([toolCallChunk("web_search", { query: "x" }), { choices: [{ delta: {}, finish_reason: "tool_calls" }] }])
+          : sse([text(`answer ${index}`)]),
+      async (requests, home) => {
+        writeHooks(home, {
+          PreToolUse: [{ matcher: "WebSearch", hooks: [{ command: nodeHook("process.stderr.write('no searching'); process.exit(2)") }] }],
+          Stop: [{ hooks: [{ command: nodeHook("const f = require('path').join(process.cwd(), 'stopped-once'); if (require('fs').existsSync(f)) process.exit(0); require('fs').writeFileSync(f, ''); process.stderr.write('run the tests first'); process.exit(2)") }] }],
+        });
+        const { agent, sessionId } = await start(home);
+        assert.deepEqual(await ask(agent, sessionId, "search something"), { stopReason: "end_turn" });
+        const contents = (index: number) =>
+          (requests[index]!.body.messages as Array<{ content: unknown }>).map((m) => JSON.stringify(m.content)).join("\n");
+        assert.match(contents(1), /A hook blocked this tool call:\\nno searching/);
+        assert.equal(requests.length, 3, "tool round, answer, and one more after the Stop hook");
+        assert.match(contents(2), /A Stop hook did not let you finish yet:\\nrun the tests first/);
+        const stored = loadStoredSession(sessionId)!.messages.map((m) => m.content);
+        assert.ok(stored.some((content) => typeof content === "string" && content.startsWith("A Stop hook did not let you finish yet")));
       },
     );
   });

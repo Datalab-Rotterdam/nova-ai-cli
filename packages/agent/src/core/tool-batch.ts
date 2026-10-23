@@ -1,5 +1,6 @@
 import type { AgentEvent } from "./agent-events.js";
 import type { BackgroundToolApi } from "./background.js";
+import type { HookOutcome } from "./hooks.js";
 import type { ToolHost } from "./tool-host.js";
 import { truncateToolOutput } from "./tool-output.js";
 import type { ToolEnvironment } from "./tools/environment.js";
@@ -49,7 +50,15 @@ export type ToolBatchContext = {
     toolCallId: string,
     tool: ToolDefinition,
     args: Record<string, unknown>,
+    hookAllowed?: boolean,
   ): Promise<ToolAuthorization>;
+  /** PreToolUse / PostToolUse hooks (core/hooks.ts); none run without it. */
+  hooks?: ToolHooks;
+};
+
+export type ToolHooks = {
+  before(tool: ToolDefinition, args: Record<string, unknown>): Promise<HookOutcome>;
+  after(tool: ToolDefinition, args: Record<string, unknown>, response: string): Promise<HookOutcome>;
 };
 
 /**
@@ -158,9 +167,16 @@ export async function runToolBatch(
       requestPermission: ctx.requestPermission,
     };
     try {
+      const pre = await ctx.hooks?.before(tool, args);
+      for (const warning of pre?.warnings ?? []) await ctx.emit({ type: "notice", text: warning });
+      if (pre?.block) {
+        await ctx.emit({ type: "tool_update", toolCallId, status: "failed", output: `Blocked by a hook: ${pre.block}` });
+        entries.push({ name: block.name, status: "rejected", body: `A hook blocked this tool call:\n${pre.block}` });
+        continue;
+      }
       const authorization: ToolAuthorization = ctx.authorize
-        ? await ctx.authorize(toolCallId, tool, args)
-        : !tool.mutating || (await ctx.requestPermission(toolCallId, tool, args))
+        ? await ctx.authorize(toolCallId, tool, args, pre?.allow)
+        : !tool.mutating || pre?.allow || (await ctx.requestPermission(toolCallId, tool, args))
           ? { allowed: true }
           : { allowed: false, reason: "user" };
       if (!authorization.allowed && authorization.reason === "rule") {
@@ -215,17 +231,22 @@ export async function runToolBatch(
           body: `Tool error: ${truncateToolOutput(result.error)}`,
         });
       } else {
+        // After a tool ran, a hook's block or context is feedback for the model.
+        const post = await ctx.hooks?.after(tool, args, result.output);
+        for (const warning of post?.warnings ?? []) await ctx.emit({ type: "notice", text: warning });
+        const feedback = [post?.block, post?.context].filter(Boolean).join("\n");
+        const output = truncateToolOutput(result.output);
         await ctx.emit({
           type: "tool_update",
           toolCallId,
           status: "completed",
-          output: result.output,
+          output: feedback ? `${result.output}\n\nHook feedback:\n${feedback}` : result.output,
           diff: result.diff,
         });
         entries.push({
           name: block.name,
           status: "ok",
-          body: `Tool result: ${truncateToolOutput(result.output)}`,
+          body: `Tool result: ${output}${feedback ? `\n\nHook feedback:\n${feedback}` : ""}`,
         });
       }
     } catch (error) {

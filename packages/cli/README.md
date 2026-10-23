@@ -195,6 +195,11 @@ VS Code extension: settings, per-project trust, sessions and memory.
   skills folders are read too). `/skills` lists them; `/skills off <name>`
   switches one off in this project (`--global`: everywhere). Only names and
   short descriptions go into the prompt; Nova loads a skill when it fits.
+- **Hooks**: Claude Code's `hooks` format in the same settings files (a
+  repository's own only once you trust the workspace): `PreToolUse`,
+  `PostToolUse`, `UserPromptSubmit`, `SessionStart` and `Stop`, with Claude
+  Code's tool names as matchers, so hooks from `.claude/settings.json` work
+  when copied over.
 - **MCP servers**: `.mcp.json` or `mcpServers` in `.nova-ai/settings.json`.
   HTTP servers that use OAuth show "needs sign-in" in `/mcp`; `/mcp login
   <server>` opens the sign-in page in your browser (tokens are kept in
