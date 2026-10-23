@@ -7,7 +7,6 @@ import { startInProcessAgent } from "@datalabrotterdam/nova-ai-agent/client/in-p
 import type { PermissionMode } from "@datalabrotterdam/nova-ai-agent/core/policy/settings.js";
 import { setWorkspaceTrusted } from "@datalabrotterdam/nova-ai-agent/core/nova-home.js";
 import { listStoredSessions, loadStoredSession } from "@datalabrotterdam/nova-ai-agent/core/sessions.js";
-import { readWorkspaceMcpConfiguration } from "../tui/settings/workspace-mcp.js";
 import {
   HeadlessAcpClient,
   type HeadlessEvent,
@@ -152,16 +151,20 @@ export async function runHeadless(
   const agent = connection.client;
 
   if (options.trustWorkspace) setWorkspaceTrusted(options.cwd, true);
-  const mcpConfiguration = options.mcp
-    ? readWorkspaceMcpConfiguration(options.cwd)
-    : { servers: [], failures: [] };
-  for (const failure of mcpConfiguration.failures) {
-    output.write({
-      type: "mcp.configuration_error",
-      serverName: failure.serverName,
-      message: failure.message,
-    });
-  }
+  // The agent reads the workspace's MCP servers itself; --no-mcp opts out.
+  const sessionMeta = { "nova-ai-cli/workspaceMcp": options.mcp };
+  const reportMcpFailures = (meta: Record<string, unknown> | null | undefined) => {
+    const failures = toRecord(toRecord(meta)?.["nova-ai-cli/mcp"])?.failures;
+    for (const failure of Array.isArray(failures) ? failures : []) {
+      const item = toRecord(failure);
+      if (typeof item?.serverName !== "string" || typeof item.message !== "string") continue;
+      output.write({
+        type: "mcp.configuration_error",
+        serverName: item.serverName,
+        message: item.message,
+      });
+    }
+  };
 
   let sessionId: string | null = null;
   let interrupted = false;
@@ -179,17 +182,21 @@ export async function runHeadless(
       clientInfo: { name: "nova-ai-cli-headless", version: "1" },
     });
     if (options.resume) {
-      await agent.resumeSession({
+      const resumed = await agent.resumeSession({
         sessionId: options.resume,
         cwd: options.cwd,
-        mcpServers: mcpConfiguration.servers,
+        mcpServers: [],
+        _meta: sessionMeta,
       });
+      reportMcpFailures(resumed._meta);
       sessionId = options.resume;
     } else {
       const created = await agent.newSession({
         cwd: options.cwd,
-        mcpServers: mcpConfiguration.servers,
+        mcpServers: [],
+        _meta: sessionMeta,
       });
+      reportMcpFailures(created._meta);
       sessionId = created.sessionId;
     }
     // The agent's policy decides; the headless client only answers what is

@@ -43,7 +43,6 @@ import {
   expandPromptPastes,
   type PromptPasteAttachment,
 } from "../files/prompt-pastes.js";
-import { readWorkspaceMcpConfiguration } from "../settings/workspace-mcp.js";
 import type { Store } from "../state/store.js";
 import type {
   InteractionMode,
@@ -125,7 +124,15 @@ export function restoreSessionMessages(messages: ChatMessage[]): UIMessage[] {
 }
 
 export type McpSessionStatus = {
-  configured: Array<{ name: string; transport: string }>;
+  /** As the agent reports them: env values never leave it, only their names. */
+  configured: Array<{
+    name: string;
+    transport: string;
+    url?: string;
+    command?: string;
+    args?: string[];
+    env?: string[];
+  }>;
   connected: string[];
   failures: Array<{ serverName: string; message: string }>;
 };
@@ -161,8 +168,6 @@ export class SessionRunner {
   private readonly nova: NovaAgentClient;
   private readonly initialized: Promise<unknown>;
   private readonly novaClient: NovaAI;
-  private mcpServers: acp.McpServer[] = [];
-  private mcpConfigurationFailures: McpSessionStatus["failures"] = [];
   private mcpStatus: McpSessionStatus = {
     configured: [],
     connected: [],
@@ -191,7 +196,6 @@ export class SessionRunner {
     private readonly credentials: StoredCredentials,
     cwd: string,
   ) {
-    this.loadMcpConfiguration(cwd);
     this.skills = discoverSkills(cwd).map(
       ({ name, description, source, path }) => ({
         name,
@@ -237,7 +241,6 @@ export class SessionRunner {
     this.sessionId = stored.sessionId;
     this.cwd = stored.cwd;
     this.title = stored.title;
-    this.loadMcpConfiguration(stored.cwd);
     this.skills = discoverSkills(stored.cwd).map(
       ({ name, description, source, path }) => ({
         name,
@@ -271,7 +274,7 @@ export class SessionRunner {
           return await this.nova.loadSession({
             sessionId: stored.sessionId,
             cwd: stored.cwd,
-            mcpServers: this.mcpServers,
+            mcpServers: [],
           });
         } finally {
           this.acpClient.muteSessionUpdates = false;
@@ -423,10 +426,6 @@ export class SessionRunner {
 
     void this.enqueueQueuedPrompt(value, [], [], "steer", true);
     return true;
-  }
-
-  configuredMcpServers(): acp.McpServer[] {
-    return [...this.mcpServers];
   }
 
   mcpSessionStatus(): McpSessionStatus {
@@ -937,11 +936,10 @@ export class SessionRunner {
   }
 
   private async createSession(): Promise<void> {
-    this.loadMcpConfiguration(this.cwd);
     await this.initialized;
     const { sessionId, _meta } = await this.nova.newSession({
       cwd: this.cwd,
-      mcpServers: this.mcpServers,
+      mcpServers: [],
     });
     this.sessionId = sessionId;
     this.applyMcpStatus(_meta);
@@ -968,13 +966,24 @@ export class SessionRunner {
     const value = meta?.["nova-ai-cli/mcp"];
     if (!value || typeof value !== "object") return;
     const record = value as Record<string, unknown>;
+    const strings = (value: unknown): string[] | undefined =>
+      Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : undefined;
     const configured = Array.isArray(record.configured)
       ? record.configured.flatMap((entry) => {
           if (!entry || typeof entry !== "object") return [];
           const item = entry as Record<string, unknown>;
           return typeof item.name === "string" &&
             typeof item.transport === "string"
-            ? [{ name: item.name, transport: item.transport }]
+            ? [
+                {
+                  name: item.name,
+                  transport: item.transport,
+                  ...(typeof item.url === "string" ? { url: item.url } : {}),
+                  ...(typeof item.command === "string" ? { command: item.command } : {}),
+                  ...(strings(item.args) ? { args: strings(item.args) } : {}),
+                  ...(strings(item.env) ? { env: strings(item.env) } : {}),
+                },
+              ]
             : [];
         })
       : [];
@@ -993,25 +1002,7 @@ export class SessionRunner {
             : [];
         })
       : [];
-    this.mcpStatus = {
-      configured,
-      connected,
-      failures: [...this.mcpConfigurationFailures, ...failures],
-    };
-  }
-
-  private loadMcpConfiguration(cwd: string): void {
-    const configuration = readWorkspaceMcpConfiguration(cwd);
-    this.mcpServers = configuration.servers;
-    this.mcpConfigurationFailures = configuration.failures;
-    this.mcpStatus = {
-      configured: this.mcpServers.map((server) => ({
-        name: server.name,
-        transport: "type" in server ? server.type : "stdio",
-      })),
-      connected: [],
-      failures: [...this.mcpConfigurationFailures],
-    };
+    this.mcpStatus = { configured, connected, failures };
   }
 
   private applySkillStatus(

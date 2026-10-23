@@ -1,5 +1,5 @@
 ﻿import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -12,6 +12,7 @@ import {
   NovaAgent,
 } from "../../src/acp/agent.js";
 import { describeResourceUri } from "../../src/acp/prompt-content.js";
+import { setWorkspaceTrusted } from "../../src/core/nova-home.js";
 import {
   appendSessionTurn,
   deleteStoredSession,
@@ -943,6 +944,42 @@ describe("NovaAgent.authenticate with the env_var method", () => {
     } finally {
       if (previous === undefined) delete process.env.NOVA_API_KEY;
       else process.env.NOVA_API_KEY = previous;
+    }
+  });
+});
+
+describe("NovaAgent workspace MCP servers", () => {
+  it("starts the trusted workspace's servers, reports their status and lets the client opt out", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "nova-agent-mcp-"));
+    setWorkspaceTrusted(cwd, true);
+    try {
+      writeFileSync(
+        join(cwd, ".mcp.json"),
+        JSON.stringify({
+          mcpServers: {
+            local: { command: "nova-ai-definitely-missing-mcp-command", args: ["--x"], env: { TOKEN: "secret" } },
+            broken: { type: "http" },
+          },
+        }),
+      );
+      const agent = new NovaAgent();
+      const { _meta } = await agent.newSession({ cwd, mcpServers: [] });
+      const mcp = _meta?.["nova-ai-cli/mcp"] as {
+        configured: Array<Record<string, unknown>>;
+        failures: Array<{ serverName: string }>;
+      };
+      assert.deepEqual(mcp.configured, [
+        { name: "local", transport: "stdio", command: "nova-ai-definitely-missing-mcp-command", args: ["--x"], env: ["TOKEN"] },
+      ]);
+      assert.deepEqual(
+        mcp.failures.map((failure) => failure.serverName),
+        [".mcp.json:broken", "local"],
+      );
+
+      const optedOut = await agent.newSession({ cwd, mcpServers: [], _meta: { "nova-ai-cli/workspaceMcp": false } });
+      assert.deepEqual((optedOut._meta?.["nova-ai-cli/mcp"] as { configured: unknown[] }).configured, []);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
     }
   });
 });

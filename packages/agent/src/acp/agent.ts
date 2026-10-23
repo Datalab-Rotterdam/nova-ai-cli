@@ -28,6 +28,7 @@ import {
   type McpConnectionFailure,
 } from "../core/mcp.js";
 import { buildMemorySystemPrompt, sessionMemory } from "../core/memory.js";
+import { readWorkspaceMcpConfiguration } from "../core/workspace-mcp.js";
 import {
   applySessionSettings,
   sessionSettingsView,
@@ -303,7 +304,7 @@ export class NovaAgent implements AgentRuntime {
     client?: acp.AgentContext,
   ): Promise<acp.NewSessionResponse> {
     const sessionId = crypto.randomUUID();
-    const { mcpConnections, mcpFailures, skills } = await this.setupSession(
+    const { mcpServers, mcpConnections, mcpFailures, skills } = await this.setupSession(
       sessionId,
       params,
       [],
@@ -317,7 +318,7 @@ export class NovaAgent implements AgentRuntime {
         permissionModeOption(this.requireSession(sessionId).policy.mode),
       ],
       _meta: sessionStatusMeta(
-        params.mcpServers,
+        mcpServers,
         mcpConnections,
         mcpFailures,
         skills,
@@ -335,14 +336,27 @@ export class NovaAgent implements AgentRuntime {
     history: ChatMessage[],
     title: string | null,
   ): Promise<{
+    mcpServers: acp.McpServer[];
     mcpConnections: McpConnection[];
     mcpFailures: McpConnectionFailure[];
     skills: SkillDefinition[];
   }> {
-    const connectedMcp = await connectMcpServers(params.mcpServers ?? []);
+    // The workspace's own servers (.mcp.json, .nova-ai/settings.json; trusted
+    // workspaces only) plus the client's, which win by name. A client that
+    // configures MCP itself opts out with `nova-ai-cli/workspaceMcp: false`.
+    const workspaceMcp =
+      params._meta?.["nova-ai-cli/workspaceMcp"] === false
+        ? { servers: [], failures: [] }
+        : readWorkspaceMcpConfiguration(params.cwd);
+    const mcpServers = [
+      ...new Map(
+        [...workspaceMcp.servers, ...(params.mcpServers ?? [])].map((server) => [server.name, server]),
+      ).values(),
+    ];
+    const connectedMcp = await connectMcpServers(mcpServers);
     const loadedMcp = await listMcpTools(connectedMcp.connections);
     const mcpConnections = loadedMcp.connections;
-    const mcpFailures = [...connectedMcp.failures, ...loadedMcp.failures];
+    const mcpFailures = [...workspaceMcp.failures, ...connectedMcp.failures, ...loadedMcp.failures];
     const mcpTools = loadedMcp.tools;
     const environment = await detectToolEnvironment(
       params.cwd,
@@ -371,7 +385,7 @@ export class NovaAgent implements AgentRuntime {
       model: null,
       settings,
     });
-    return { mcpConnections, mcpFailures, skills };
+    return { mcpServers, mcpConnections, mcpFailures, skills };
   }
 
   async loadSession(
@@ -383,7 +397,7 @@ export class NovaAgent implements AgentRuntime {
       throw sessionNotFound(params.sessionId);
     }
 
-    const { mcpConnections, mcpFailures, skills } = await this.setupSession(
+    const { mcpServers, mcpConnections, mcpFailures, skills } = await this.setupSession(
       params.sessionId,
       params,
       stored.messages,
@@ -410,7 +424,7 @@ export class NovaAgent implements AgentRuntime {
         permissionModeOption(this.requireSession(params.sessionId).policy.mode),
       ],
       _meta: sessionStatusMeta(
-        params.mcpServers,
+        mcpServers,
         mcpConnections,
         mcpFailures,
         skills,
@@ -516,7 +530,7 @@ export class NovaAgent implements AgentRuntime {
     if (!forked) {
       throw sessionNotFound(params.sessionId);
     }
-    await this.setupSession(
+    const { mcpServers, mcpConnections, mcpFailures, skills } = await this.setupSession(
       newSessionId,
       params,
       forked.messages,
@@ -529,6 +543,7 @@ export class NovaAgent implements AgentRuntime {
       configOptions: await this.configOptions(
         this.requireSession(newSessionId),
       ),
+      _meta: sessionStatusMeta(mcpServers, mcpConnections, mcpFailures, skills),
     };
   }
 
@@ -540,7 +555,7 @@ export class NovaAgent implements AgentRuntime {
     if (!stored) {
       throw sessionNotFound(params.sessionId);
     }
-    await this.setupSession(
+    const { mcpServers, mcpConnections, mcpFailures, skills } = await this.setupSession(
       params.sessionId,
       params,
       stored.messages,
@@ -552,6 +567,7 @@ export class NovaAgent implements AgentRuntime {
       configOptions: await this.configOptions(
         this.requireSession(params.sessionId),
       ),
+      _meta: sessionStatusMeta(mcpServers, mcpConnections, mcpFailures, skills),
     };
   }
 

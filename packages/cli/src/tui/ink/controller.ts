@@ -1,4 +1,3 @@
-import type { McpServer } from "@agentclientprotocol/sdk";
 import { setWorkspaceTrusted } from "@datalabrotterdam/nova-ai-agent/core/nova-home.js";
 import {
   disabledSkillNames,
@@ -27,7 +26,7 @@ import {
   listSessionPickerItems,
   listSessionsForCwd,
 } from "../session/session-picker.js";
-import type { SessionRunner } from "../session/session-runner.js";
+import type { McpSessionStatus, SessionRunner } from "../session/session-runner.js";
 import type { Store } from "../state/store.js";
 import type {
   InteractionMode,
@@ -368,8 +367,8 @@ export class TuiController {
   };
 
   openMcpInspector = (): void => {
-    const servers = this.runner.configuredMcpServers();
     const connection = this.runner.mcpSessionStatus();
+    const servers = connection.configured;
     const configuredNames = new Set(servers.map((server) => server.name));
     const configurationFailures = connection.failures
       .filter((failure) => !configuredNames.has(failure.serverName))
@@ -736,17 +735,15 @@ export class TuiController {
 }
 
 function formatMcpServer(
-  server: McpServer,
-  status: ReturnType<SessionRunner["mcpSessionStatus"]>,
+  server: McpSessionStatus["configured"][number],
+  status: McpSessionStatus,
 ): string {
-  const type = "type" in server ? server.type : "stdio";
-  const lines = [`${server.name} [${type}]`];
-  if ("url" in server) lines.push(`url: ${server.url}`);
-  if ("command" in server) {
+  const lines = [`${server.name} [${server.transport}]`];
+  if (server.url) lines.push(`url: ${server.url}`);
+  if (server.command) {
     lines.push(`command: ${server.command}`);
-    if (server.args.length) lines.push(`args: ${server.args.join(" ")}`);
-    if (server.env.length)
-      lines.push(`env: ${server.env.map((entry) => entry.name).join(", ")} (values hidden)`);
+    if (server.args?.length) lines.push(`args: ${server.args.join(" ")}`);
+    if (server.env?.length) lines.push(`env: ${server.env.join(", ")} (values hidden)`);
   }
   const failure = status.failures.find((item) => item.serverName === server.name);
   lines.push(

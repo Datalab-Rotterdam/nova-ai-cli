@@ -18,7 +18,7 @@ import {
 } from "../update-install.js";
 import { cliVersion } from "../version.js";
 import { runInkTui } from "./ink/app.js";
-import { workspaceNeedsTrust } from "./settings/workspace-mcp.js";
+import { workspaceNeedsTrust } from "@datalabrotterdam/nova-ai-agent/core/workspace-mcp.js";
 
 export async function runChat(options: TuiOptions): Promise<number> {
   const stored = readCredentials();
