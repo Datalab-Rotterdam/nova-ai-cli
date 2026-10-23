@@ -152,3 +152,24 @@ test("/effort is offered only when the selected model has thinking levels", asyn
   assert.deepEqual(set, ["high"]);
   assert.equal(printed.pop(), "Thinking effort: high.");
 });
+
+test("/mcp login and logout pass the server name on; anything else shows the usage", async () => {
+  const printed: string[] = [];
+  const calls: Array<[string, boolean]> = [];
+  const context = {
+    openMcpInspector: () => printed.push("(inspector)"),
+    mcpSignIn: async (name: string, signIn: boolean) => {
+      calls.push([name, signIn]);
+      return signIn ? "in" : "out";
+    },
+    print: (text: string) => printed.push(text),
+  } as unknown as SlashCommandContext;
+  const mcp = findCommand("mcp")!;
+  await mcp.run(context, "");
+  await mcp.run(context, "login my server");
+  await mcp.run(context, "logout linear");
+  await mcp.run(context, "login");
+  assert.deepEqual(calls, [["my server", true], ["linear", false]]);
+  assert.equal(printed[0], "(inspector)");
+  assert.equal(printed.at(-1), "Usage: /mcp, or /mcp login|logout <server>");
+});

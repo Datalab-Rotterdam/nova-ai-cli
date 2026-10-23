@@ -249,6 +249,23 @@ a prompt runs. Session files are append-only; a rewind appends a reset record.
 | `_nova/skills/list` | `cwd` (no session id needed) | `{ skills: [{ name, description, source, path, enabled }] }`: every skill discovered for the workspace, switched-off ones included |
 | `_nova/skills/set_enabled` | `cwd`, `name`, `enabled`, `scope?` (`"project"`, the default, or `"global"`) | `{ skills }` after the change; sessions use it from their next turn. An unknown name is `invalidParams` |
 
+### MCP sign-in
+
+HTTP and SSE servers that answer 401 are signed in with OAuth (discovery,
+dynamic client registration, PKCE; tokens refreshed automatically and kept in
+`~/.nova-ai/mcp-auth`). Without tokens the server is reported in
+`nova-ai-cli/mcp` failures with `needsAuth: true`. A server's `_meta["nova-ai-cli/oauth"]`
+(`clientId`, `clientSecret`, `scope`, `callbackPort`; from `oauth` in
+`.mcp.json`) sets a client registered by hand.
+
+| Method | Params | Result |
+|---|---|---|
+| `_nova/mcp/login` | `serverName` | Signs in, then reconnects the server; returns the session's `nova-ai-cli/mcp` and `nova-ai-cli/skills` status. The page to open arrives first as notification `_nova/mcp/auth_url` `{ sessionId, serverName, url }`; the redirect goes to a one-off listener on `127.0.0.1`, and the request fails after 5 minutes or when cancelled |
+| `_nova/mcp/logout` | `serverName` | Forgets the tokens and the registered client, reconnects; same result |
+
+Clients should only open `http(s)` URLs from `auth_url`: the address comes
+from the MCP server's metadata.
+
 ### Workspace trust
 
 | Method | Params | Result |

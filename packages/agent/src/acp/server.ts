@@ -114,6 +114,10 @@ export function createAgentApp(agentImpl: NovaAgent): acp.AgentApp {
     .onRequest(NOVA_METHODS.modelsList, parseModelsListParams, (ctx) =>
       agentImpl.listModels(ctx.params),
     )
+    .onRequest(NOVA_METHODS.mcpLogin, parseMcpServerParams, (ctx) =>
+      agentImpl.mcpLogin(ctx.params, ctx.client, ctx.signal),
+    )
+    .onRequest(NOVA_METHODS.mcpLogout, parseMcpServerParams, (ctx) => agentImpl.mcpLogout(ctx.params))
     .onRequest(NOVA_METHODS.workspaceTrust, parseTrustParams, (ctx) =>
       agentImpl.workspaceTrust(ctx.params),
     )
@@ -164,6 +168,14 @@ function parseCwdParams(params: unknown): { cwd: string } {
     throw acp.RequestError.invalidParams({ cwd: value.cwd }, "cwd must be an absolute path.");
   }
   return { cwd: value.cwd };
+}
+
+function parseMcpServerParams(params: unknown): { sessionId: string; serverName: string } {
+  const value = requireSessionParams(params);
+  if (typeof value.serverName !== "string" || !value.serverName) {
+    throw acp.RequestError.invalidParams({ serverName: value.serverName }, "serverName is required.");
+  }
+  return { sessionId: value.sessionId, serverName: value.serverName };
 }
 
 function parseTrustParams(params: unknown): { cwd: string; trusted?: boolean } {

@@ -17,6 +17,7 @@ function session(): Session {
     history: [],
     pendingBackgroundHandoffs: [],
     title: null,
+    mcpServers: [],
     mcpConnections: [],
     mcpTools: [],
     mcpFailures: [],

@@ -39,7 +39,7 @@ function resolveUiDir(): string {
 }
 
 /** Opens the URL without a shell, so nothing in it is ever interpreted. */
-function openBrowser(url: string): void {
+export function openBrowser(url: string): void {
   const [command, args] =
     process.platform === "darwin"
       ? ["open", [url]]

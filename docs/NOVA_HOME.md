@@ -21,6 +21,7 @@ there), otherwise `~/.nova-ai`. Directories are created `0700`, files `0600`.
   model-capabilities.json       CLI only: learned native tool-call support
   update-check.json             CLI only: npm's latest versions (asked at most daily), skipped/snoozed update
   background-jobs/              CLI only: background job transcripts
+  mcp-auth/<hash>.json          CLI only: OAuth tokens and registered client per MCP server (0600)
   sessions/<id>.jsonl           CLI only, legacy: sessions from before projects/
   projects/<slug>-<hash8>/      one folder per workspace (see "Project key")
     project.json                where the folder came from; "trusted"
