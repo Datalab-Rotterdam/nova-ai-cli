@@ -75,6 +75,8 @@ export type ViewState = {
   mcp: McpCounts;
   expandedTools: boolean;
   exiting: boolean;
+  /** Transcript rows scrolled up from the newest; 0 follows the output. */
+  scroll: number;
 };
 
 export type ControllerIo = {
@@ -82,12 +84,11 @@ export type ControllerIo = {
   write(data: string): void;
 };
 
-const CLEAR_SCREEN_AND_SCROLLBACK = "\u001b[2J\u001b[3J\u001b[H";
 const EXIT_CONFIRM_MS = 2_000;
 
 /**
  * The TUI's behaviour without React: commands, shortcuts, dialogs, prompt
- * submission and the transcript's scrollback. The Ink view only renders
+ * submission and transcript scrolling. The Ink view only renders
  * `getView()` and forwards keys.
  */
 export class TuiController {
@@ -101,6 +102,8 @@ export class TuiController {
   private exiting = false;
   private view: ViewState;
   private lastEpoch = 0;
+  private scroll = 0;
+  private viewport = { rows: 10, contentRows: 0 };
   private exitArmed = false;
   private exitTimer: ReturnType<typeof setTimeout> | undefined;
   private animationTimer: ReturnType<typeof setInterval> | undefined;
@@ -176,7 +179,16 @@ export class TuiController {
         this.runner.cancel();
         return true;
       }
+      if (this.scroll > 0) {
+        this.scrollTo(0);
+        return true;
+      }
       return false;
+    }
+    if (key.pageUp || key.pageDown) {
+      const page = Math.max(1, this.viewport.rows - 2);
+      this.scrollBy(key.pageUp ? page : -page);
+      return true;
     }
     if (key.tab && key.shift) {
       this.cycleInteractionMode();
@@ -424,14 +436,25 @@ export class TuiController {
   };
 
   /**
-   * Prints the whole transcript again. After the width changed, the terminal
-   * re-wrapped what is on screen on its own and the live area can't be
-   * erased exactly (Ink leaves stale prompt borders), and old scrollback keeps
-   * the old wrapping.
+   * The view reports its transcript size after each layout. While scrolled
+   * up, new output below grows the offset so the rows being read stay put.
    */
-  redrawAll(): void {
-    if (this.stopped || this.exiting) return;
-    this.committer.requestRedraw();
+  setViewport(rows: number, contentRows: number): void {
+    const grown = contentRows - this.viewport.contentRows;
+    this.viewport = { rows, contentRows };
+    this.scrollTo(this.scroll > 0 && grown > 0 ? this.scroll + grown : this.scroll);
+  }
+
+  /** Positive scrolls toward older output. */
+  scrollBy(rows: number): void {
+    this.scrollTo(this.scroll + rows);
+  }
+
+  private scrollTo(offset: number): void {
+    const max = Math.max(0, this.viewport.contentRows - this.viewport.rows);
+    const next = Math.max(0, Math.min(offset, max));
+    if (next === this.scroll) return;
+    this.scroll = next;
     this.refresh();
   }
 
@@ -552,6 +575,7 @@ export class TuiController {
   ): Promise<void> => {
     const value = text.trim();
     if (!value) return;
+    this.scroll = 0;
     this.editor.addToHistory(value);
     this.store.setState((state) => ({
       inputHistory: [...state.inputHistory, value],
@@ -657,9 +681,11 @@ export class TuiController {
     this.view = this.buildView();
     if (this.view.transcript.epoch !== this.lastEpoch) {
       this.lastEpoch = this.view.transcript.epoch;
-      // The printed scrollback no longer matches the transcript (another
-      // session, a rewind, verbose tools): clear it and print it again.
-      this.io.write(CLEAR_SCREEN_AND_SCROLLBACK);
+      // Another session, a rewind or verbose tools: back to the newest output.
+      if (this.scroll) {
+        this.scroll = 0;
+        this.view = this.buildView();
+      }
     }
     for (const listener of this.listeners) listener();
   }
@@ -675,6 +701,7 @@ export class TuiController {
       mcp: mcpCounts(this.runner),
       expandedTools: this.expandedTools,
       exiting: this.exiting,
+      scroll: this.scroll,
     };
   }
 

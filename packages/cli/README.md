@@ -71,9 +71,11 @@ Interactive options:
 
 ## Terminal UI
 
-The UI renders inline below your shell prompt. Finished messages go to the
-terminal's own scrollback (scroll, search and copy as usual); only the
-streaming answer, running tools, the prompt and the status rows are redrawn.
+The UI runs full screen (the terminal's alternate screen, like `less` or
+`vim`) and gives your shell its screen back on exit. The mouse wheel or
+PgUp/PgDn scroll the transcript, Esc jumps back to the newest output, and
+while you read an answer the prompt that asked for it stays pinned on the top
+row. To select text, hold Shift (Option in some macOS terminals) while dragging.
 
 - **Modes** (Shift+Tab): `agent` does the work; `plan` reads the code, asks
   questions and builds a task list but changes nothing; `ask` only answers.

@@ -23,24 +23,22 @@ This split is deliberate:
 
 ## Interaction model
 
-Nova renders inline, below the shell prompt, like `claude` or `codex`.
-Finished transcript blocks are printed once with Ink's `<Static>` and become
-ordinary terminal scrollback: scroll, search and copy them with the terminal's
-own controls. Only the live area is redrawn: the answer that is still
-streaming, running tools, queued prompts, the plan during a turn, the working
-row, then the prompt (or an open dialog) and the status rows.
+Nova runs full screen on the terminal's alternate screen (Ink's
+`alternateScreen`), like `less` or `vim`; the shell's screen comes back on
+exit. The transcript fills a viewport above the prompt (or an open dialog) and
+the status rows, anchored to the newest output.
 
-- Final blocks always form a prefix of the transcript. A long answer moves to
-  the scrollback paragraph by paragraph (never inside a code block) while the
-  rest streams, so the live area stays small.
-- The live area is capped below the terminal height. Ink repaints the whole
-  screen once a frame is as tall as the terminal, which would flicker and
-  duplicate scrollback.
-- When the printed history no longer matches (another session, `/clear`,
-  `/rewind`, Ctrl+O, or a width change once resizing stops), the screen and
-  scrollback are cleared and the transcript is printed again. Ink alone can't
-  redraw after a width change: the terminal re-wraps the old frame, so Ink
-  erases too few rows and stale prompt borders stay behind.
+- The mouse wheel (SGR mouse reporting, on while the TUI runs; mouse reports
+  are kept out of the prompt and dialogs) and PgUp/PgDn scroll the viewport (`scroll` in `ViewState`, rows up from the
+  newest); Esc jumps back. The view reports its size with
+  `TuiController.setViewport`; while scrolled up, new output grows the offset
+  so the rows being read stay put. Submitting a prompt or a new transcript
+  epoch (another session, `/clear`, `/rewind`, Ctrl+O) returns to the newest.
+- Sticky prompt: user blocks report their row (`useBoxMetrics`); the last one
+  that starts above the viewport is drawn over its first row, one line, so the
+  question behind the answer on screen stays visible.
+- Final blocks always form a prefix of the transcript and are memoized, so a
+  streaming answer only re-renders the live tail. A resize just re-lays out.
 - A background job that finishes after it was printed gets a new line; a plan
   is printed once when the turn ends.
 - Dialogs (sessions, models, permission modes, background jobs, tool
@@ -107,12 +105,13 @@ For multi-step work the agent uses `update_plan` to publish a standard ACP
 `plan` update. During the turn the latest checklist stays in the live area
 with completed, active, and pending markers (the active marker animates); each
 update replaces it in place. When the turn ends, the final checklist is
-printed to the scrollback once.
+added to the transcript once.
 
 | Key                              | Action                                                                                  |
 | -------------------------------- | --------------------------------------------------------------------------------------- |
 | Shift+Tab                        | Cycle agent / ask / plan mode                                                           |
-| Escape                           | Cancel active work                                                                      |
+| Escape                           | Cancel active work; otherwise jump back to the newest output                            |
+| PgUp / PgDn, mouse wheel         | Scroll the transcript (Shift+drag selects text)                                         |
 | Ctrl+C twice                     | Cancel, then exit with a resume command                                                 |
 | Ctrl+O                           | Expand or collapse verbose inline tool/background details; activity blocks stay compact |
 | Ctrl+T                           | Open the tool inspector                                                                 |

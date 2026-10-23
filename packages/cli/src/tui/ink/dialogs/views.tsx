@@ -5,6 +5,7 @@ import { OTHER_OPTION_ID } from "@datalabrotterdam/nova-ai-agent/core/user-quest
 import type { PermissionRequestView } from "../../state/types.js";
 import { formatToolCallDetails, sanitizeTerminalText, toolCallSummary } from "../format.js";
 import { palette } from "../theme.js";
+import { isMouseInput } from "../terminal-keyboard.js";
 import { StatusIcon } from "../components/transcript.js";
 import {
   permissionKey,
@@ -26,7 +27,7 @@ function useDialogInput(
   const [, setTick] = useState(0);
   useInput(
     (input, key) => {
-      if (handle(input, key) === "changed") setTick((tick) => tick + 1);
+      if (!isMouseInput(input) && handle(input, key) === "changed") setTick((tick) => tick + 1);
     },
     { isActive },
   );
@@ -219,7 +220,7 @@ export function QuestionDialog({
   const [, setTick] = useState(0);
   useInput(
     (input, key) => {
-      if (state.handleKey(input, key) === "changed") setTick((tick) => tick + 1);
+      if (!isMouseInput(input) && state.handleKey(input, key) === "changed") setTick((tick) => tick + 1);
     },
     { isActive },
   );
@@ -335,7 +336,7 @@ export function PermissionDialog({
 }: { request: PermissionRequestView; onClose: () => void } & Keyed) {
   useInput(
     (input, key) => {
-      if (permissionKey(request, input, key) === "closed") onClose();
+      if (!isMouseInput(input) && permissionKey(request, input, key) === "closed") onClose();
     },
     { isActive },
   );
