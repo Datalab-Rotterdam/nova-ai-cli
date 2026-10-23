@@ -1,5 +1,5 @@
 import type { ToolDefinition } from "./types.js";
-import { resolveWorkspaceFile } from "./workspace-paths.js";
+import { resolveEditableWorkspaceFile } from "./workspace-paths.js";
 
 const MAX_HINT_FILE_BYTES = 2_000_000;
 const MAX_HINT_SNIPPET_LINES = 30;
@@ -32,7 +32,7 @@ export const editFileTool: ToolDefinition = {
     const replaceAll = args.replace_all === true;
     if (!requestedPath) return { error: "edit_file requires a 'path' argument." };
     if (!oldString) return { error: "edit_file requires a non-empty 'old_string' argument." };
-    const resolved = await resolveWorkspaceFile(cwd, requestedPath);
+    const resolved = await resolveEditableWorkspaceFile(cwd, requestedPath);
     if ("error" in resolved) return resolved;
     const { path } = resolved;
 

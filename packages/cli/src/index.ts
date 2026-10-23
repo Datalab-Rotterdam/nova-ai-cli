@@ -34,8 +34,15 @@ async function noticeUpdate(check: UpdateCheck, waitMs: number): Promise<void> {
   process.stderr.write(`\n${formatUpdateNotice(update)}\n`);
 }
 
+/** Modes that may use the browser: keep its integration current, like Claude Code does. */
+const BROWSER_MODES = new Set(["tui", "print", "acp", "web"]);
+
 async function main(): Promise<number> {
   const command = parseCli(process.argv.slice(2));
+  if (BROWSER_MODES.has(command.mode)) {
+    const { setUpBrowserInBackground } = await import("./browser-setup.js");
+    setUpBrowserInBackground();
+  }
   switch (command.mode) {
     case "error":
       process.stderr.write(`${command.message}\n\n${MAIN_HELP}\n`);
@@ -67,7 +74,17 @@ async function main(): Promise<number> {
     }
     case "login": {
       const { runLogin } = await import("@datalabrotterdam/nova-ai-agent/commands/login.js");
-      return runLogin(command.args);
+      const code = await runLogin(command.args);
+      if (code === 0) {
+        const { browserSetupDisabled, describeBrowserSetup, setUpBrowser } = await import("./browser-setup.js");
+        if (!browserSetupDisabled()) {
+          await setUpBrowser().then(
+            (result) => process.stderr.write(`${describeBrowserSetup(result)}\n`),
+            () => undefined,
+          );
+        }
+      }
+      return code;
     }
     case "logout": {
       const { runLogout } = await import("@datalabrotterdam/nova-ai-agent/commands/login.js");
