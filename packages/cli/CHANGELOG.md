@@ -1,3 +1,15 @@
+# [@datalabrotterdam/nova-ai-cli-v1.2.0-alpha.6](https://github.com/Datalab-Rotterdam/nova-ai-cli/compare/@datalabrotterdam/nova-ai-cli@1.2.0-alpha.5...@datalabrotterdam/nova-ai-cli@1.2.0-alpha.6) (2026-10-23)
+
+
+### Bug Fixes
+
+* **cli:** start the session before the first prompt ([0c26456](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/0c26456b8126e3b42a6de2e38212213ae5380e62))
+
+
+### Features
+
+* **agent:** set workspace trust over ACP ([cec4a89](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/cec4a8949a4232f46448219e4d5363289651215d))
+
 # [@datalabrotterdam/nova-ai-cli-v1.2.0-alpha.5](https://github.com/Datalab-Rotterdam/nova-ai-cli/compare/@datalabrotterdam/nova-ai-cli@1.2.0-alpha.4...@datalabrotterdam/nova-ai-cli@1.2.0-alpha.5) (2026-10-23)
 
 
