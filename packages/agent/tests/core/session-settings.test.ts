@@ -24,6 +24,7 @@ describe("session settings", () => {
       compactThreshold: 0.1,
       memory: false,
       commandTimeoutSeconds: 30.4,
+      searxngUrl: " https://search.example/ ",
       unknown: true,
     });
     assert.deepEqual(settings, {
@@ -32,7 +33,10 @@ describe("session settings", () => {
       compactThreshold: 0.3,
       memory: false,
       commandTimeoutMs: 30_000,
+      searxngUrl: "https://search.example/",
     });
+    assert.equal(applySessionSettings(settings, { searxngUrl: "ftp://x" }).searxngUrl, "https://search.example/");
+    assert.equal(applySessionSettings(settings, { searxngUrl: null }).searxngUrl, null);
     assert.equal(applySessionSettings(DEFAULT_SESSION_SETTINGS, { maxToolRounds: 0 }).maxToolRounds, 1);
     assert.equal(applySessionSettings(DEFAULT_SESSION_SETTINGS, { compactThreshold: 2 }).compactThreshold, 0.95);
     assert.equal(applySessionSettings(DEFAULT_SESSION_SETTINGS, { commandTimeoutSeconds: 1 }).commandTimeoutMs, 5_000);
@@ -53,6 +57,7 @@ describe("session settings", () => {
       compactThreshold: null,
       memory: true,
       commandTimeoutSeconds: 45,
+      searxngUrl: null,
     });
     assert.equal(sessionSettingsView(DEFAULT_SESSION_SETTINGS).commandTimeoutSeconds, null);
   });

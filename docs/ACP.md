@@ -106,6 +106,7 @@ numbers are clamped to the range shown, other types are ignored.
 | `compactThreshold` | 0.3–0.95 | 0.8 | Share of the context window at which a turn compacts before calling the model |
 | `memory` | boolean | `true` | Memory, `NOVA.md` and `AGENTS.md` in the prompt, and the memory tools |
 | `commandTimeoutSeconds` | 5–600 | 120 | Time limit for commands that set no `timeout_seconds` |
+| `searxngUrl` | http(s) URL, or `null`/`""` | `null` | A SearXNG server (JSON format enabled) that `web_search` tries before You.com and DuckDuckGo |
 
 ### Modes
 
@@ -177,6 +178,13 @@ no capability: the agent fetches it itself. It always asks for approval
 unless a rule allows the URL, because a URL can carry data out. It only
 follows redirects on the same site; a redirect elsewhere is reported and needs
 its own call.
+
+`web_search` (also no capability) searches with keyless providers (the
+session's `searxngUrl` first, then You.com, then DuckDuckGo; one that fails
+falls through to the next), opens the top four result pages and returns the
+passages that match the query as numbered sources to cite. The query leaves
+the machine like a `fetch_url` URL, so it asks for approval unless a rule
+allows it (`web_search` or `web_search(<glob>)` on the query).
 
 MCP tools ask for approval unless the server marks them
 `annotations.readOnlyHint: true`.

@@ -108,6 +108,7 @@ literal). Subjects:
 | `read_file`, `write_file`, `create_file`, `edit_file`, `list_directory`, `list_dir`, `search_text` | the path, workspace-relative with `/` (absolute outside the workspace) |
 | `find_files` | the glob pattern |
 | `fetch_url` | the URL |
+| `web_search` | the query |
 | others | none: only the bare tool name matches |
 
 Command rules are checked per command: a command line is split at `;`, `&&`,

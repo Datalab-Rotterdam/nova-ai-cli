@@ -477,6 +477,7 @@ describe("NovaAgent.setSessionSettings", () => {
       compactThreshold: null,
       memory: false,
       commandTimeoutSeconds: null,
+      searxngUrl: null,
     });
     assert.deepEqual(
       agent.setSessionSettings({
@@ -489,6 +490,7 @@ describe("NovaAgent.setSessionSettings", () => {
         compactThreshold: 0.6,
         memory: false,
         commandTimeoutSeconds: 600,
+        searxngUrl: null,
       },
     );
     await agent.closeSession({ sessionId });

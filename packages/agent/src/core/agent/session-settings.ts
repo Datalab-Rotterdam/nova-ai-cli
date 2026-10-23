@@ -18,6 +18,8 @@ export type SessionSettings = {
   memory: boolean;
   /** Time limit for commands that do not set their own; null: 120 s. */
   commandTimeoutMs: number | null;
+  /** A SearXNG server web_search tries first; null: only the keyless providers. */
+  searxngUrl: string | null;
 };
 
 export const DEFAULT_SESSION_SETTINGS: Readonly<SessionSettings> = Object.freeze({
@@ -26,6 +28,7 @@ export const DEFAULT_SESSION_SETTINGS: Readonly<SessionSettings> = Object.freeze
   compactThreshold: null,
   memory: true,
   commandTimeoutMs: null,
+  searxngUrl: null,
 });
 
 /** Where clients put settings on session/new, load, resume and fork. */
@@ -34,7 +37,8 @@ export const SETTINGS_META_KEY = "nova-ai-cli/settings";
 /**
  * Applies a client's settings object over `base`. Accepted keys:
  * maxToolRounds (1–200), autoCompact (boolean), compactThreshold (0.3–0.95),
- * memory (boolean), commandTimeoutSeconds (5–600).
+ * memory (boolean), commandTimeoutSeconds (5–600), searxngUrl (http(s) URL,
+ * or null/"" for none).
  * Numbers are clamped to those ranges; anything else is ignored.
  */
 export function applySessionSettings(
@@ -54,6 +58,10 @@ export function applySessionSettings(
   if (typeof value.memory === "boolean") next.memory = value.memory;
   const seconds = number(value.commandTimeoutSeconds);
   if (seconds !== null) next.commandTimeoutMs = clamp(Math.round(seconds), 5, 600) * 1_000;
+  if (value.searxngUrl === null || value.searxngUrl === "") next.searxngUrl = null;
+  else if (typeof value.searxngUrl === "string" && /^https?:\/\//i.test(value.searxngUrl.trim())) {
+    next.searxngUrl = value.searxngUrl.trim();
+  }
   return next;
 }
 
@@ -71,6 +79,7 @@ export function sessionSettingsView(settings: Readonly<SessionSettings>): {
   compactThreshold: number | null;
   memory: boolean;
   commandTimeoutSeconds: number | null;
+  searxngUrl: string | null;
 } {
   return {
     maxToolRounds: settings.maxToolRounds,
@@ -78,6 +87,7 @@ export function sessionSettingsView(settings: Readonly<SessionSettings>): {
     compactThreshold: settings.compactThreshold,
     memory: settings.memory,
     commandTimeoutSeconds: settings.commandTimeoutMs === null ? null : settings.commandTimeoutMs / 1_000,
+    searxngUrl: settings.searxngUrl,
   };
 }
 

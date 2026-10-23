@@ -17,7 +17,7 @@ const MAX_REDIRECTS = 5;
 export const fetchUrlTool: ToolDefinition = {
   name: "fetch_url",
   description:
-    "fetch a web page (http or https) and return its main content as text with links, or the raw body for text and JSON. Use it for documentation, issues or articles the user refers to. Long pages are cut; pass start_char to read on. You cannot search the web: you need a concrete URL.",
+    "fetch a web page (http or https) and return its main content as text with links, or the raw body for text and JSON. Use it for documentation, issues or articles the user refers to. Long pages are cut; pass start_char to read on. It needs a concrete URL; use web_search to find pages.",
   parameters: {
     type: "object",
     properties: {
@@ -117,7 +117,7 @@ async function fetchPage(
   }
 }
 
-async function readLimited(response: Response, maxBytes: number): Promise<string> {
+export async function readLimited(response: Response, maxBytes: number): Promise<string> {
   if (!response.body) return "";
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
