@@ -612,6 +612,36 @@ export class NovaAgent implements AgentRuntime {
     ];
   }
 
+  listModels(params: { preferred?: string }) {
+    return this.models.listModels(params.preferred);
+  }
+
+  /**
+   * `_nova/session/context_usage`: without a `contextWindow` the agent looks
+   * up the window of `model` (else the session's or the default model).
+   */
+  async sessionContextUsage(params: {
+    sessionId: string;
+    contextWindow?: number | null;
+    model?: string;
+    mode?: InteractionMode;
+  }): Promise<ContextUsage> {
+    const session = this.requireSession(params.sessionId);
+    let contextWindow = params.contextWindow ?? null;
+    const credentials = contextWindow === null ? readCredentials() : null;
+    if (credentials) {
+      const model =
+        params.model ?? session.model ?? (await this.models.defaultModel(credentials));
+      if (model) {
+        contextWindow = await this.models.resolveContextWindow(
+          createNovaClient(credentials.apiKey),
+          model,
+        );
+      }
+    }
+    return this.contextUsage({ ...params, contextWindow });
+  }
+
   contextUsage(params: {
     sessionId: string;
     contextWindow?: number | null;

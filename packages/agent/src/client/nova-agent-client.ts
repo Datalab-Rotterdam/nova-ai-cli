@@ -19,6 +19,7 @@ import type {
   UpdateQueuedPromptParams,
 } from "../core/prompt-queue.js";
 import type { SessionCheckpoint } from "../core/sessions.js";
+import type { JoinedModel } from "../acp/providers.js";
 
 type Entries = { entries: PromptQueueEntryView[] };
 
@@ -88,9 +89,16 @@ export class NovaAgentClient {
   sessionContextUsage(params: {
     sessionId: string;
     contextWindow?: number | null;
+    model?: string;
     mode?: InteractionMode;
   }) {
     return this.ext<ContextUsage>(NOVA_METHODS.sessionContextUsage, params);
+  }
+  modelsList(params: { preferred?: string } = {}) {
+    return this.ext<{ models: JoinedModel[]; defaultModel: string | null }>(
+      NOVA_METHODS.modelsList,
+      params,
+    );
   }
   sessionRewind(params: { sessionId: string; turns?: number }) {
     return this.ext<{

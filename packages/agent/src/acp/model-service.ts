@@ -28,8 +28,10 @@ export class ModelService {
    * The model for a session that chose none (see resolveDefaultModel).
    * When the catalog can't be read, the saved default is used as is.
    */
-  async defaultModel(credentials: StoredCredentials): Promise<string | undefined> {
-    const preferred = credentials.defaultModel ?? process.env.NOVA_MODEL;
+  async defaultModel(
+    credentials: StoredCredentials,
+    preferred = credentials.defaultModel ?? process.env.NOVA_MODEL,
+  ): Promise<string | undefined> {
     try {
       return resolveDefaultModel(await this.modelCatalog(credentials.apiKey), preferred);
     } catch {
@@ -49,6 +51,27 @@ export class ModelService {
       this.catalog = { apiKey, models };
     }
     return this.catalog.models;
+  }
+
+  /**
+   * `_nova/models/list`: the chat models with what a client shows or checks
+   * (context window, image input), and the model to use given the client's
+   * `preferred` one (see resolveDefaultModel).
+   */
+  async listModels(
+    preferred?: string,
+  ): Promise<{ models: JoinedModel[]; defaultModel: string | null }> {
+    const credentials = readCredentials();
+    if (!credentials) throw acp.RequestError.authRequired();
+    const models = await listJoinedModels(
+      createNovaClient(credentials.apiKey),
+      this.disabledProviders,
+    );
+    const defaultModel = await this.defaultModel(
+      credentials,
+      preferred ?? credentials.defaultModel ?? process.env.NOVA_MODEL,
+    );
+    return { models, defaultModel: defaultModel ?? null };
   }
 
   async buildConfigOptions(

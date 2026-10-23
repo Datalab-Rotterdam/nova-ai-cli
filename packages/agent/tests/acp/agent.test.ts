@@ -13,6 +13,7 @@ import {
 } from "../../src/acp/agent.js";
 import { describeResourceUri } from "../../src/acp/prompt-content.js";
 import { setWorkspaceTrusted } from "../../src/core/nova-home.js";
+import { sse, text, withFakeNova } from "../../../../test-support/fake-nova.js";
 import {
   appendSessionTurn,
   deleteStoredSession,
@@ -981,5 +982,28 @@ describe("NovaAgent workspace MCP servers", () => {
     } finally {
       rmSync(cwd, { recursive: true, force: true });
     }
+  });
+});
+
+describe("NovaAgent model metadata", () => {
+  it("lists models with what a client needs and resolves the context window itself", async () => {
+    await withFakeNova(
+      () => sse([text("unused")]),
+      async () => {
+        const agent = new NovaAgent();
+        const listed = await agent.listModels({});
+        assert.equal(listed.defaultModel, "fake-model");
+        assert.deepEqual(
+          listed.models.map(({ id, name, contextWindow, imageInput }) => ({ id, name, contextWindow, imageInput })),
+          [{ id: "fake-model", name: null, contextWindow: 100000, imageInput: false }],
+        );
+        // An id the catalog doesn't list (an alias, a later page) is kept.
+        assert.equal((await agent.listModels({ preferred: "alias" })).defaultModel, "alias");
+
+        const { sessionId } = await agent.newSession({ cwd: "/repo", mcpServers: [] });
+        const usage = await agent.sessionContextUsage({ sessionId, model: "fake-model" });
+        assert.equal(usage.contextWindow, 100000);
+      },
+    );
   });
 });

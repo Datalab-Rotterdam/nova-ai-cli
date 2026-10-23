@@ -108,7 +108,10 @@ export function createAgentApp(agentImpl: NovaAgent): acp.AgentApp {
       return { compacted, removedMessages, keptMessages };
     })
     .onRequest(NOVA_METHODS.sessionContextUsage, parseContextUsageParams, (ctx) =>
-      agentImpl.contextUsage(ctx.params),
+      agentImpl.sessionContextUsage(ctx.params),
+    )
+    .onRequest(NOVA_METHODS.modelsList, parseModelsListParams, (ctx) =>
+      agentImpl.listModels(ctx.params),
     )
     .onRequest(NOVA_METHODS.sessionSetSettings, parseSetSettingsParams, (ctx) =>
       agentImpl.setSessionSettings(ctx.params),
@@ -127,6 +130,7 @@ function parseCompactParams(params: unknown): { sessionId: string; model?: strin
 function parseContextUsageParams(params: unknown): {
   sessionId: string;
   contextWindow?: number | null;
+  model?: string;
   mode?: InteractionMode;
 } {
   const value = requireSessionParams(params);
@@ -136,8 +140,14 @@ function parseContextUsageParams(params: unknown): {
   return {
     sessionId: value.sessionId,
     contextWindow: typeof value.contextWindow === "number" ? value.contextWindow : null,
+    ...(typeof value.model === "string" && value.model ? { model: value.model } : {}),
     ...(value.mode !== undefined ? { mode: value.mode as InteractionMode } : {}),
   };
+}
+
+function parseModelsListParams(params: unknown): { preferred?: string } {
+  const value = params && typeof params === "object" ? (params as Record<string, unknown>) : {};
+  return typeof value.preferred === "string" && value.preferred ? { preferred: value.preferred } : {};
 }
 
 function parseSetSettingsParams(params: unknown): { sessionId: string; settings: Record<string, unknown> } {

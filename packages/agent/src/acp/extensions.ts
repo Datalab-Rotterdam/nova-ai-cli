@@ -23,6 +23,7 @@ export const NOVA_METHODS = {
   sessionCompact: "_nova/session/compact",
   sessionContextUsage: "_nova/session/context_usage",
   sessionSetSettings: "_nova/session/set_settings",
+  modelsList: "_nova/models/list",
 } as const;
 
 export const NOVA_NOTIFICATIONS = {
