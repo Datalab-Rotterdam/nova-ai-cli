@@ -1,6 +1,12 @@
 import { createInterface } from "node:readline/promises";
 import type { TuiOptions } from "../cli.js";
-import { readCredentials } from "@datalabrotterdam/nova-ai-agent/core/credentials.js";
+import {
+  readCredentials,
+  saveDefaultModel,
+  type StoredCredentials,
+} from "@datalabrotterdam/nova-ai-agent/core/credentials.js";
+import { resolveDefaultModel } from "@datalabrotterdam/nova-ai-agent/core/model-capabilities.js";
+import { createNovaClient } from "@datalabrotterdam/nova-ai-agent/core/nova-client.js";
 import { listStoredSessions, loadStoredSession } from "@datalabrotterdam/nova-ai-agent/core/sessions.js";
 import { setWorkspaceTrusted } from "@datalabrotterdam/nova-ai-agent/core/nova-home.js";
 import { checkForUpdate } from "../update-check.js";
@@ -20,7 +26,15 @@ export async function runChat(options: TuiOptions): Promise<number> {
     console.error("nova-ai isn't connected to a Nova AI account yet. Run `nova-ai login` first.");
     return 1;
   }
-  const credentials = options.model ? { ...stored, defaultModel: options.model } : stored;
+  const model =
+    options.model ?? stored.defaultModel ?? process.env.NOVA_MODEL ?? (await pickDefaultModel(stored));
+  if (!model) {
+    console.error("nova-ai has no model to use yet. Start it with one, for example:");
+    console.error("  nova-ai --model <model-id>     (or set NOVA_MODEL)");
+    console.error("Then Ctrl+P in nova-ai switches and remembers the model.");
+    return 1;
+  }
+  const credentials = { ...stored, defaultModel: model };
 
   // One npm check per start: the prompt below and the TUI's reminder share it.
   const updateCheck = checkForUpdate().then((update) => withInstallability(update));
@@ -61,6 +75,21 @@ export async function runChat(options: TuiOptions): Promise<number> {
     }
   }
   return 0;
+}
+
+/** First start without a model: take the account's default chat model and remember it. */
+async function pickDefaultModel(credentials: StoredCredentials): Promise<string | undefined> {
+  try {
+    const { data } = await createNovaClient(credentials.apiKey).models.list({ limit: 100 });
+    const model = resolveDefaultModel(data, undefined);
+    if (model) {
+      saveDefaultModel(model);
+      console.log(`Using model ${model} (Ctrl+P switches).`);
+    }
+    return model;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
