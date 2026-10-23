@@ -164,7 +164,7 @@ export const builtinCommands: SlashCommand[] = [
     name: "mcp",
     description: "Inspect configured MCP servers",
     run(ctx) {
-      ctx.openMcpInspector();
+      return ctx.openMcpInspector();
     },
   },
   {

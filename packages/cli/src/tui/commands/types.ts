@@ -33,7 +33,7 @@ export type SlashCommandContext = {
   /** Trusts the workspace (its MCP servers and allow rules); returns a message. */
   trustWorkspace(): string | Promise<string>;
   openToolInspector(): void;
-  openMcpInspector(): void;
+  openMcpInspector(): void | Promise<void>;
   openSkillInspector(): void | Promise<void>;
   /** Switches a skill on or off (this project, or everywhere); returns a message. */
   switchSkill(name: string, enabled: boolean, global: boolean): string | Promise<string>;

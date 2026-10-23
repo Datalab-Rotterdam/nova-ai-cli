@@ -990,12 +990,31 @@ export class SessionRunner {
     });
   }
 
+  /**
+   * Starts the session ahead of the first prompt, so the agent's MCP and
+   * skill status is there for /mcp and the status line. A failure is left to
+   * the first prompt, which tries again and reports it.
+   */
+  async prepareSession(): Promise<void> {
+    try {
+      await this.ensureSession();
+    } catch {
+      this.sessionReady = Promise.resolve();
+    }
+  }
+
+  get sessionLoaded(): boolean {
+    return this.agentSessionLoaded;
+  }
+
   private async ensureSession(): Promise<void> {
     await this.ensureUsableModel();
-    await this.sessionReady;
-    if (!this.agentSessionLoaded) {
-      this.sessionReady = this.createSession();
-      await this.sessionReady;
+    // Callers may overlap (startup, /mcp, the first prompt): only one creates the session.
+    for (;;) {
+      const ready = this.sessionReady;
+      await ready;
+      if (this.agentSessionLoaded) return;
+      if (this.sessionReady === ready) this.sessionReady = this.createSession();
     }
   }
 

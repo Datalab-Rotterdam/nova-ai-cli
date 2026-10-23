@@ -133,8 +133,9 @@ export class TuiController {
   getView = (): ViewState => this.view;
 
   start(): void {
-    // Fix a saved model that can't chat before the first prompt needs it.
-    void this.runner.ensureUsableModel().then(() => this.refresh());
+    // Fix a saved model that can't chat, and start the session (MCP servers,
+    // skills), before the first prompt needs them.
+    void this.runner.prepareSession().then(() => this.refresh());
     this.syncWindowTitle();
     this.animationTimer = setInterval(() => this.syncWindowTitle(true), 120);
     this.animationTimer.unref?.();
@@ -360,7 +361,11 @@ export class TuiController {
     });
   };
 
-  openMcpInspector = (): void => {
+  openMcpInspector = async (): Promise<void> => {
+    if (!this.runner.sessionLoaded) {
+      this.showText("MCP servers", "Connecting MCP servers...");
+      await this.runner.prepareSession();
+    }
     const connection = this.runner.mcpSessionStatus();
     const servers = connection.configured;
     const configuredNames = new Set(servers.map((server) => server.name));
