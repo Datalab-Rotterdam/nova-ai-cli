@@ -51,7 +51,10 @@ import {
 } from "../core/sessions.js";
 import {
   buildSkillsSystemPrompt,
+  disabledSkillNames,
   discoverEnabledSkills,
+  discoverSkills,
+  setSkillEnabled,
   type SkillDefinition,
 } from "../core/skills.js";
 import { detectToolEnvironment } from "../core/tools/environment.js";
@@ -121,6 +124,10 @@ export {
   contentBlocksToText,
   frameSteeringPrompt,
 } from "./prompt-content.js";
+
+export type SkillState = Pick<SkillDefinition, "name" | "description" | "source" | "path"> & {
+  enabled: boolean;
+};
 
 const AUTH_METHOD_ID = "nova-api-key";
 const ENV_AUTH_METHOD_ID = "nova-api-key-env";
@@ -610,6 +617,37 @@ export class NovaAgent implements AgentRuntime {
       permissionModeOption(session.policy.mode),
       ...(await this.models.buildConfigOptions(session)),
     ];
+  }
+
+  /** `_nova/skills/list`: every skill discovered for `cwd`, switched-off ones included. */
+  listSkills(params: { cwd: string }): { skills: SkillState[] } {
+    const disabled = disabledSkillNames(params.cwd);
+    return {
+      skills: discoverSkills(params.cwd).map(({ name, description, source, path }) => ({
+        name,
+        description,
+        source,
+        path,
+        enabled: !disabled.has(name),
+      })),
+    };
+  }
+
+  /**
+   * `_nova/skills/set_enabled`: switches a skill in this project's private
+   * settings or (`global`) the user's; sessions pick it up from their next turn.
+   */
+  setSkillEnabled(params: {
+    cwd: string;
+    name: string;
+    enabled: boolean;
+    scope: "project" | "global";
+  }): { skills: SkillState[] } {
+    if (!discoverSkills(params.cwd).some((skill) => skill.name === params.name)) {
+      throw acp.RequestError.invalidParams({ name: params.name }, `No skill named "${params.name}".`);
+    }
+    setSkillEnabled(params.cwd, params.scope, params.name, params.enabled);
+    return this.listSkills(params);
   }
 
   listModels(params: { preferred?: string }) {

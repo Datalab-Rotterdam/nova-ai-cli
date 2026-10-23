@@ -170,10 +170,10 @@ export const builtinCommands: SlashCommand[] = [
   {
     name: "skills",
     description: "List skills, or switch one: /skills on|off <name> [--global]",
-    run(ctx, args) {
+    async run(ctx, args) {
       const words = args.trim().split(/\s+/).filter(Boolean);
       if (!words.length) {
-        ctx.openSkillInspector();
+        await ctx.openSkillInspector();
         return;
       }
       const global = words.includes("--global");
@@ -182,7 +182,7 @@ export const builtinCommands: SlashCommand[] = [
         ctx.print("Usage: /skills, or /skills on|off <name> [--global]");
         return;
       }
-      ctx.print(ctx.switchSkill(name, action === "on", global));
+      ctx.print(await ctx.switchSkill(name, action === "on", global));
     },
   },
   {

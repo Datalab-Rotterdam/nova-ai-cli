@@ -233,6 +233,13 @@ a prompt runs. Session files are append-only; a rewind appends a reset record.
 |---|---|---|
 | `_nova/models/list` | `preferred?` (no session id needed) | `{ models, defaultModel }`: the chat models (fields as in `nova-ai-cli/models` below) and the model to use given `preferred` (else the saved default): kept unless the gateway says it cannot chat or is disabled, `null` when there is none |
 
+### Skills
+
+| Method | Params | Result |
+|---|---|---|
+| `_nova/skills/list` | `cwd` (no session id needed) | `{ skills: [{ name, description, source, path, enabled }] }`: every skill discovered for the workspace, switched-off ones included |
+| `_nova/skills/set_enabled` | `cwd`, `name`, `enabled`, `scope?` (`"project"`, the default, or `"global"`) | `{ skills }` after the change; sessions use it from their next turn. An unknown name is `invalidParams` |
+
 ### Background jobs
 
 Jobs: `{ jobId, sessionId, kind: "terminal" | "prompt", title, status:

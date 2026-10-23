@@ -20,6 +20,7 @@ import type {
 } from "../core/prompt-queue.js";
 import type { SessionCheckpoint } from "../core/sessions.js";
 import type { JoinedModel } from "../acp/providers.js";
+import type { SkillState } from "../acp/agent.js";
 
 type Entries = { entries: PromptQueueEntryView[] };
 
@@ -93,6 +94,12 @@ export class NovaAgentClient {
     mode?: InteractionMode;
   }) {
     return this.ext<ContextUsage>(NOVA_METHODS.sessionContextUsage, params);
+  }
+  skillsList(params: { cwd: string }) {
+    return this.ext<{ skills: SkillState[] }>(NOVA_METHODS.skillsList, params);
+  }
+  skillsSetEnabled(params: { cwd: string; name: string; enabled: boolean; scope?: "project" | "global" }) {
+    return this.ext<{ skills: SkillState[] }>(NOVA_METHODS.skillsSetEnabled, params);
   }
   modelsList(params: { preferred?: string } = {}) {
     return this.ext<{ models: JoinedModel[]; defaultModel: string | null }>(

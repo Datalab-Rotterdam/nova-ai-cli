@@ -1,3 +1,4 @@
+import { isAbsolute } from "node:path";
 import * as acp from "@agentclientprotocol/sdk";
 import type { NovaAgent } from "./agent.js";
 import { NOVA_METHODS } from "./extensions.js";
@@ -113,6 +114,10 @@ export function createAgentApp(agentImpl: NovaAgent): acp.AgentApp {
     .onRequest(NOVA_METHODS.modelsList, parseModelsListParams, (ctx) =>
       agentImpl.listModels(ctx.params),
     )
+    .onRequest(NOVA_METHODS.skillsList, parseCwdParams, (ctx) => agentImpl.listSkills(ctx.params))
+    .onRequest(NOVA_METHODS.skillsSetEnabled, parseSetSkillParams, (ctx) =>
+      agentImpl.setSkillEnabled(ctx.params),
+    )
     .onRequest(NOVA_METHODS.sessionSetSettings, parseSetSettingsParams, (ctx) =>
       agentImpl.setSessionSettings(ctx.params),
     )
@@ -148,6 +153,31 @@ function parseContextUsageParams(params: unknown): {
 function parseModelsListParams(params: unknown): { preferred?: string } {
   const value = params && typeof params === "object" ? (params as Record<string, unknown>) : {};
   return typeof value.preferred === "string" && value.preferred ? { preferred: value.preferred } : {};
+}
+
+function parseCwdParams(params: unknown): { cwd: string } {
+  const value = params && typeof params === "object" ? (params as Record<string, unknown>) : {};
+  if (typeof value.cwd !== "string" || !isAbsolute(value.cwd)) {
+    throw acp.RequestError.invalidParams({ cwd: value.cwd }, "cwd must be an absolute path.");
+  }
+  return { cwd: value.cwd };
+}
+
+function parseSetSkillParams(params: unknown): {
+  cwd: string;
+  name: string;
+  enabled: boolean;
+  scope: "project" | "global";
+} {
+  const { cwd } = parseCwdParams(params);
+  const value = params as Record<string, unknown>;
+  if (typeof value.name !== "string" || !value.name || typeof value.enabled !== "boolean") {
+    throw acp.RequestError.invalidParams(params, "name (string) and enabled (boolean) are required.");
+  }
+  if (value.scope !== undefined && value.scope !== "project" && value.scope !== "global") {
+    throw acp.RequestError.invalidParams({ scope: value.scope }, 'scope must be "project" or "global".');
+  }
+  return { cwd, name: value.name, enabled: value.enabled, scope: value.scope ?? "project" };
 }
 
 function parseSetSettingsParams(params: unknown): { sessionId: string; settings: Record<string, unknown> } {

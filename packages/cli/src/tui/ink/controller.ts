@@ -1,9 +1,4 @@
 import { setWorkspaceTrusted } from "@datalabrotterdam/nova-ai-agent/core/nova-home.js";
-import {
-  disabledSkillNames,
-  discoverSkills,
-  setSkillEnabled,
-} from "@datalabrotterdam/nova-ai-agent/core/skills.js";
 import { INTERACTION_MODES } from "@datalabrotterdam/nova-ai-agent/core/interaction-modes.js";
 import {
   allCommands,
@@ -386,18 +381,22 @@ export class TuiController {
   };
 
   /** Every discovered skill with its state; switched-off skills stay listed. */
-  openSkillInspector = (): void => {
-    const cwd = this.runner.cwd;
-    const skills = discoverSkills(cwd);
-    const disabled = disabledSkillNames(cwd);
-    const on = skills.filter((skill) => !disabled.has(skill.name)).length;
+  openSkillInspector = async (): Promise<void> => {
+    let skills: Awaited<ReturnType<SessionRunner["listSkills"]>>;
+    try {
+      skills = await this.runner.listSkills();
+    } catch (error) {
+      this.showText("Skills", errorMessage(error, "Could not list the skills."));
+      return;
+    }
+    const on = skills.filter((skill) => skill.enabled).length;
     this.showText(
       `Skills (${on} on, ${skills.length - on} off)`,
       skills.length
         ? [
             ...skills.map(
               (skill) =>
-                `${skill.name} [${skill.source}]${disabled.has(skill.name) ? " (off)" : ""}\n${skill.description}\n${skill.path}`,
+                `${skill.name} [${skill.source}]${skill.enabled ? "" : " (off)"}\n${skill.description}\n${skill.path}`,
             ),
             "/skills off <name> switches one off in this project (--global: everywhere); /skills on <name> switches it back on.",
           ].join("\n\n")
@@ -406,17 +405,15 @@ export class TuiController {
   };
 
   /** /skills on|off <name> [--global]: applies from the next message. */
-  switchSkill = (name: string, enabled: boolean, global: boolean): string => {
-    const cwd = this.runner.cwd;
-    if (!discoverSkills(cwd).some((skill) => skill.name === name)) {
-      return `No skill named "${name}". /skills lists them.`;
-    }
+  switchSkill = async (name: string, enabled: boolean, global: boolean): Promise<string> => {
+    let skills: Awaited<ReturnType<SessionRunner["setSkillEnabled"]>>;
     try {
-      setSkillEnabled(cwd, global ? "global" : "project", name, enabled);
+      skills = await this.runner.setSkillEnabled(name, enabled, global);
     } catch (error) {
-      return errorMessage(error, "Could not change the skill.");
+      const message = errorMessage(error, "Could not change the skill.");
+      return message.startsWith("No skill named") ? `${message} /skills lists them.` : message;
     }
-    const stillOff = enabled && disabledSkillNames(cwd).has(name);
+    const stillOff = enabled && skills.some((skill) => skill.name === name && !skill.enabled);
     return (
       stillOff
         ? `Switched "${name}" on ${global ? "globally" : "in this project"}, but it is still off ${global ? "in this project" : "globally"} (use ${global ? "/skills on " + name : "/skills on " + name + " --global"}).`

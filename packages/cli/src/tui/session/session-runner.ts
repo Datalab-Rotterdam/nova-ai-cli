@@ -20,7 +20,6 @@ import {
 } from "@datalabrotterdam/nova-ai-agent/core/policy/settings.js";
 import { loadStoredSession } from "@datalabrotterdam/nova-ai-agent/core/sessions.js";
 import type { SessionCheckpoint } from "@datalabrotterdam/nova-ai-agent/core/sessions.js";
-import { discoverSkills } from "@datalabrotterdam/nova-ai-agent/core/skills.js";
 import { chatContentToText } from "@datalabrotterdam/nova-ai-agent/core/chat-content.js";
 import type { ContextCompactionResult } from "@datalabrotterdam/nova-ai-agent/core/context-compaction.js";
 import type { ContextUsage } from "@datalabrotterdam/nova-ai-agent/core/context-usage.js";
@@ -159,7 +158,7 @@ export class SessionRunner {
     connected: [],
     failures: [],
   };
-  private skills: SkillSessionStatus[];
+  private skills: SkillSessionStatus[] = [];
   private sessionReady: Promise<void>;
   private agentSessionLoaded = false;
   private promptActive = false;
@@ -179,14 +178,6 @@ export class SessionRunner {
     private readonly credentials: StoredCredentials,
     cwd: string,
   ) {
-    this.skills = discoverSkills(cwd).map(
-      ({ name, description, source, path }) => ({
-        name,
-        description,
-        source,
-        path,
-      }),
-    );
     this.cwd = cwd;
     this.acpClient = new TuiAcpClient(
       store,
@@ -219,14 +210,7 @@ export class SessionRunner {
     this.sessionId = stored.sessionId;
     this.cwd = stored.cwd;
     this.title = stored.title;
-    this.skills = discoverSkills(stored.cwd).map(
-      ({ name, description, source, path }) => ({
-        name,
-        description,
-        source,
-        path,
-      }),
-    );
+    this.skills = [];
 
     const messages = restoreSessionMessages(stored.messages);
 
@@ -416,6 +400,24 @@ export class SessionRunner {
 
   skillSessionStatus(): SkillSessionStatus[] {
     return this.skills.map((skill) => ({ ...skill }));
+  }
+
+  /** Every skill of the workspace with its on/off state, from the agent. */
+  async listSkills() {
+    await this.initialized;
+    return (await this.nova.skillsList({ cwd: this.cwd })).skills;
+  }
+
+  async setSkillEnabled(name: string, enabled: boolean, global: boolean) {
+    await this.initialized;
+    return (
+      await this.nova.skillsSetEnabled({
+        cwd: this.cwd,
+        name,
+        enabled,
+        scope: global ? "global" : "project",
+      })
+    ).skills;
   }
 
   contextUsageSnapshot(): ContextUsage | null {

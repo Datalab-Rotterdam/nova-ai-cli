@@ -24,6 +24,8 @@ export const NOVA_METHODS = {
   sessionContextUsage: "_nova/session/context_usage",
   sessionSetSettings: "_nova/session/set_settings",
   modelsList: "_nova/models/list",
+  skillsList: "_nova/skills/list",
+  skillsSetEnabled: "_nova/skills/set_enabled",
 } as const;
 
 export const NOVA_NOTIFICATIONS = {

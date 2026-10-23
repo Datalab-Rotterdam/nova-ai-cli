@@ -34,9 +34,9 @@ export type SlashCommandContext = {
   trustWorkspace(): string;
   openToolInspector(): void;
   openMcpInspector(): void;
-  openSkillInspector(): void;
+  openSkillInspector(): void | Promise<void>;
   /** Switches a skill on or off (this project, or everywhere); returns a message. */
-  switchSkill(name: string, enabled: boolean, global: boolean): string;
+  switchSkill(name: string, enabled: boolean, global: boolean): string | Promise<string>;
   openUsageInspector(): void | Promise<void>;
   steerMessage(message: string): boolean;
   queuedMessages(): string[];

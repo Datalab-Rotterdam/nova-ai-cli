@@ -1,5 +1,5 @@
 ﻿import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -1005,5 +1005,28 @@ describe("NovaAgent model metadata", () => {
         assert.equal(usage.contextWindow, 100000);
       },
     );
+  });
+});
+
+describe("NovaAgent skills", () => {
+  it("lists every skill with its state and switches one off and on", () => {
+    const cwd = mkdtempSync(join(tmpdir(), "nova-agent-skills-"));
+    try {
+      mkdirSync(join(cwd, ".nova-ai", "skills", "deploy"), { recursive: true });
+      writeFileSync(join(cwd, ".nova-ai", "skills", "deploy", "SKILL.md"), "---\nname: deploy\ndescription: Deploy safely.\n---\nbody");
+      const agent = new NovaAgent();
+      const state = () => agent.listSkills({ cwd }).skills.map(({ name, enabled }) => ({ name, enabled }));
+      assert.deepEqual(state(), [{ name: "deploy", enabled: true }]);
+      agent.setSkillEnabled({ cwd, name: "deploy", enabled: false, scope: "project" });
+      assert.deepEqual(state(), [{ name: "deploy", enabled: false }]);
+      agent.setSkillEnabled({ cwd, name: "deploy", enabled: true, scope: "project" });
+      assert.deepEqual(state(), [{ name: "deploy", enabled: true }]);
+      assert.throws(
+        () => agent.setSkillEnabled({ cwd, name: "missing", enabled: false, scope: "project" }),
+        /No skill named "missing"/,
+      );
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
   });
 });
