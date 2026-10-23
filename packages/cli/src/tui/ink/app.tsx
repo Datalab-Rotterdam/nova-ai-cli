@@ -1,16 +1,23 @@
-import { Box, render, Static, Text, useBoxMetrics, useWindowSize } from "ink";
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { Box, render, Text, useBoxMetrics, useInput, useWindowSize } from "ink";
+import { memo, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import type { StoredCredentials } from "@datalabrotterdam/nova-ai-agent/core/credentials.js";
 import { savedPermissionMode } from "@datalabrotterdam/nova-ai-agent/core/policy/settings.js";
 import { fromAgentPermissionMode, SessionRunner } from "../session/session-runner.js";
 import { createStore, type Store } from "../state/store.js";
 import type { UIState, UpdateAvailable } from "../state/types.js";
 import { checkForUpdate } from "../../update-check.js";
-import { detectKittyKeyboard, kittyKeyboardOverride } from "./terminal-keyboard.js";
+import {
+  detectKittyKeyboard,
+  kittyKeyboardOverride,
+  MOUSE_REPORTING_OFF,
+  MOUSE_REPORTING_ON,
+  wheelRows,
+} from "./terminal-keyboard.js";
 import { PromptInput } from "./components/prompt-input.js";
 import { StatusLine } from "./components/status-line.js";
 import { TranscriptBlockView } from "./components/transcript.js";
 import { TuiController, type ViewState } from "./controller.js";
+import type { TranscriptBlock } from "./transcript/committer.js";
 import {
   PermissionDialog,
   QuestionDialog,
@@ -32,7 +39,6 @@ export type InkTuiOptions = {
 };
 
 const FRAME_MS = 120;
-const RESIZE_SETTLE_MS = 100;
 
 export type InkTuiResult = {
   sessionId: string;
@@ -92,38 +98,30 @@ export async function runInkTui(
     // Ink otherwise turns non-interactive whenever CI is set in the
     // environment; the TUI only runs on a terminal anyway.
     interactive: Boolean(stdout.isTTY),
+    // Full screen: the transcript scrolls inside the app (PgUp/PgDn) and the
+    // terminal gets its own screen back on exit.
+    alternateScreen: Boolean(stdout.isTTY),
     kittyKeyboard: { mode: kittyKeyboard ? "enabled" : "disabled" },
   });
   controller.start();
+  // The wheel scrolls the transcript; Shift (Option in some macOS terminals)
+  // + drag still selects text natively.
+  if (stdout.isTTY) stdout.write(MOUSE_REPORTING_ON);
 
   const onSignal = () => controller.requestExit();
   process.once("SIGTERM", onSignal);
 
-  // Once a width change settles (a drag sends many), print everything again.
-  let printedColumns = stdout.columns;
-  let resizeTimer: ReturnType<typeof setTimeout> | undefined;
-  const onResize = () => {
-    if (resizeTimer) clearTimeout(resizeTimer);
-    resizeTimer = setTimeout(() => {
-      if (stdout.columns === printedColumns) return;
-      printedColumns = stdout.columns;
-      controller.redrawAll();
-    }, RESIZE_SETTLE_MS);
-  };
-  stdout.on("resize", onResize);
   void (options.checkForUpdate ?? checkForUpdate)().then((updateAvailable) => {
     if (updateAvailable) store.setState({ updateAvailable });
   });
 
   try {
     await controller.exitRequested;
-    // The exit frame drops the prompt and status so only the transcript stays.
     await instance.waitUntilRenderFlush();
     await controller.stop();
   } finally {
     process.off("SIGTERM", onSignal);
-    stdout.off("resize", onResize);
-    if (resizeTimer) clearTimeout(resizeTimer);
+    if (stdout.isTTY) stdout.write(MOUSE_REPORTING_OFF);
     instance.unmount();
     await instance.waitUntilExit().catch(() => {});
   }
@@ -136,36 +134,61 @@ export function App({ controller }: { controller: TuiController }) {
   const { rows, columns } = useWindowSize();
   const bottomRef = useRef(null);
   const bottom = useBoxMetrics(bottomRef);
+  const contentRef = useRef(null);
+  const content = useBoxMetrics(contentRef);
   const working = useWorking(view);
+  const [userTops, setUserTops] = useState<ReadonlyMap<string, number>>(new Map());
+  useInput((input) => {
+    const rows = wheelRows(input);
+    if (rows) controller.scrollBy(rows);
+  });
+
+  // One row short of the terminal: Ink clears the whole screen for every
+  // frame that is exactly as tall (always on Windows), which flickers.
+  const height = Math.max(4, rows - 1);
+  const viewportRows = Math.max(3, height - (bottom.hasMeasured ? bottom.height : 6));
+  useEffect(() => {
+    if (content.hasMeasured) controller.setViewport(viewportRows, content.height);
+  }, [controller, viewportRows, content.hasMeasured, content.height]);
+
+  if (view.exiting) return null;
 
   const { transcript } = view;
-  const scrollback = (
-    // <Static> is laid out as an absolute box; without a width its text
-    // wraps against its content and runs past the terminal edge.
-    <Static key={transcript.epoch} items={[...transcript.committed]} style={{ width: columns }}>
-      {(block) => (
-        <Box key={block.key} marginTop={1}>
-          <TranscriptBlockView block={block} />
-        </Box>
-      )}
-    </Static>
-  );
-  if (view.exiting) return scrollback;
+  const blocks = [...transcript.committed, ...transcript.live];
+  const liveKeys = new Set(transcript.live.map((block) => block.key));
+  const onUserTop = (key: string, top: number) =>
+    setUserTops((tops) => (tops.get(key) === top ? tops : new Map(tops).set(key, top)));
 
-  // Ink redraws the whole screen (scrollback included) once a frame is as
-  // tall as the terminal, so the live part keeps its newest rows only.
-  const liveRows = Math.max(3, rows - (bottom.hasMeasured ? bottom.height : 6) - 2);
-  const dialogRows = Math.max(6, rows - 4);
+  // The prompt behind the rows on screen, once it has scrolled off the top.
+  const firstVisibleRow = content.height - viewportRows - view.scroll;
+  let sticky: string | null = null;
+  for (const block of blocks) {
+    if (block.kind !== "user") continue;
+    const top = userTops.get(block.key);
+    if (top !== undefined && top < firstVisibleRow) sticky = block.text;
+  }
+
+  // ponytail: renders the whole transcript every frame (memoized blocks keep
+  // that cheap); window to the blocks near the viewport if long sessions lag.
   return (
-    <>
-      {scrollback}
-      <Box flexDirection="column" maxHeight={liveRows} overflowY="hidden" justifyContent="flex-end">
-        <Box flexDirection="column" flexShrink={0}>
-          {transcript.live.map((block) => (
-            <Box key={block.key} marginTop={1}>
-              <TranscriptBlockView block={block} frame={working.frame} />
-            </Box>
-          ))}
+    <Box flexDirection="column" height={height}>
+      <Box
+        flexDirection="column"
+        height={viewportRows}
+        flexShrink={0}
+        overflowY="hidden"
+        justifyContent="flex-end"
+      >
+        <Box ref={contentRef} flexDirection="column" flexShrink={0} marginBottom={-view.scroll}>
+          {blocks.map((block) =>
+            liveKeys.has(block.key) ? (
+              <Box key={block.key} marginTop={1}>
+                <TranscriptBlockView block={block} frame={working.frame} />
+              </Box>
+            ) : (
+              <CommittedBlock key={block.key} block={block} onUserTop={onUserTop} />
+            ),
+          )}
           {working.line ? (
             <Box marginTop={1} paddingLeft={1}>
               <Text>
@@ -175,12 +198,68 @@ export function App({ controller }: { controller: TuiController }) {
             </Box>
           ) : null}
         </Box>
+        {sticky !== null ? <StickyPrompt text={sticky} columns={columns} /> : null}
       </Box>
-      <Box ref={bottomRef} flexDirection="column" marginTop={1}>
-        <Surface controller={controller} view={view} rows={dialogRows} columns={columns} />
-        <StatusLine ui={view.ui} model={view.model} mcp={view.mcp} />
+      <Box ref={bottomRef} flexDirection="column" flexShrink={0}>
+        <Surface controller={controller} view={view} rows={Math.max(6, rows - 4)} columns={columns} />
+        <StatusLine ui={view.ui} model={view.model} mcp={view.mcp} scroll={view.scroll} />
       </Box>
-    </>
+    </Box>
+  );
+}
+
+/** A final block: rendered once per epoch; user prompts report their row for the sticky prompt. */
+const CommittedBlock = memo(function CommittedBlock({
+  block,
+  onUserTop,
+}: {
+  block: TranscriptBlock;
+  onUserTop(key: string, top: number): void;
+}) {
+  if (block.kind !== "user") {
+    return (
+      <Box marginTop={1}>
+        <TranscriptBlockView block={block} />
+      </Box>
+    );
+  }
+  return (
+    <UserAnchor block={block} onUserTop={onUserTop}>
+      <TranscriptBlockView block={block} />
+    </UserAnchor>
+  );
+}, (before, after) => before.block === after.block);
+
+function UserAnchor({
+  block,
+  onUserTop,
+  children,
+}: {
+  block: TranscriptBlock;
+  onUserTop(key: string, top: number): void;
+  children: ReactNode;
+}) {
+  const ref = useRef(null);
+  const { top, hasMeasured } = useBoxMetrics(ref);
+  useEffect(() => {
+    if (hasMeasured) onUserTop(block.key, top);
+  }, [block.key, top, hasMeasured]);
+  return (
+    <Box ref={ref} marginTop={1}>
+      {children}
+    </Box>
+  );
+}
+
+/** Drawn over the viewport's first row; padded so the row under it doesn't show through. */
+function StickyPrompt({ text, columns }: { text: string; columns: number }) {
+  const line = `> ${text.replace(/\s+/g, " ").trim()}`;
+  return (
+    <Box position="absolute" top={0} left={0} width={columns}>
+      <Text color={palette.primary} backgroundColor={palette.stickyBackground} wrap="truncate-end">
+        {line.padEnd(columns)}
+      </Text>
+    </Box>
   );
 }
 

@@ -154,21 +154,22 @@ test("the Ink TUI runs a prompt, answers a permission, redraws on Ctrl+O and exi
 
   stdin.send("\u000f"); // Ctrl+O redraws the transcript with verbose tools
   await waitFor(() => /Verbose tool details expanded/.test(show()), show);
-  assert.match(stdout.raw, /\u001b\[2J\u001b\[3J\u001b\[H/);
-  await waitFor(() => /echo: hello there/.test(text(terminal)), () => text(terminal));
-  assert.equal(text(terminal).match(/echo: hello there/g)?.length, 1, "printed once after the redraw");
+  await waitFor(() => /echo: hello there/.test(show()), show);
+  assert.equal(show().match(/echo: hello there/g)?.length, 1, "shown once after the redraw");
 
   stdin.send("\u0003");
   await waitFor(() => /Press Ctrl\+C again within 2s to exit\./.test(show()), show);
   stdin.send("\u0003");
   await run;
   assert.match(stdout.raw, /Resume this session with: nova-ai --resume /);
-  assert.match(text(terminal), /echo: hello there/, "the transcript stays after exit");
+  assert.match(stdout.raw, /\u001b\[\?1049h/, "runs on the alternate screen");
+  assert.match(stdout.raw, /\u001b\[\?1049l/, "gives the terminal its screen back on exit");
+  assert.match(stdout.raw, /\u001b\[\?1000l\u001b\[\?1006l/, "mouse reporting is off again");
   assert.doesNotMatch(screen(terminal), /test-model \| ask/, "the prompt and status are removed on exit");
   terminal.dispose();
 });
 
-test("a long streaming answer stays below the terminal height instead of repainting the screen", async () => {
+test("a long answer scrolls inside the full screen with the prompt pinned on top", async () => {
   const terminal = new Terminal({ cols: 60, rows: 16, allowProposedApi: true, scrollback: 1_000, convertEol: true });
   const stdout = new FakeTerminalOutput(terminal);
   Object.defineProperty(stdout, "columns", { value: 60 });
@@ -194,20 +195,41 @@ test("a long streaming answer stays below the terminal height instead of repaint
   const code = Array.from({ length: 60 }, (_, index) => `const line${index} = ${index};`).join("\n");
   store.setState({
     busy: true,
-    messages: [{ id: "a1", role: "assistant", text: `\`\`\`ts\n${code}`, streaming: true }],
+    messages: [
+      { id: "u1", role: "user", text: "print sixty lines" },
+      { id: "a1", role: "assistant", text: `\`\`\`ts\n${code}`, streaming: true },
+    ],
   });
   await waitFor(() => /line59 = 59/.test(show()), show);
-  const streamed = stdout.raw.slice(startOutput);
-  assert.doesNotMatch(streamed, /\u001b\[2J/, "no full-screen repaint");
   assert.match(show(), /test-model \| agent \| ask \| working/, "the prompt and status stay visible");
-  assert.doesNotMatch(show(), /line0 = 0;/, "older streaming rows are clipped from the live area");
+  assert.doesNotMatch(show(), /line0 = 0;/, "older rows are above the viewport");
+  assert.doesNotMatch(stdout.raw.slice(startOutput), /\u001b\[2J/, "frames fit the screen: no full repaint");
 
   store.setState({
     busy: false,
-    messages: [{ id: "a1", role: "assistant", text: `\`\`\`ts\n${code}\n\`\`\``, streaming: false }],
+    messages: [
+      { id: "u1", role: "user", text: "print sixty lines" },
+      { id: "a1", role: "assistant", text: `\`\`\`ts\n${code}\n\`\`\``, streaming: false },
+    ],
   });
-  await waitFor(() => /line0 = 0;/.test(text(terminal)), () => text(terminal));
-  assert.equal(text(terminal).match(/line0 = 0;/g)?.length, 1, "the finished answer is printed to the scrollback once");
+  await waitFor(() => /^> print sixty lines/.test(show()), show);
+
+  stdin.send("\u001b[5~"); // PgUp
+  await waitFor(() => /↑\d+ lines/.test(show()) && !/line59 = 59/.test(show()), show);
+  stdin.send("\u001b[5~".repeat(10));
+  await waitFor(() => /line0 = 0;/.test(show()), show);
+  assert.equal(show().match(/print sixty lines/g)?.length, 1, "the prompt itself shows, not pinned twice");
+
+  stdin.send("\u001b"); // Esc jumps back to the newest output
+  await waitFor(() => /line59 = 59/.test(show()) && !/↑\d+ lines/.test(show()), show);
+
+  stdin.send("\u001b[<64;10;5M"); // wheel up
+  await waitFor(() => /↑3 lines/.test(show()), show);
+  stdin.send("\u001b[<0;10;5M\u001b[<0;10;5m"); // a click is ignored
+  stdin.send("\u001b[<65;10;5M"); // wheel down
+  await waitFor(() => !/↑\d+ lines/.test(show()), show);
+  assert.doesNotMatch(show(), /\[</, "mouse reports never reach the prompt");
+  assert.match(stdout.raw, /\u001b\[\?1006h/, "mouse reporting is on while the TUI runs");
 
   stdin.send("\u0003");
   stdin.send("\u0003");

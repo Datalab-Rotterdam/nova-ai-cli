@@ -74,3 +74,19 @@ export function kittyKeyboardOverride(env: NodeJS.ProcessEnv = process.env): boo
 export function isLateTerminalReply(input: string): boolean {
   return /^\u001b?\[\?[\d;]*[uc]$/.test(input);
 }
+
+/** Mouse button reports in SGR form; Ink hands them to `useInput` without the ESC. */
+export const MOUSE_REPORTING_ON = "\u001b[?1000h\u001b[?1006h";
+export const MOUSE_REPORTING_OFF = "\u001b[?1000l\u001b[?1006l";
+const MOUSE_INPUT = /^\u001b?\[<(\d+);\d+;\d+[Mm]$/;
+
+export function isMouseInput(input: string): boolean {
+  return MOUSE_INPUT.test(input);
+}
+
+/** Rows to scroll for a wheel report (+ older, - newer); 0 for other mouse input. */
+export function wheelRows(input: string): number {
+  const button = Number(MOUSE_INPUT.exec(input)?.[1] ?? -1);
+  if (button < 0 || (button & 64) === 0) return 0;
+  return button & 1 ? -3 : 3;
+}

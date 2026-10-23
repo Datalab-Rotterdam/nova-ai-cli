@@ -2,6 +2,7 @@ import { Box, Text, useInput, usePaste } from "ink";
 import { useSyncExternalStore } from "react";
 import type { KeyPress, PromptEditor } from "../editor/prompt-editor.js";
 import { palette } from "../theme.js";
+import { isMouseInput } from "../terminal-keyboard.js";
 
 const segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 const MAX_SUGGESTIONS = 8;
@@ -21,7 +22,7 @@ export function PromptInput({
 }) {
   useSyncExternalStore(editor.subscribe, editor.getVersion);
   useInput((input, key) => {
-    if (onKey(input, key)) return;
+    if (isMouseInput(input) || onKey(input, key)) return;
     editor.handleKey(input, key);
   });
   usePaste((text) => editor.paste(text));

@@ -8,10 +8,13 @@ export function StatusLine({
   ui,
   model,
   mcp,
+  scroll = 0,
 }: {
   ui: UIState;
   model: string;
   mcp: McpCounts;
+  /** Transcript rows scrolled up from the newest. */
+  scroll?: number;
 }) {
   const separator = <Text color={palette.faint}> | </Text>;
   const usage = ui.contextUsage
@@ -52,6 +55,12 @@ export function StatusLine({
             {separator}
             {`mcp:${mcp.connected}/${mcp.configured}`}
             {mcp.failed ? <Text color={palette.danger}>{` !${mcp.failed}`}</Text> : null}
+          </>
+        ) : null}
+        {scroll ? (
+          <>
+            {separator}
+            <Text color={palette.warning}>{`↑${scroll} lines · PgDn/Esc`}</Text>
           </>
         ) : null}
         {mcp.skills ? (
