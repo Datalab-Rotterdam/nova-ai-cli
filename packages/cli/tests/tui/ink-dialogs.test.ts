@@ -9,9 +9,11 @@ import {
   QuestionState,
   ScrollState,
   SelectionState,
+  SliderState,
   ToolInspectorState,
 } from "../../src/tui/ink/dialogs/state.js";
 import {
+  SliderDialog,
   PermissionDialog,
   QuestionDialog,
   ScrollPanel,
@@ -231,4 +233,27 @@ test("permission dialog answers with a, s, w, d and Esc", async () => {
     [false, "once"],
     [false, "once"],
   ]);
+});
+
+test("the effort slider moves with the arrows, stops at the ends and applies on Enter", () => {
+  const applied: string[] = [];
+  let cancelled = 0;
+  const levels = ["low", "medium", "high"].map((value) => ({ value, label: value }));
+  const state = new SliderState(levels, 1, (item) => applied.push(item.value), () => cancelled++);
+  assert.equal(state.handleKey("", { rightArrow: true }), "changed");
+  assert.equal(state.handleKey("", { rightArrow: true }), "ignored");
+  assert.equal(state.handleKey("", { home: true }), "changed");
+  assert.equal(state.handleKey("", { leftArrow: true }), "ignored");
+  assert.equal(state.handleKey("", { return: true }), "closed");
+  assert.deepEqual(applied, ["low"]);
+  assert.equal(state.handleKey("", { escape: true }), "closed");
+  assert.equal(cancelled, 1);
+});
+
+test("the effort slider marks the chosen level", () => {
+  const levels = ["none", "medium"].map((value) => ({ value, label: value === "none" ? "Off" : "On" }));
+  const state = new SliderState(levels, 1, () => {}, () => {});
+  const { lastFrame, unmount } = render(createElement(SliderDialog, { title: "Thinking effort", state }));
+  assert.match(lastFrame() ?? "", /○ Off ── ● On/);
+  unmount();
 });

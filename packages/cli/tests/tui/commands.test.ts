@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { builtinCommands } from "../../src/tui/commands/builtins.js";
 import type { SlashCommandContext } from "../../src/tui/commands/types.js";
+import { allCommands, findCommand } from "../../src/tui/commands/index.js";
 
 test("/compact invokes context compaction and reports what was retained", async () => {
   let output = "";
@@ -119,4 +120,35 @@ test("/skills lists skills, and switches one on or off in this project or everyw
   await command.run(context, "off");
   assert.equal(switched.length, 3);
   assert.match(printed.at(-1)!, /^Usage: \/skills/);
+});
+
+test("/effort is offered only when the selected model has thinking levels", async () => {
+  let thinking = false;
+  const printed: string[] = [];
+  const set: string[] = [];
+  let sliders = 0;
+  const context = {
+    hasThinkingLevels: () => thinking,
+    openEffortPicker: () => {
+      sliders++;
+    },
+    setEffort: (level: string) => {
+      set.push(level);
+      return `Thinking effort: ${level}.`;
+    },
+    print: (text: string) => printed.push(text),
+  } as unknown as SlashCommandContext;
+  const names = () => allCommands(context).map((command) => command.name);
+
+  assert.ok(!names().includes("effort"));
+  await findCommand("help")!.run(context, "");
+  assert.doesNotMatch(printed.pop()!, /\/effort/);
+
+  thinking = true;
+  assert.ok(names().includes("effort"));
+  await findCommand("effort")!.run(context, "");
+  await findCommand("effort")!.run(context, " high ");
+  assert.equal(sliders, 1);
+  assert.deepEqual(set, ["high"]);
+  assert.equal(printed.pop(), "Thinking effort: high.");
 });

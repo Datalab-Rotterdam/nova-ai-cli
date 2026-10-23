@@ -4,7 +4,9 @@ import {
   chatModels,
   modelContextWindow,
   modelMaxOutputTokens,
+  modelEfforts,
   modelSupportsImageInput,
+  modelThinks,
 } from "../core/model-capabilities.js";
 
 export type JoinedModel = {
@@ -19,6 +21,12 @@ export type JoinedModel = {
   contextWindow: number | null;
   maxOutputTokens: number | null;
   imageInput: boolean;
+  /** Levels for `reasoning_effort`, lowest first; empty when it has none (see modelEfforts). */
+  efforts: string[];
+  /** Whether it thinks without being asked; null when the gateway does not say. */
+  reasoningDefault: "on" | "off" | null;
+  /** A thinking model: it has levels, or thinks at a fixed depth. */
+  thinking: boolean;
 };
 
 /** The chat models an agent session can use, with their provider. */
@@ -44,6 +52,9 @@ export async function listJoinedModels(
       contextWindow: modelContextWindow(m),
       maxOutputTokens: modelMaxOutputTokens(m),
       imageInput: modelSupportsImageInput(m),
+      efforts: modelEfforts(m),
+      reasoningDefault: m.reasoning_default ?? null,
+      thinking: modelThinks(m),
     };
   });
 }

@@ -98,3 +98,45 @@ describe("prompt lifecycle", () => {
     );
   });
 });
+
+describe("thinking effort", () => {
+  const thinkingModel = {
+    id: "fake-model",
+    object: "model",
+    created: 0,
+    owned_by: "x",
+    reasoning_efforts: ["low", "medium", "high"],
+  };
+
+  it("sends the chosen level, the model's default for an unknown one, and none for other models", async () => {
+    await withFakeNova(
+      () => sse([text("ok")]),
+      async (requests, home) => {
+        const { agent, sessionId } = await start(home);
+        await ask(agent, sessionId, "default");
+        await agent.setSessionConfigOption({ sessionId, configId: "thought_level", value: "high" });
+        await ask(agent, sessionId, "chosen");
+        await agent.prompt(
+          { sessionId, prompt: [{ type: "text", text: "per prompt" }], _meta: { "nova-ai-cli/effort": "bogus" } },
+          client,
+        );
+        assert.deepEqual(
+          requests.map((request) => request.body.reasoning_effort),
+          ["medium", "high", "medium"],
+        );
+        const options = await agent.setSessionConfigOption({ sessionId, configId: "thought_level", value: "low" });
+        const level = options.configOptions.find((option) => option.id === "thought_level");
+        assert.equal(level?.type === "select" ? level.currentValue : null, "low");
+      },
+      [thinkingModel],
+    );
+    await withFakeNova(
+      () => sse([text("ok")]),
+      async (requests, home) => {
+        const { agent, sessionId } = await start(home);
+        await ask(agent, sessionId, "plain model");
+        assert.equal("reasoning_effort" in requests[0]!.body, false);
+      },
+    );
+  });
+});

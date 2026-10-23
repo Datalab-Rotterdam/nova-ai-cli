@@ -113,6 +113,12 @@ export function getPromptMode(params: acp.PromptRequest): string | null {
   return typeof mode === "string" ? mode : null;
 }
 
+/** `reasoning_effort` for this prompt only; the agent drops a level the model doesn't accept. */
+export function getPromptEffort(params: acp.PromptRequest): string | null {
+  const effort = params._meta?.["nova-ai-cli/effort"];
+  return typeof effort === "string" && effort ? effort : null;
+}
+
 export function getPromptModel(params: acp.PromptRequest): string | null {
   const model = params._meta?.["nova-ai-cli/model"];
   return typeof model === "string" && model ? model : null;

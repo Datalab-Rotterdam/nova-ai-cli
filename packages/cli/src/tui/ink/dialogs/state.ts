@@ -62,6 +62,39 @@ export class SelectionState {
   }
 }
 
+/** A row of levels (lowest first) moved through with ←/→; Enter applies. */
+export class SliderState {
+  constructor(
+    readonly levels: SelectionItem[],
+    public selected: number,
+    private readonly onSelect: (item: SelectionItem) => void,
+    private readonly onCancel: () => void,
+  ) {}
+
+  handleKey(input: string, key: KeyPress): DialogResult {
+    if (isCancel(input, key)) {
+      this.onCancel();
+      return "closed";
+    }
+    if (key.return) {
+      const level = this.levels[this.selected];
+      if (!level) return "ignored";
+      this.onSelect(level);
+      return "closed";
+    }
+    const last = this.levels.length - 1;
+    let next = this.selected;
+    if (key.leftArrow || key.downArrow) next = Math.max(0, this.selected - 1);
+    else if (key.rightArrow || key.upArrow) next = Math.min(last, this.selected + 1);
+    else if (key.home) next = 0;
+    else if (key.end) next = last;
+    else return "ignored";
+    if (next === this.selected) return "ignored";
+    this.selected = next;
+    return "changed";
+  }
+}
+
 export class ScrollState {
   offset = 0;
 

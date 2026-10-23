@@ -13,6 +13,7 @@ import {
   type QuestionState,
   type ScrollState,
   type SelectionState,
+  type SliderState,
   type ToolInspectorState,
   windowStart,
 } from "./state.js";
@@ -46,6 +47,35 @@ export function Frame({ title, children, footer }: { title: string; children: Re
         </Text>
       ) : null}
     </Box>
+  );
+}
+
+/** `Off ──●── Low ──○── High`: the levels on one track, the chosen one marked. */
+export function SliderDialog({
+  title,
+  state,
+  isActive = true,
+}: { title: string; state: SliderState } & Keyed) {
+  useDialogInput((input, key) => state.handleKey(input, key), isActive);
+  const current = state.levels[state.selected];
+  return (
+    <Frame title={title} footer="←→ adjust · Enter apply · Esc cancel">
+      <Text wrap="truncate-end">
+        {state.levels.map((level, index) => {
+          const selected = index === state.selected;
+          return (
+            <Text key={level.value}>
+              {index > 0 ? <Text color={palette.faint}>{" ── "}</Text> : null}
+              <Text color={selected ? palette.primary : palette.faint}>{selected ? "● " : "○ "}</Text>
+              <Text bold={selected} color={selected ? undefined : palette.muted}>
+                {level.label}
+              </Text>
+            </Text>
+          );
+        })}
+      </Text>
+      {current?.description ? <Text color={palette.muted}>{current.description}</Text> : null}
+    </Frame>
   );
 }
 
