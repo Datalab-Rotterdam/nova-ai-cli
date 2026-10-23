@@ -12,7 +12,9 @@ export const builtinCommands: SlashCommand[] = [
     name: "help",
     description: "Show available commands",
     run(ctx) {
-      const lines = builtinCommands.map((c) => `/${c.name} — ${c.description}`);
+      const lines = builtinCommands
+        .filter((c) => c.available?.(ctx) ?? true)
+        .map((c) => `/${c.name} — ${c.description}`);
       ctx.print(lines.join("\n"));
     },
   },
@@ -151,6 +153,16 @@ export const builtinCommands: SlashCommand[] = [
         return;
       }
       ctx.openModelPicker();
+    },
+  },
+  {
+    name: "effort",
+    description: "Set how hard the model thinks (/effort <level>, or no args for a slider)",
+    available: (ctx) => ctx.hasThinkingLevels(),
+    async run(ctx, args) {
+      const level = args.trim();
+      if (level) ctx.print(await ctx.setEffort(level));
+      else await ctx.openEffortPicker();
     },
   },
   {

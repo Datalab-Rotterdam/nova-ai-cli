@@ -6,6 +6,7 @@ import { ToolSupportStore } from "../core/model/tool-support.js";
 import { readCredentials, type StoredCredentials } from "../core/credentials.js";
 import { resolveModelContextWindow } from "../core/context-compaction.js";
 import {
+  effortLabel,
   findModelMetadata,
   resolveDefaultModel,
   resolveEffort,
@@ -18,22 +19,6 @@ import {
 } from "./providers.js";
 
 export const THOUGHT_LEVEL_CONFIG_ID = "thought_level";
-
-const EFFORT_LABELS: Record<string, string> = {
-  none: "Off",
-  minimal: "Minimal",
-  low: "Low",
-  medium: "Medium",
-  high: "High",
-  xhigh: "Extra high",
-  max: "Max",
-};
-
-/** "Off" / "On" for a model that only switches thinking, else the level's name. */
-export function effortLabel(level: string, efforts: readonly string[]): string {
-  if (efforts.length === 2 && efforts[0] === "none" && efforts[1] === "medium" && level === "medium") return "On";
-  return EFFORT_LABELS[level] ?? level;
-}
 
 /** Model discovery, per-model capability caches and the providers/* surface. */
 export class ModelService {

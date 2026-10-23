@@ -100,7 +100,7 @@ row. To select text, hold Shift (Option in some macOS terminals) while dragging.
 | Ctrl+O / Ctrl+T / Ctrl+B | Verbose tool output / tool inspector / background jobs |
 | Alt+V | Paste a clipboard image |
 
-Slash commands: `/help`, `/model`, `/mode`, `/permission`, `/session`,
+Slash commands: `/help`, `/model`, `/effort` (thinking models), `/mode`, `/permission`, `/session`,
 `/resume`, `/clear`, `/compact`, `/rewind [n]`, `/queue`, `/steer`, `/usage`,
 `/tools`, `/mcp`, `/skills`, `/shell` and `/agent` (background jobs), `/trust`
 and `/exit`. Details:
@@ -206,6 +206,11 @@ remembers the choice), `--model` or `NOVA_MODEL` sets it for one run. Nova uses 
 to a text protocol for models that don't support it. When the context window
 fills up, older messages are summarized automatically (`/compact` does it by
 hand).
+
+Thinking models are marked ◆ in the model list. For those with levels the
+status line shows the current one (`· thinking medium`) and `/effort` opens a
+slider (←/→, Enter), or sets one directly (`/effort high`, `/effort off`). The
+choice lasts for this run; a model without that level uses its own default.
 
 | Environment | |
 |---|---|

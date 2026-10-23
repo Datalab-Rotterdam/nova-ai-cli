@@ -33,9 +33,11 @@ import {
   QuestionState,
   ScrollState,
   SelectionState,
+  SliderState,
   ToolInspectorState,
   type SelectionItem,
 } from "./dialogs/state.js";
+import { effortLabel } from "@datalabrotterdam/nova-ai-agent/core/model-capabilities.js";
 import type { KeyPress } from "./editor/prompt-editor.js";
 import { PromptEditor } from "./editor/prompt-editor.js";
 import { formatContextUsage, formatImageSize } from "./format.js";
@@ -48,6 +50,7 @@ import {
 
 export type Overlay =
   | { kind: "selection"; title: string; state: SelectionState }
+  | { kind: "slider"; title: string; state: SliderState }
   | { kind: "text"; title: string; content: string; state: ScrollState }
   | { kind: "tools"; state: ToolInspectorState };
 
@@ -65,6 +68,8 @@ export type ViewState = {
   overlay: Overlay | null;
   question: QuestionState | null;
   model: string;
+  /** The current model's thinking level ("High", "On"); null when it has none. */
+  effort: string | null;
   mcp: McpCounts;
   expandedTools: boolean;
   exiting: boolean;
@@ -298,8 +303,9 @@ export class TuiController {
         "Models",
         models.map((model) => ({
           value: model.id,
-          label: model.id,
-          description: model.name ?? undefined,
+          label: model.thinking ? `${model.id} ◆` : model.id,
+          description:
+            [model.name, model.thinking ? "thinking" : null].filter(Boolean).join(" · ") || undefined,
         })),
         "model-picker",
         (model) => this.setModel(model),
@@ -307,6 +313,64 @@ export class TuiController {
     } catch (error) {
       this.showText("Models", errorMessage(error, "Failed to list models."));
     }
+  };
+
+  private effortName(): string | null {
+    const level = this.runner.currentEffort();
+    const efforts = level ? this.runner.modelEffortLevels() : [];
+    return level ? effortLabel(level, efforts) : null;
+  }
+
+  /** The selected model's levels and current one, or why it has none. */
+  private async effortLevels(): Promise<{ efforts: string[]; current: string } | string> {
+    let info: Awaited<ReturnType<SessionRunner["modelDetails"]>>;
+    try {
+      info = await this.runner.modelDetails();
+    } catch (error) {
+      return errorMessage(error, "Could not load the model list.");
+    }
+    const model = this.runner.model || "This model";
+    if (!info?.efforts.length) {
+      return info?.thinking
+        ? `${model} thinks at a fixed depth; there is no level to choose.`
+        : `${model} is not a thinking model; /model lists the ones marked ◆.`;
+    }
+    return { efforts: info.efforts, current: this.runner.currentEffort() ?? info.efforts[0]! };
+  }
+
+  /** /effort: a slider over the selected model's levels. */
+  openEffort = async (): Promise<void> => {
+    const levels = await this.effortLevels();
+    if (typeof levels === "string") {
+      this.showText("Thinking effort", levels);
+      return;
+    }
+    const state = new SliderState(
+      levels.efforts.map((value) => ({ value, label: effortLabel(value, levels.efforts) })),
+      Math.max(0, levels.efforts.indexOf(levels.current)),
+      (item) => {
+        this.closeOverlay();
+        this.runner.setEffort(item.value);
+        this.store.setState({ statusLine: `Thinking effort: ${item.label}.` });
+      },
+      this.closeOverlay,
+    );
+    this.showOverlay({ kind: "slider", title: `Thinking effort · ${this.runner.model}`, state });
+  };
+
+  /** /effort <level>: by id ("high") or name ("Extra high", "off"). */
+  setEffort = async (level: string): Promise<string> => {
+    const levels = await this.effortLevels();
+    if (typeof levels === "string") return levels;
+    const wanted = level.trim().toLowerCase();
+    const value = levels.efforts.find(
+      (candidate) => candidate === wanted || effortLabel(candidate, levels.efforts).toLowerCase() === wanted,
+    );
+    const names = levels.efforts.map((candidate) => effortLabel(candidate, levels.efforts).toLowerCase());
+    if (!value) return `${this.runner.model} has these levels: ${names.join(", ")}.`;
+    this.runner.setEffort(value);
+    this.refresh();
+    return `Thinking effort: ${effortLabel(value, levels.efforts)}.`;
   };
 
   openPermissionModes = (): void => {
@@ -536,6 +600,9 @@ export class TuiController {
     },
     openSessionSwitcher: this.openSessions,
     openModelPicker: () => void this.openModels(),
+    hasThinkingLevels: () => this.runner.hasThinkingLevels(),
+    openEffortPicker: () => this.openEffort(),
+    setEffort: (level) => this.setEffort(level),
     getModel: () => this.runner.model,
     setModel: (model) => this.setModel(model),
     getInteractionMode: () => this.runner.interactionMode,
@@ -657,10 +724,11 @@ export class TuiController {
     const fdPath = resolveFdPath();
     editor.setAutocompleteProvider(
       new WorkspaceAutocompleteProvider(
-        allCommands().map((command) => ({
-          name: command.name,
-          description: command.description,
-        })),
+        () =>
+          allCommands(this.commandContext).map((command) => ({
+            name: command.name,
+            description: command.description,
+          })),
         runner.cwd,
         // fd (when available) walks the tree itself and respects .gitignore;
         // the pre-scanned list is only its fallback.
@@ -702,6 +770,7 @@ export class TuiController {
       overlay: this.overlay,
       question: this.questionState(ui.pendingQuestion),
       model: this.runner.model,
+      effort: this.effortName(),
       mcp: mcpCounts(this.runner),
       expandedTools: this.expandedTools,
       exiting: this.exiting,

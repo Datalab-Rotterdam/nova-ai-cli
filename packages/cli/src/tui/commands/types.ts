@@ -23,6 +23,11 @@ export type SlashCommandContext = {
   resumeSession(sessionId?: string): boolean;
   openSessionSwitcher(): void;
   openModelPicker(): void;
+  /** The selected model has thinking levels to choose from. */
+  hasThinkingLevels(): boolean;
+  openEffortPicker(): void | Promise<void>;
+  /** Sets the thinking level by id or name; returns a message. */
+  setEffort(level: string): string | Promise<string>;
   getModel(): string;
   setModel(model: string): void;
   getInteractionMode(): InteractionMode;
@@ -46,7 +51,7 @@ export type SlashCommandContext = {
     removedCheckpoints: SessionCheckpoint[];
     remainingCheckpoints: SessionCheckpoint[];
   }>;
-  listModels(): Promise<Array<{ id: string; name?: string | null }>>;
+  listModels(): Promise<Array<{ id: string; name?: string | null; thinking?: boolean }>>;
   startBackgroundShell(command: string): Promise<BackgroundJobSummary>;
   startBackgroundAgent(prompt: string): Promise<BackgroundJobSummary>;
   listBackgroundJobs(kind?: BackgroundJobKind): Promise<BackgroundJobSummary[]>;
@@ -59,4 +64,6 @@ export type SlashCommand = {
   name: string;
   description: string;
   run(ctx: SlashCommandContext, args: string): void | Promise<void>;
+  /** Hidden from /help and completion when false; typing it still runs it. */
+  available?(ctx: SlashCommandContext): boolean;
 };

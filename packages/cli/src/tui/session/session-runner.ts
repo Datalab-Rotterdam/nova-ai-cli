@@ -23,6 +23,7 @@ import type { SessionCheckpoint } from "@datalabrotterdam/nova-ai-agent/core/ses
 import { chatContentToText } from "@datalabrotterdam/nova-ai-agent/core/chat-content.js";
 import type { ContextCompactionResult } from "@datalabrotterdam/nova-ai-agent/core/context-compaction.js";
 import type { ContextUsage } from "@datalabrotterdam/nova-ai-agent/core/context-usage.js";
+import { resolveEffort } from "@datalabrotterdam/nova-ai-agent/core/model-capabilities.js";
 import { findWorkspaceFileMentions } from "../files/file-mentions.js";
 import type { PromptImageAttachment } from "../files/prompt-images.js";
 import {
@@ -109,6 +110,8 @@ export function restoreSessionMessages(messages: ChatMessage[]): UIMessage[] {
   });
 }
 
+export type ModelInfo = Awaited<ReturnType<NovaAgentClient["modelsList"]>>["models"][number];
+
 export type McpSessionStatus = {
   /** As the agent reports them: env values never leave it, only their names. */
   configured: Array<{
@@ -169,7 +172,10 @@ export class SessionRunner {
     QueuedPromptAttachments
   >();
   private editingQueuedMessageId: string | null = null;
-  private readonly imageSupportByModel = new Map<string, boolean>();
+  /** From the agent's model list: image input, thinking levels. */
+  private readonly modelInfo = new Map<string, ModelInfo>();
+  /** The thinking level the user chose; null: each model's default. */
+  effort: string | null = null;
   private contextUsageRequest = 0;
   private modelCheck: Promise<void> | null = null;
 
@@ -251,6 +257,7 @@ export class SessionRunner {
           .setSessionMode({ sessionId: this.sessionId, modeId: this.interactionMode })
           .catch(() => {});
         this.applyPermissionMode(this.sessionId);
+        this.applyEffort(this.sessionId);
         void this.updateContextUsage();
         void this.refreshContextUsage().catch(() => {});
       });
@@ -514,11 +521,16 @@ export class SessionRunner {
   }
 
   /** Chat models only: embedding, speech and transcription models can't run a session. */
-  async listModels(): Promise<Array<{ id: string; name?: string | null }>> {
+  async listModels(): Promise<Array<{ id: string; name?: string | null; thinking: boolean }>> {
     await this.initialized;
     const { models } = await this.nova.modelsList();
-    for (const model of models) this.imageSupportByModel.set(model.id, model.imageInput);
-    return models.map((model) => ({ id: model.id, name: model.name }));
+    for (const model of models) this.modelInfo.set(model.id, model);
+    return models.map((model) => ({ id: model.id, name: model.name, thinking: model.thinking }));
+  }
+
+  /** Sync, from the loaded model list: false until it has loaded. */
+  hasThinkingLevels(model = this.model): boolean {
+    return (this.modelInfo.get(model)?.efforts.length ?? 0) > 0;
   }
 
   /**
@@ -534,7 +546,7 @@ export class SessionRunner {
         const { models, defaultModel } = await this.nova.modelsList(
           this.model ? { preferred: this.model } : {},
         );
-        for (const model of models) this.imageSupportByModel.set(model.id, model.imageInput);
+        for (const model of models) this.modelInfo.set(model.id, model);
         if (!defaultModel || defaultModel === this.model) return;
         const previous = this.model;
         this.setModel(defaultModel);
@@ -551,9 +563,50 @@ export class SessionRunner {
   }
 
   async supportsImageInput(model = this.model): Promise<boolean> {
-    if (!this.imageSupportByModel.has(model)) await this.listModels();
     // A model the list doesn't have: the agent still checks when the prompt is sent.
-    return this.imageSupportByModel.get(model) ?? false;
+    return (await this.modelDetails(model))?.imageInput ?? false;
+  }
+
+  /** What the agent's model list says about `model`; undefined when it isn't listed. */
+  async modelDetails(model = this.model): Promise<ModelInfo | undefined> {
+    if (!this.modelInfo.has(model)) await this.listModels();
+    return this.modelInfo.get(model);
+  }
+
+  /**
+   * The level the current model thinks at, as the agent picks it (the
+   * chosen one when the model has it); null for a model without levels
+   * or before the model list has loaded.
+   */
+  currentEffort(): string | null {
+    const info = this.modelInfo.get(this.model);
+    if (!info?.efforts.length) return null;
+    return (
+      resolveEffort(
+        { reasoning_efforts: info.efforts, reasoning_default: info.reasoningDefault },
+        this.effort,
+      ) ?? null
+    );
+  }
+
+  /** The current model's levels from the loaded list; empty when it has none. */
+  modelEffortLevels(): string[] {
+    return this.modelInfo.get(this.model)?.efforts ?? [];
+  }
+
+  /** Kept across models and sessions of this run; a model without the level uses its default. */
+  setEffort(level: string): void {
+    this.effort = level;
+    if (this.agentSessionLoaded) this.applyEffort(this.sessionId);
+  }
+
+  private applyEffort(sessionId: string): void {
+    if (!this.effort) return;
+    void this.nova
+      .setSessionConfigOption({ sessionId, configId: "thought_level", value: this.effort })
+      .catch(() => {
+        this.acpClient.appendError("Could not change the thinking level.");
+      });
   }
 
   async compactContext(): Promise<CompactionSummary> {
@@ -911,6 +964,7 @@ export class SessionRunner {
       .setSessionMode({ sessionId, modeId: this.interactionMode })
       .catch(() => {});
     this.applyPermissionMode(sessionId);
+    this.applyEffort(sessionId);
     void this.updateContextUsage();
     void this.refreshContextUsage().catch(() => {});
     if (this.mcpStatus.failures.length > 0) {

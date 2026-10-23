@@ -132,6 +132,22 @@ export function resolveEffort(
   return efforts.includes("medium") ? "medium" : efforts[Math.floor((efforts.length - 1) / 2)];
 }
 
+const EFFORT_LABELS: Record<string, string> = {
+  none: "Off",
+  minimal: "Minimal",
+  low: "Low",
+  medium: "Medium",
+  high: "High",
+  xhigh: "Extra high",
+  max: "Max",
+};
+
+/** "Off" / "On" for a model that only switches thinking, else the level's name. */
+export function effortLabel(level: string, efforts: readonly string[]): string {
+  if (efforts.length === 2 && efforts[0] === "none" && efforts[1] === "medium" && level === "medium") return "On";
+  return EFFORT_LABELS[level] ?? level;
+}
+
 /**
  * The model's context window in tokens, or null when the gateway does not
  * say. Nova's gateway sends `contextWindow`; OpenAI-compatible servers use

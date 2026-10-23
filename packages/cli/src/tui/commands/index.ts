@@ -1,12 +1,13 @@
 import { builtinCommands } from "./builtins.js";
-import type { SlashCommand } from "./types.js";
+import type { SlashCommand, SlashCommandContext } from "./types.js";
 
 export type { SlashCommand, SlashCommandContext } from "./types.js";
 
 const COMMANDS: SlashCommand[] = [...builtinCommands];
 
-export function allCommands(): SlashCommand[] {
-  return COMMANDS;
+/** The commands to offer; with a context, only those available right now. */
+export function allCommands(ctx?: SlashCommandContext): SlashCommand[] {
+  return ctx ? COMMANDS.filter((c) => c.available?.(ctx) ?? true) : COMMANDS;
 }
 
 export function findCommand(name: string): SlashCommand | undefined {

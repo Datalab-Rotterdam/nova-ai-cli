@@ -124,7 +124,8 @@ mode.
 | `configId` | Values |
 |---|---|
 | `permission_mode` | `default` (ask for every change), `acceptEdits` (file edits are accepted), `bypassPermissions` (everything is accepted; deny rules still apply). Set per session, never stored by the agent. |
-| `model` | The chat models of the account (embedding and speech models are left out). Present when the model list can be fetched; `config_option_update` follows when it loads late. |
+| `model` | The chat models of the account (embedding and speech models are left out); thinking models have the description "Thinking model". Present when the model list can be fetched; `config_option_update` follows when it loads late. |
+| `thought_level` (category `thought_level`) | The current model's `reasoning_effort` levels, lowest first (`none` is "Off"; a model that reasons without levels gets Off/On). Only present when the current model has levels. The choice is kept across model switches; a model that lacks it uses its default: `none` when it thinks only on request, else `medium` or its middle level. |
 
 ### Session updates
 
@@ -271,10 +272,11 @@ also written under `~/.nova-ai/background-jobs/`.
 |---|---|---|
 | `session/new` / `load` / `resume` / `fork` params | `nova-ai-cli/settings` | Session settings (see Sessions) |
 | `session/prompt` params | `nova-ai-cli/model` | Model for this prompt only |
+| `session/prompt` params | `nova-ai-cli/effort` | Thinking level for this prompt only (over `thought_level`) |
 | `session/new` / `load` / `resume` / `fork` params | `nova-ai-cli/workspaceMcp` | `false`: don't start the workspace's own MCP servers |
 | `session/new` / `load` / `resume` / `fork` result | `nova-ai-cli/mcp`, `nova-ai-cli/skills` | MCP servers (configured: `name`, `transport`, `url` or `command`, `args` and `env` names, never values; connected; failures, including configuration errors) and discovered skills |
 | tool calls | `nova-ai-cli/tool`, `nova-ai-cli/permission`, `nova-ai-cli/replayed` | Tool name, policy decision, replayed from history |
-| `providers/list` result | `nova-ai-cli/models` | Chat models: `id`, `name` (`null` when the gateway has none), `label`, `providerId`, `providerName`, `enabled`, `contextWindow` and `maxOutputTokens` (tokens, `null` when the gateway does not say), `imageInput` |
+| `providers/list` result | `nova-ai-cli/models` | Chat models: `id`, `name` (`null` when the gateway has none), `label`, `providerId`, `providerName`, `enabled`, `contextWindow` and `maxOutputTokens` (tokens, `null` when the gateway does not say), `imageInput`, `efforts` (levels, lowest first; empty without), `reasoningDefault` (`"on"`, `"off"` or `null`), `thinking` (has levels or thinks at a fixed depth) |
 
 ## Unstable SDK features
 
