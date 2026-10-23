@@ -174,9 +174,20 @@ export const builtinCommands: SlashCommand[] = [
   },
   {
     name: "mcp",
-    description: "Inspect configured MCP servers",
-    run(ctx) {
-      return ctx.openMcpInspector();
+    description: "Inspect MCP servers, or sign in to one: /mcp login|logout <server>",
+    async run(ctx, args) {
+      const [action, ...rest] = args.trim().split(/\s+/).filter(Boolean);
+      const name = rest.join(" ");
+      if (!action) {
+        await ctx.openMcpInspector();
+        return;
+      }
+      if ((action !== "login" && action !== "logout") || !name) {
+        ctx.print("Usage: /mcp, or /mcp login|logout <server>");
+        return;
+      }
+      if (action === "login") ctx.print(`Signing in to "${name}"… (waits up to 5 minutes for the browser)`);
+      ctx.print(await ctx.mcpSignIn(name, action === "login"));
     },
   },
   {

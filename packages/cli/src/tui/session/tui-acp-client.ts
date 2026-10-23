@@ -1,5 +1,6 @@
 import type { ChildProcess } from "node:child_process";
 import { NOVA_NOTIFICATIONS } from "@datalabrotterdam/nova-ai-agent/acp/extensions.js";
+import { openBrowser } from "@datalabrotterdam/nova-ai-agent/acp/auth-server.js";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import type * as acp from "@agentclientprotocol/sdk";
@@ -151,6 +152,30 @@ export class TuiAcpClient {
 
   appendUserMessage(text: string): void {
     this.appendMessage({ id: uid(), role: "user", text });
+  }
+
+  /** An MCP server's sign-in page: opened in the browser, and printed in case that fails. */
+  mcpAuthUrl(params: unknown): void {
+    const { serverName, url } = (params ?? {}) as { serverName?: unknown; url?: unknown };
+    if (typeof serverName !== "string" || typeof url !== "string") return;
+    let page: URL;
+    try {
+      page = new URL(url);
+    } catch {
+      return;
+    }
+    // The address comes from the MCP server's metadata: never hand the OS another scheme.
+    if (page.protocol !== "https:" && page.protocol !== "http:") {
+      this.appendError(`MCP server "${serverName}" sent a sign-in address that is not a web page; not opened.`);
+      return;
+    }
+    openBrowser(page.toString());
+    this.appendMessage({
+      id: uid(),
+      role: "assistant",
+      streaming: false,
+      text: `Sign in to MCP server "${serverName}" in your browser. If it did not open, visit:\n${page}`,
+    });
   }
 
   appendError(text: string): void {
@@ -544,6 +569,8 @@ export class TuiAcpClient {
         return this.backgroundUpdate(params);
       case NOVA_NOTIFICATIONS.queueChanged:
         return this.queueChanged(params);
+      case NOVA_NOTIFICATIONS.mcpAuthUrl:
+        return this.mcpAuthUrl(params);
       default:
         return;
     }

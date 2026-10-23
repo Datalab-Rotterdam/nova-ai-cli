@@ -196,6 +196,12 @@ VS Code extension: settings, per-project trust, sessions and memory.
   switches one off in this project (`--global`: everywhere). Only names and
   short descriptions go into the prompt; Nova loads a skill when it fits.
 - **MCP servers**: `.mcp.json` or `mcpServers` in `.nova-ai/settings.json`.
+  HTTP servers that use OAuth show "needs sign-in" in `/mcp`; `/mcp login
+  <server>` opens the sign-in page in your browser (tokens are kept in
+  `~/.nova-ai/mcp-auth`, refreshed automatically), `/mcp logout <server>`
+  forgets them. A server that wants a client registered by hand takes
+  `"oauth": { "clientId", "clientSecret", "scope", "callbackPort" }` in
+  `.mcp.json`.
 
 The complete layout and rule syntax: [docs/NOVA_HOME.md](https://github.com/Datalab-Rotterdam/nova-ai-cli/blob/main/docs/NOVA_HOME.md).
 

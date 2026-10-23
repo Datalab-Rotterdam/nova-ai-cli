@@ -1,3 +1,4 @@
+import type * as acp from "@agentclientprotocol/sdk";
 import type { SessionSettings } from "./session-settings.js";
 import type { ChatMessage } from "@datalabrotterdam/nova-sdk";
 import type { InteractionMode } from "../interaction-modes.js";
@@ -28,6 +29,8 @@ export type Session = {
    */
   pendingBackgroundHandoffs: ChatMessage[];
   title: string | null;
+  /** The servers the session was set up with (workspace and client), for reconnecting one. */
+  mcpServers: acp.McpServer[];
   mcpConnections: McpConnection[];
   mcpTools: ToolDefinition[];
   mcpFailures: McpConnectionFailure[];
