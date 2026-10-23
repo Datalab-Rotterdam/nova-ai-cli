@@ -210,7 +210,8 @@ hand).
 Thinking models are marked ◆ in the model list. For those with levels the
 status line shows the current one (`· thinking medium`) and `/effort` opens a
 slider (←/→, Enter), or sets one directly (`/effort high`, `/effort off`). The
-choice lasts for this run; a model without that level uses its own default.
+choice is remembered like the model; a model without that level uses its own
+default.
 
 | Environment | |
 |---|---|

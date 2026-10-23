@@ -13,7 +13,10 @@ import type {
 } from "@datalabrotterdam/nova-ai-agent/core/background.js";
 import type { StoredCredentials } from "@datalabrotterdam/nova-ai-agent/core/credentials.js";
 import type { PromptQueueEntryView } from "@datalabrotterdam/nova-ai-agent/core/prompt-queue.js";
-import { saveDefaultModel } from "@datalabrotterdam/nova-ai-agent/core/credentials.js";
+import {
+  saveDefaultEffort,
+  saveDefaultModel,
+} from "@datalabrotterdam/nova-ai-agent/core/credentials.js";
 import {
   savePermissionMode,
   type PermissionMode as AgentPermissionMode,
@@ -174,8 +177,8 @@ export class SessionRunner {
   private editingQueuedMessageId: string | null = null;
   /** From the agent's model list: image input, thinking levels. */
   private readonly modelInfo = new Map<string, ModelInfo>();
-  /** The thinking level the user chose; null: each model's default. */
-  effort: string | null = null;
+  /** The thinking level the user chose (saved); null: each model's default. */
+  effort: string | null;
   private contextUsageRequest = 0;
   private modelCheck: Promise<void> | null = null;
 
@@ -201,6 +204,7 @@ export class SessionRunner {
     });
     // Empty until ensureUsableModel takes the account's default from the agent.
     this.model = credentials.defaultModel ?? process.env.NOVA_MODEL ?? "";
+    this.effort = credentials.defaultEffort ?? null;
     this.sessionId = crypto.randomUUID();
     this.sessionReady = Promise.resolve();
   }
@@ -594,9 +598,10 @@ export class SessionRunner {
     return this.modelInfo.get(this.model)?.efforts ?? [];
   }
 
-  /** Kept across models and sessions of this run; a model without the level uses its default. */
+  /** Saved and kept across models and sessions; a model without the level uses its default. */
   setEffort(level: string): void {
     this.effort = level;
+    saveDefaultEffort(level);
     if (this.agentSessionLoaded) this.applyEffort(this.sessionId);
   }
 
