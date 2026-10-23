@@ -58,7 +58,7 @@ needs Nova without credentials fails with `authRequired`.
 
 | Method | Notes |
 |---|---|
-| `session/new` | Starts MCP servers (in parallel, 10 s timeout each; failures are reported, not fatal). Returns `modes` and `configOptions`. |
+| `session/new` | Starts MCP servers (in parallel, 10 s timeout each; failures are reported, not fatal): the client's plus, in a trusted workspace, those it declares in `.mcp.json` and `.nova-ai/settings.json` (the client's win by name; `_meta["nova-ai-cli/workspaceMcp"]: false` leaves the workspace's out). Returns `modes` and `configOptions`. |
 | `session/load` | Replays the stored conversation: user and agent text, and tool calls with their final status, diff and (truncated) output. |
 | `session/resume` | Like load, without the replay. |
 | `session/fork` | Copies a stored session under a new id. |
@@ -220,12 +220,31 @@ Notification `_nova/queue/changed`: `{ sessionId, entries }`.
 | `_nova/session/checkpoints` | | `{ checkpoints: [{ checkpointId, createdAt, userText, messageCount }] }` |
 | `_nova/session/rewind` | `turns?` (default 1) | `{ removedCheckpoints, remainingCheckpoints, messageCount }`; clears the queue |
 | `_nova/session/compact` | `model?` | `{ compacted, removedMessages, keptMessages }` |
-| `_nova/session/context_usage` | `contextWindow?`, `mode?` | Estimated tokens per category (system, conversation, agents, thinking, tools, skills, memory) and the total |
+| `_nova/session/context_usage` | `contextWindow?`, `model?`, `mode?` | Estimated tokens per category (system, conversation, agents, thinking, tools, skills, memory) and the total; without `contextWindow` the agent looks up the window of `model` (else the session's or the default model) |
 | `_nova/session/set_settings` | `settings` (see Session settings) | `{ settings }`: the settings now in force, with `null` for "the agent's default". Merged over the current ones; applies from the next turn |
 
 Notification `_nova/session/rewound`: `{ sessionId, removedCheckpoints,
 remainingCheckpoints, messageCount }`. Rewind and compaction are refused while
 a prompt runs. Session files are append-only; a rewind appends a reset record.
+
+### Models
+
+| Method | Params | Result |
+|---|---|---|
+| `_nova/models/list` | `preferred?` (no session id needed) | `{ models, defaultModel }`: the chat models (fields as in `nova-ai-cli/models` below) and the model to use given `preferred` (else the saved default): kept unless the gateway says it cannot chat or is disabled, `null` when there is none |
+
+### Skills
+
+| Method | Params | Result |
+|---|---|---|
+| `_nova/skills/list` | `cwd` (no session id needed) | `{ skills: [{ name, description, source, path, enabled }] }`: every skill discovered for the workspace, switched-off ones included |
+| `_nova/skills/set_enabled` | `cwd`, `name`, `enabled`, `scope?` (`"project"`, the default, or `"global"`) | `{ skills }` after the change; sessions use it from their next turn. An unknown name is `invalidParams` |
+
+### Workspace trust
+
+| Method | Params | Result |
+|---|---|---|
+| `_nova/workspace/trust` | `cwd`, `trusted?` (no session id needed) | `{ trusted, needsTrust }`. Trust lets the workspace's `.nova-ai` allow rules apply and its MCP servers start (from the next session); remembered in `~/.nova-ai` (see NOVA_HOME.md). Without `trusted` it only reports; `needsTrust` is true when the workspace is untrusted and declares MCP servers or allow rules |
 
 ### Background jobs
 
@@ -252,9 +271,10 @@ also written under `~/.nova-ai/background-jobs/`.
 |---|---|---|
 | `session/new` / `load` / `resume` / `fork` params | `nova-ai-cli/settings` | Session settings (see Sessions) |
 | `session/prompt` params | `nova-ai-cli/model` | Model for this prompt only |
-| `session/new` / `load` result | `nova-ai-cli/mcp`, `nova-ai-cli/skills` | MCP servers (configured, connected, failures) and discovered skills |
+| `session/new` / `load` / `resume` / `fork` params | `nova-ai-cli/workspaceMcp` | `false`: don't start the workspace's own MCP servers |
+| `session/new` / `load` / `resume` / `fork` result | `nova-ai-cli/mcp`, `nova-ai-cli/skills` | MCP servers (configured: `name`, `transport`, `url` or `command`, `args` and `env` names, never values; connected; failures, including configuration errors) and discovered skills |
 | tool calls | `nova-ai-cli/tool`, `nova-ai-cli/permission`, `nova-ai-cli/replayed` | Tool name, policy decision, replayed from history |
-| `providers/list` result | `nova-ai-cli/models` | Chat models: `id`, `label`, `providerId`, `providerName`, `enabled`, `contextWindow` and `maxOutputTokens` (tokens, `null` when the gateway does not say) |
+| `providers/list` result | `nova-ai-cli/models` | Chat models: `id`, `name` (`null` when the gateway has none), `label`, `providerId`, `providerName`, `enabled`, `contextWindow` and `maxOutputTokens` (tokens, `null` when the gateway does not say), `imageInput` |
 
 ## Unstable SDK features
 

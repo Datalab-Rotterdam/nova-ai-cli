@@ -1,9 +1,16 @@
 import type * as acp from "@agentclientprotocol/sdk";
 import type { NovaAI, ProviderResponse } from "@datalabrotterdam/nova-sdk";
-import { chatModels, modelContextWindow, modelMaxOutputTokens } from "../core/model-capabilities.js";
+import {
+  chatModels,
+  modelContextWindow,
+  modelMaxOutputTokens,
+  modelSupportsImageInput,
+} from "../core/model-capabilities.js";
 
 export type JoinedModel = {
   id: string;
+  /** The gateway's display name, null when it has none. */
+  name: string | null;
   label: string;
   providerId: string;
   providerName: string;
@@ -11,6 +18,7 @@ export type JoinedModel = {
   /** Tokens of input the model accepts; null when the gateway does not say. */
   contextWindow: number | null;
   maxOutputTokens: number | null;
+  imageInput: boolean;
 };
 
 /** The chat models an agent session can use, with their provider. */
@@ -28,12 +36,14 @@ export async function listJoinedModels(
     const providerName = provider?.name ?? m.owned_by;
     return {
       id: m.id,
+      name: m.name ?? null,
       label: `${m.name ?? m.id} (${m.id}) [${providerName}]`,
       providerId: m.owned_by,
       providerName,
       enabled: !disabledProviderIds.has(m.owned_by),
       contextWindow: modelContextWindow(m),
       maxOutputTokens: modelMaxOutputTokens(m),
+      imageInput: modelSupportsImageInput(m),
     };
   });
 }

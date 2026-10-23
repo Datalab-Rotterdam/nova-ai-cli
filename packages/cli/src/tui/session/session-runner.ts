@@ -1,11 +1,6 @@
 import { join } from "node:path";
 import * as acp from "@agentclientprotocol/sdk";
-import {
-  NovaAI,
-  NovaAIError,
-  type ChatMessage,
-} from "@datalabrotterdam/nova-sdk";
-import { createNovaClient } from "@datalabrotterdam/nova-ai-agent/core/nova-client.js";
+import type { ChatMessage } from "@datalabrotterdam/nova-sdk";
 import { NovaAgent } from "@datalabrotterdam/nova-ai-agent/acp/agent.js";
 import type { CompactionSummary } from "../commands/types.js";
 import { startInProcessAgent, type InProcessAgent } from "@datalabrotterdam/nova-ai-agent/client/in-process.js";
@@ -25,25 +20,15 @@ import {
 } from "@datalabrotterdam/nova-ai-agent/core/policy/settings.js";
 import { loadStoredSession } from "@datalabrotterdam/nova-ai-agent/core/sessions.js";
 import type { SessionCheckpoint } from "@datalabrotterdam/nova-ai-agent/core/sessions.js";
-import { discoverSkills } from "@datalabrotterdam/nova-ai-agent/core/skills.js";
 import { chatContentToText } from "@datalabrotterdam/nova-ai-agent/core/chat-content.js";
-import {
-  resolveModelContextWindow,
-  type ContextCompactionResult,
-} from "@datalabrotterdam/nova-ai-agent/core/context-compaction.js";
+import type { ContextCompactionResult } from "@datalabrotterdam/nova-ai-agent/core/context-compaction.js";
 import type { ContextUsage } from "@datalabrotterdam/nova-ai-agent/core/context-usage.js";
-import {
-  chatModels,
-  resolveDefaultModel,
-  resolveModelSupportsImageInput,
-} from "@datalabrotterdam/nova-ai-agent/core/model-capabilities.js";
 import { findWorkspaceFileMentions } from "../files/file-mentions.js";
 import type { PromptImageAttachment } from "../files/prompt-images.js";
 import {
   expandPromptPastes,
   type PromptPasteAttachment,
 } from "../files/prompt-pastes.js";
-import { readWorkspaceMcpConfiguration } from "../settings/workspace-mcp.js";
 import type { Store } from "../state/store.js";
 import type {
   InteractionMode,
@@ -125,7 +110,15 @@ export function restoreSessionMessages(messages: ChatMessage[]): UIMessage[] {
 }
 
 export type McpSessionStatus = {
-  configured: Array<{ name: string; transport: string }>;
+  /** As the agent reports them: env values never leave it, only their names. */
+  configured: Array<{
+    name: string;
+    transport: string;
+    url?: string;
+    command?: string;
+    args?: string[];
+    env?: string[];
+  }>;
   connected: string[];
   failures: Array<{ serverName: string; message: string }>;
 };
@@ -160,15 +153,12 @@ export class SessionRunner {
   private readonly connection: InProcessAgent;
   private readonly nova: NovaAgentClient;
   private readonly initialized: Promise<unknown>;
-  private readonly novaClient: NovaAI;
-  private mcpServers: acp.McpServer[] = [];
-  private mcpConfigurationFailures: McpSessionStatus["failures"] = [];
   private mcpStatus: McpSessionStatus = {
     configured: [],
     connected: [],
     failures: [],
   };
-  private skills: SkillSessionStatus[];
+  private skills: SkillSessionStatus[] = [];
   private sessionReady: Promise<void>;
   private agentSessionLoaded = false;
   private promptActive = false;
@@ -180,9 +170,6 @@ export class SessionRunner {
   >();
   private editingQueuedMessageId: string | null = null;
   private readonly imageSupportByModel = new Map<string, boolean>();
-  private contextWindow: number | null = null;
-  private contextWindowModel: string | null = null;
-  private contextWindowRequest = 0;
   private contextUsageRequest = 0;
   private modelCheck: Promise<void> | null = null;
 
@@ -191,15 +178,6 @@ export class SessionRunner {
     private readonly credentials: StoredCredentials,
     cwd: string,
   ) {
-    this.loadMcpConfiguration(cwd);
-    this.skills = discoverSkills(cwd).map(
-      ({ name, description, source, path }) => ({
-        name,
-        description,
-        source,
-        path,
-      }),
-    );
     this.cwd = cwd;
     this.acpClient = new TuiAcpClient(
       store,
@@ -215,13 +193,8 @@ export class SessionRunner {
       clientCapabilities: this.acpClient.capabilities,
       clientInfo: { name: "nova-ai-cli-tui", version: "1" },
     });
-    this.novaClient = createNovaClient(credentials.apiKey);
-    const model = credentials.defaultModel ?? process.env.NOVA_MODEL;
-    if (!model)
-      throw new Error(
-        "No Nova model configured. Re-run authentication or set NOVA_MODEL.",
-      );
-    this.model = model;
+    // Empty until ensureUsableModel takes the account's default from the agent.
+    this.model = credentials.defaultModel ?? process.env.NOVA_MODEL ?? "";
     this.sessionId = crypto.randomUUID();
     this.sessionReady = Promise.resolve();
   }
@@ -237,15 +210,7 @@ export class SessionRunner {
     this.sessionId = stored.sessionId;
     this.cwd = stored.cwd;
     this.title = stored.title;
-    this.loadMcpConfiguration(stored.cwd);
-    this.skills = discoverSkills(stored.cwd).map(
-      ({ name, description, source, path }) => ({
-        name,
-        description,
-        source,
-        path,
-      }),
-    );
+    this.skills = [];
 
     const messages = restoreSessionMessages(stored.messages);
 
@@ -271,7 +236,7 @@ export class SessionRunner {
           return await this.nova.loadSession({
             sessionId: stored.sessionId,
             cwd: stored.cwd,
-            mcpServers: this.mcpServers,
+            mcpServers: [],
           });
         } finally {
           this.acpClient.muteSessionUpdates = false;
@@ -425,10 +390,6 @@ export class SessionRunner {
     return true;
   }
 
-  configuredMcpServers(): acp.McpServer[] {
-    return [...this.mcpServers];
-  }
-
   mcpSessionStatus(): McpSessionStatus {
     return {
       configured: this.mcpStatus.configured.map((server) => ({ ...server })),
@@ -441,28 +402,35 @@ export class SessionRunner {
     return this.skills.map((skill) => ({ ...skill }));
   }
 
+  async trustWorkspace(): Promise<void> {
+    await this.initialized;
+    await this.nova.workspaceTrust({ cwd: this.cwd, trusted: true });
+  }
+
+  /** Every skill of the workspace with its on/off state, from the agent. */
+  async listSkills() {
+    await this.initialized;
+    return (await this.nova.skillsList({ cwd: this.cwd })).skills;
+  }
+
+  async setSkillEnabled(name: string, enabled: boolean, global: boolean) {
+    await this.initialized;
+    return (
+      await this.nova.skillsSetEnabled({
+        cwd: this.cwd,
+        name,
+        enabled,
+        scope: global ? "global" : "project",
+      })
+    ).skills;
+  }
+
   contextUsageSnapshot(): ContextUsage | null {
     return this.store.getState().contextUsage;
   }
 
   async refreshContextUsage(): Promise<ContextUsage> {
     await this.ensureSession();
-    const sessionId = this.sessionId;
-    const model = this.model;
-    if (this.contextWindowModel !== model) {
-      const request = ++this.contextWindowRequest;
-      const contextWindow = await resolveModelContextWindow(
-        this.novaClient,
-        model,
-      );
-      if (request === this.contextWindowRequest && model === this.model) {
-        this.contextWindow = contextWindow;
-        this.contextWindowModel = model;
-      }
-    }
-    if (sessionId !== this.sessionId || !this.agentSessionLoaded) {
-      return this.refreshContextUsage();
-    }
     const usage = await this.updateContextUsage();
     if (!usage)
       throw new Error(
@@ -479,12 +447,8 @@ export class SessionRunner {
 
   setModel(model: string): void {
     this.model = model;
-    this.contextWindow = null;
-    this.contextWindowModel = null;
-    this.contextWindowRequest++;
     saveDefaultModel(model);
     if (this.agentSessionLoaded) void this.updateContextUsage();
-    void this.refreshContextUsage().catch(() => {});
   }
 
   /**
@@ -551,28 +515,33 @@ export class SessionRunner {
 
   /** Chat models only: embedding, speech and transcription models can't run a session. */
   async listModels(): Promise<Array<{ id: string; name?: string | null }>> {
-    const { data } = await this.novaClient.models.list({ limit: 100 });
-    return chatModels(data).map((model) => ({
-      id: model.id,
-      name: model.name ?? null,
-    }));
+    await this.initialized;
+    const { models } = await this.nova.modelsList();
+    for (const model of models) this.imageSupportByModel.set(model.id, model.imageInput);
+    return models.map((model) => ({ id: model.id, name: model.name }));
   }
 
   /**
-   * Replaces a saved model that cannot chat (older logins saved the first
-   * model of the list, e.g. an embedding model) and saves the replacement.
+   * Takes the account's default model when none is set, and replaces a saved
+   * one that cannot chat (older logins saved the first model of the list,
+   * e.g. an embedding model); the agent decides, the choice is saved.
    * Runs once; a failed lookup keeps the model and the prompt reports errors.
    */
   ensureUsableModel(): Promise<void> {
     this.modelCheck ??= (async () => {
       try {
-        const { data } = await this.novaClient.models.list({ limit: 100 });
-        const model = resolveDefaultModel(data, this.model);
-        if (!model || model === this.model) return;
+        await this.initialized;
+        const { models, defaultModel } = await this.nova.modelsList(
+          this.model ? { preferred: this.model } : {},
+        );
+        for (const model of models) this.imageSupportByModel.set(model.id, model.imageInput);
+        if (!defaultModel || defaultModel === this.model) return;
         const previous = this.model;
-        this.setModel(model);
+        this.setModel(defaultModel);
         this.store.setState({
-          statusLine: `${previous} is not a chat model; switched to ${model} (Ctrl+P to pick another).`,
+          statusLine: previous
+            ? `${previous} is not a chat model; switched to ${defaultModel} (Ctrl+P to pick another).`
+            : `Using model ${defaultModel} (Ctrl+P switches).`,
         });
       } catch {
         // Keep the model; a real problem surfaces with the first prompt.
@@ -582,14 +551,9 @@ export class SessionRunner {
   }
 
   async supportsImageInput(model = this.model): Promise<boolean> {
-    const cached = this.imageSupportByModel.get(model);
-    if (cached !== undefined) return cached;
-    const supported = await resolveModelSupportsImageInput(
-      this.novaClient,
-      model,
-    );
-    this.imageSupportByModel.set(model, supported);
-    return supported;
+    if (!this.imageSupportByModel.has(model)) await this.listModels();
+    // A model the list doesn't have: the agent still checks when the prompt is sent.
+    return this.imageSupportByModel.get(model) ?? false;
   }
 
   async compactContext(): Promise<CompactionSummary> {
@@ -748,12 +712,8 @@ export class SessionRunner {
         });
       }
     } catch (err) {
-      const message =
-        err instanceof NovaAIError
-          ? `Nova AI request failed (status ${err.status}, requestId ${err.requestId}): ${err.message}`
-          : err instanceof Error
-            ? err.message
-            : "Unknown error.";
+      // The agent already words Nova API failures (status, request id).
+      const message = err instanceof Error ? err.message : "Unknown error.";
       pendingToolFailure = `Request failed: ${message}`;
       this.acpClient.appendError(message);
       this.store.setState({ statusLine: "Request failed." });
@@ -937,11 +897,10 @@ export class SessionRunner {
   }
 
   private async createSession(): Promise<void> {
-    this.loadMcpConfiguration(this.cwd);
     await this.initialized;
     const { sessionId, _meta } = await this.nova.newSession({
       cwd: this.cwd,
-      mcpServers: this.mcpServers,
+      mcpServers: [],
     });
     this.sessionId = sessionId;
     this.applyMcpStatus(_meta);
@@ -968,13 +927,24 @@ export class SessionRunner {
     const value = meta?.["nova-ai-cli/mcp"];
     if (!value || typeof value !== "object") return;
     const record = value as Record<string, unknown>;
+    const strings = (value: unknown): string[] | undefined =>
+      Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : undefined;
     const configured = Array.isArray(record.configured)
       ? record.configured.flatMap((entry) => {
           if (!entry || typeof entry !== "object") return [];
           const item = entry as Record<string, unknown>;
           return typeof item.name === "string" &&
             typeof item.transport === "string"
-            ? [{ name: item.name, transport: item.transport }]
+            ? [
+                {
+                  name: item.name,
+                  transport: item.transport,
+                  ...(typeof item.url === "string" ? { url: item.url } : {}),
+                  ...(typeof item.command === "string" ? { command: item.command } : {}),
+                  ...(strings(item.args) ? { args: strings(item.args) } : {}),
+                  ...(strings(item.env) ? { env: strings(item.env) } : {}),
+                },
+              ]
             : [];
         })
       : [];
@@ -993,25 +963,7 @@ export class SessionRunner {
             : [];
         })
       : [];
-    this.mcpStatus = {
-      configured,
-      connected,
-      failures: [...this.mcpConfigurationFailures, ...failures],
-    };
-  }
-
-  private loadMcpConfiguration(cwd: string): void {
-    const configuration = readWorkspaceMcpConfiguration(cwd);
-    this.mcpServers = configuration.servers;
-    this.mcpConfigurationFailures = configuration.failures;
-    this.mcpStatus = {
-      configured: this.mcpServers.map((server) => ({
-        name: server.name,
-        transport: "type" in server ? server.type : "stdio",
-      })),
-      connected: [],
-      failures: [...this.mcpConfigurationFailures],
-    };
+    this.mcpStatus = { configured, connected, failures };
   }
 
   private applySkillStatus(
@@ -1038,12 +990,31 @@ export class SessionRunner {
     });
   }
 
+  /**
+   * Starts the session ahead of the first prompt, so the agent's MCP and
+   * skill status is there for /mcp and the status line. A failure is left to
+   * the first prompt, which tries again and reports it.
+   */
+  async prepareSession(): Promise<void> {
+    try {
+      await this.ensureSession();
+    } catch {
+      this.sessionReady = Promise.resolve();
+    }
+  }
+
+  get sessionLoaded(): boolean {
+    return this.agentSessionLoaded;
+  }
+
   private async ensureSession(): Promise<void> {
     await this.ensureUsableModel();
-    await this.sessionReady;
-    if (!this.agentSessionLoaded) {
-      this.sessionReady = this.createSession();
-      await this.sessionReady;
+    // Callers may overlap (startup, /mcp, the first prompt): only one creates the session.
+    for (;;) {
+      const ready = this.sessionReady;
+      await ready;
+      if (this.agentSessionLoaded) return;
+      if (this.sessionReady === ready) this.sessionReady = this.createSession();
     }
   }
 
@@ -1064,7 +1035,7 @@ export class SessionRunner {
     try {
       const usage = await this.nova.sessionContextUsage({
         sessionId,
-        contextWindow: this.contextWindow,
+        ...(this.model ? { model: this.model } : {}),
         mode: this.interactionMode,
       });
       if (request === this.contextUsageRequest && sessionId === this.sessionId) {

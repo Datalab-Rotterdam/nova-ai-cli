@@ -1,5 +1,5 @@
 ﻿import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -12,6 +12,8 @@ import {
   NovaAgent,
 } from "../../src/acp/agent.js";
 import { describeResourceUri } from "../../src/acp/prompt-content.js";
+import { setWorkspaceTrusted } from "../../src/core/nova-home.js";
+import { sse, text, withFakeNova } from "../../../../test-support/fake-nova.js";
 import {
   appendSessionTurn,
   deleteStoredSession,
@@ -943,6 +945,103 @@ describe("NovaAgent.authenticate with the env_var method", () => {
     } finally {
       if (previous === undefined) delete process.env.NOVA_API_KEY;
       else process.env.NOVA_API_KEY = previous;
+    }
+  });
+});
+
+describe("NovaAgent workspace MCP servers", () => {
+  it("starts the trusted workspace's servers, reports their status and lets the client opt out", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "nova-agent-mcp-"));
+    setWorkspaceTrusted(cwd, true);
+    try {
+      writeFileSync(
+        join(cwd, ".mcp.json"),
+        JSON.stringify({
+          mcpServers: {
+            local: { command: "nova-ai-definitely-missing-mcp-command", args: ["--x"], env: { TOKEN: "secret" } },
+            broken: { type: "http" },
+          },
+        }),
+      );
+      const agent = new NovaAgent();
+      const { _meta } = await agent.newSession({ cwd, mcpServers: [] });
+      const mcp = _meta?.["nova-ai-cli/mcp"] as {
+        configured: Array<Record<string, unknown>>;
+        failures: Array<{ serverName: string }>;
+      };
+      assert.deepEqual(mcp.configured, [
+        { name: "local", transport: "stdio", command: "nova-ai-definitely-missing-mcp-command", args: ["--x"], env: ["TOKEN"] },
+      ]);
+      assert.deepEqual(
+        mcp.failures.map((failure) => failure.serverName),
+        [".mcp.json:broken", "local"],
+      );
+
+      const optedOut = await agent.newSession({ cwd, mcpServers: [], _meta: { "nova-ai-cli/workspaceMcp": false } });
+      assert.deepEqual((optedOut._meta?.["nova-ai-cli/mcp"] as { configured: unknown[] }).configured, []);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("NovaAgent model metadata", () => {
+  it("lists models with what a client needs and resolves the context window itself", async () => {
+    await withFakeNova(
+      () => sse([text("unused")]),
+      async () => {
+        const agent = new NovaAgent();
+        const listed = await agent.listModels({});
+        assert.equal(listed.defaultModel, "fake-model");
+        assert.deepEqual(
+          listed.models.map(({ id, name, contextWindow, imageInput }) => ({ id, name, contextWindow, imageInput })),
+          [{ id: "fake-model", name: null, contextWindow: 100000, imageInput: false }],
+        );
+        // An id the catalog doesn't list (an alias, a later page) is kept.
+        assert.equal((await agent.listModels({ preferred: "alias" })).defaultModel, "alias");
+
+        const { sessionId } = await agent.newSession({ cwd: "/repo", mcpServers: [] });
+        const usage = await agent.sessionContextUsage({ sessionId, model: "fake-model" });
+        assert.equal(usage.contextWindow, 100000);
+      },
+    );
+  });
+});
+
+describe("NovaAgent skills", () => {
+  it("lists every skill with its state and switches one off and on", () => {
+    const cwd = mkdtempSync(join(tmpdir(), "nova-agent-skills-"));
+    try {
+      mkdirSync(join(cwd, ".nova-ai", "skills", "deploy"), { recursive: true });
+      writeFileSync(join(cwd, ".nova-ai", "skills", "deploy", "SKILL.md"), "---\nname: deploy\ndescription: Deploy safely.\n---\nbody");
+      const agent = new NovaAgent();
+      const state = () => agent.listSkills({ cwd }).skills.map(({ name, enabled }) => ({ name, enabled }));
+      assert.deepEqual(state(), [{ name: "deploy", enabled: true }]);
+      agent.setSkillEnabled({ cwd, name: "deploy", enabled: false, scope: "project" });
+      assert.deepEqual(state(), [{ name: "deploy", enabled: false }]);
+      agent.setSkillEnabled({ cwd, name: "deploy", enabled: true, scope: "project" });
+      assert.deepEqual(state(), [{ name: "deploy", enabled: true }]);
+      assert.throws(
+        () => agent.setSkillEnabled({ cwd, name: "missing", enabled: false, scope: "project" }),
+        /No skill named "missing"/,
+      );
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("NovaAgent workspace trust", () => {
+  it("reports and sets trust; a workspace asking for nothing needs none", () => {
+    const cwd = mkdtempSync(join(tmpdir(), "nova-agent-trust-"));
+    try {
+      const agent = new NovaAgent();
+      assert.deepEqual(agent.workspaceTrust({ cwd }), { trusted: false, needsTrust: false });
+      writeFileSync(join(cwd, ".mcp.json"), JSON.stringify({ mcpServers: { s: { command: "x" } } }));
+      assert.deepEqual(agent.workspaceTrust({ cwd }), { trusted: false, needsTrust: true });
+      assert.deepEqual(agent.workspaceTrust({ cwd, trusted: true }), { trusted: true, needsTrust: false });
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
     }
   });
 });

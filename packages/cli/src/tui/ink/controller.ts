@@ -1,10 +1,3 @@
-import type { McpServer } from "@agentclientprotocol/sdk";
-import { setWorkspaceTrusted } from "@datalabrotterdam/nova-ai-agent/core/nova-home.js";
-import {
-  disabledSkillNames,
-  discoverSkills,
-  setSkillEnabled,
-} from "@datalabrotterdam/nova-ai-agent/core/skills.js";
 import { INTERACTION_MODES } from "@datalabrotterdam/nova-ai-agent/core/interaction-modes.js";
 import {
   allCommands,
@@ -27,7 +20,7 @@ import {
   listSessionPickerItems,
   listSessionsForCwd,
 } from "../session/session-picker.js";
-import type { SessionRunner } from "../session/session-runner.js";
+import type { McpSessionStatus, SessionRunner } from "../session/session-runner.js";
 import type { Store } from "../state/store.js";
 import type {
   InteractionMode,
@@ -140,8 +133,9 @@ export class TuiController {
   getView = (): ViewState => this.view;
 
   start(): void {
-    // Fix a saved model that can't chat before the first prompt needs it.
-    void this.runner.ensureUsableModel().then(() => this.refresh());
+    // Fix a saved model that can't chat, and start the session (MCP servers,
+    // skills), before the first prompt needs them.
+    void this.runner.prepareSession().then(() => this.refresh());
     this.syncWindowTitle();
     this.animationTimer = setInterval(() => this.syncWindowTitle(true), 120);
     this.animationTimer.unref?.();
@@ -367,9 +361,13 @@ export class TuiController {
     });
   };
 
-  openMcpInspector = (): void => {
-    const servers = this.runner.configuredMcpServers();
+  openMcpInspector = async (): Promise<void> => {
+    if (!this.runner.sessionLoaded) {
+      this.showText("MCP servers", "Connecting MCP servers...");
+      await this.runner.prepareSession();
+    }
     const connection = this.runner.mcpSessionStatus();
+    const servers = connection.configured;
     const configuredNames = new Set(servers.map((server) => server.name));
     const configurationFailures = connection.failures
       .filter((failure) => !configuredNames.has(failure.serverName))
@@ -387,18 +385,22 @@ export class TuiController {
   };
 
   /** Every discovered skill with its state; switched-off skills stay listed. */
-  openSkillInspector = (): void => {
-    const cwd = this.runner.cwd;
-    const skills = discoverSkills(cwd);
-    const disabled = disabledSkillNames(cwd);
-    const on = skills.filter((skill) => !disabled.has(skill.name)).length;
+  openSkillInspector = async (): Promise<void> => {
+    let skills: Awaited<ReturnType<SessionRunner["listSkills"]>>;
+    try {
+      skills = await this.runner.listSkills();
+    } catch (error) {
+      this.showText("Skills", errorMessage(error, "Could not list the skills."));
+      return;
+    }
+    const on = skills.filter((skill) => skill.enabled).length;
     this.showText(
       `Skills (${on} on, ${skills.length - on} off)`,
       skills.length
         ? [
             ...skills.map(
               (skill) =>
-                `${skill.name} [${skill.source}]${disabled.has(skill.name) ? " (off)" : ""}\n${skill.description}\n${skill.path}`,
+                `${skill.name} [${skill.source}]${skill.enabled ? "" : " (off)"}\n${skill.description}\n${skill.path}`,
             ),
             "/skills off <name> switches one off in this project (--global: everywhere); /skills on <name> switches it back on.",
           ].join("\n\n")
@@ -407,17 +409,15 @@ export class TuiController {
   };
 
   /** /skills on|off <name> [--global]: applies from the next message. */
-  switchSkill = (name: string, enabled: boolean, global: boolean): string => {
-    const cwd = this.runner.cwd;
-    if (!discoverSkills(cwd).some((skill) => skill.name === name)) {
-      return `No skill named "${name}". /skills lists them.`;
-    }
+  switchSkill = async (name: string, enabled: boolean, global: boolean): Promise<string> => {
+    let skills: Awaited<ReturnType<SessionRunner["setSkillEnabled"]>>;
     try {
-      setSkillEnabled(cwd, global ? "global" : "project", name, enabled);
+      skills = await this.runner.setSkillEnabled(name, enabled, global);
     } catch (error) {
-      return errorMessage(error, "Could not change the skill.");
+      const message = errorMessage(error, "Could not change the skill.");
+      return message.startsWith("No skill named") ? `${message} /skills lists them.` : message;
     }
-    const stillOff = enabled && disabledSkillNames(cwd).has(name);
+    const stillOff = enabled && skills.some((skill) => skill.name === name && !skill.enabled);
     return (
       stillOff
         ? `Switched "${name}" on ${global ? "globally" : "in this project"}, but it is still off ${global ? "in this project" : "globally"} (use ${global ? "/skills on " + name : "/skills on " + name + " --global"}).`
@@ -543,8 +543,12 @@ export class TuiController {
     getPermissionMode: () => this.store.getState().permissionMode,
     setPermissionMode: (mode) => this.setPermissionMode(mode),
     openPermissionPicker: this.openPermissionModes,
-    trustWorkspace: () => {
-      setWorkspaceTrusted(this.runner.cwd, true);
+    trustWorkspace: async () => {
+      try {
+        await this.runner.trustWorkspace();
+      } catch (error) {
+        return errorMessage(error, "Could not trust the workspace.");
+      }
       return "Workspace trusted: its allow rules apply now; MCP servers it declares start with the next session (/clear).";
     },
     openToolInspector: this.openToolInspector,
@@ -736,17 +740,15 @@ export class TuiController {
 }
 
 function formatMcpServer(
-  server: McpServer,
-  status: ReturnType<SessionRunner["mcpSessionStatus"]>,
+  server: McpSessionStatus["configured"][number],
+  status: McpSessionStatus,
 ): string {
-  const type = "type" in server ? server.type : "stdio";
-  const lines = [`${server.name} [${type}]`];
-  if ("url" in server) lines.push(`url: ${server.url}`);
-  if ("command" in server) {
+  const lines = [`${server.name} [${server.transport}]`];
+  if (server.url) lines.push(`url: ${server.url}`);
+  if (server.command) {
     lines.push(`command: ${server.command}`);
-    if (server.args.length) lines.push(`args: ${server.args.join(" ")}`);
-    if (server.env.length)
-      lines.push(`env: ${server.env.map((entry) => entry.name).join(", ")} (values hidden)`);
+    if (server.args?.length) lines.push(`args: ${server.args.join(" ")}`);
+    if (server.env?.length) lines.push(`env: ${server.env.join(", ")} (values hidden)`);
   }
   const failure = status.failures.find((item) => item.serverName === server.name);
   lines.push(

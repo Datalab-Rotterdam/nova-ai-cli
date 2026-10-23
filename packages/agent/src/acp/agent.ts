@@ -28,6 +28,8 @@ import {
   type McpConnectionFailure,
 } from "../core/mcp.js";
 import { buildMemorySystemPrompt, sessionMemory } from "../core/memory.js";
+import { isWorkspaceTrusted, setWorkspaceTrusted } from "../core/nova-home.js";
+import { readWorkspaceMcpConfiguration, workspaceNeedsTrust } from "../core/workspace-mcp.js";
 import {
   applySessionSettings,
   sessionSettingsView,
@@ -50,7 +52,10 @@ import {
 } from "../core/sessions.js";
 import {
   buildSkillsSystemPrompt,
+  disabledSkillNames,
   discoverEnabledSkills,
+  discoverSkills,
+  setSkillEnabled,
   type SkillDefinition,
 } from "../core/skills.js";
 import { detectToolEnvironment } from "../core/tools/environment.js";
@@ -120,6 +125,10 @@ export {
   contentBlocksToText,
   frameSteeringPrompt,
 } from "./prompt-content.js";
+
+export type SkillState = Pick<SkillDefinition, "name" | "description" | "source" | "path"> & {
+  enabled: boolean;
+};
 
 const AUTH_METHOD_ID = "nova-api-key";
 const ENV_AUTH_METHOD_ID = "nova-api-key-env";
@@ -303,7 +312,7 @@ export class NovaAgent implements AgentRuntime {
     client?: acp.AgentContext,
   ): Promise<acp.NewSessionResponse> {
     const sessionId = crypto.randomUUID();
-    const { mcpConnections, mcpFailures, skills } = await this.setupSession(
+    const { mcpServers, mcpConnections, mcpFailures, skills } = await this.setupSession(
       sessionId,
       params,
       [],
@@ -317,7 +326,7 @@ export class NovaAgent implements AgentRuntime {
         permissionModeOption(this.requireSession(sessionId).policy.mode),
       ],
       _meta: sessionStatusMeta(
-        params.mcpServers,
+        mcpServers,
         mcpConnections,
         mcpFailures,
         skills,
@@ -335,14 +344,27 @@ export class NovaAgent implements AgentRuntime {
     history: ChatMessage[],
     title: string | null,
   ): Promise<{
+    mcpServers: acp.McpServer[];
     mcpConnections: McpConnection[];
     mcpFailures: McpConnectionFailure[];
     skills: SkillDefinition[];
   }> {
-    const connectedMcp = await connectMcpServers(params.mcpServers ?? []);
+    // The workspace's own servers (.mcp.json, .nova-ai/settings.json; trusted
+    // workspaces only) plus the client's, which win by name. A client that
+    // configures MCP itself opts out with `nova-ai-cli/workspaceMcp: false`.
+    const workspaceMcp =
+      params._meta?.["nova-ai-cli/workspaceMcp"] === false
+        ? { servers: [], failures: [] }
+        : readWorkspaceMcpConfiguration(params.cwd);
+    const mcpServers = [
+      ...new Map(
+        [...workspaceMcp.servers, ...(params.mcpServers ?? [])].map((server) => [server.name, server]),
+      ).values(),
+    ];
+    const connectedMcp = await connectMcpServers(mcpServers);
     const loadedMcp = await listMcpTools(connectedMcp.connections);
     const mcpConnections = loadedMcp.connections;
-    const mcpFailures = [...connectedMcp.failures, ...loadedMcp.failures];
+    const mcpFailures = [...workspaceMcp.failures, ...connectedMcp.failures, ...loadedMcp.failures];
     const mcpTools = loadedMcp.tools;
     const environment = await detectToolEnvironment(
       params.cwd,
@@ -371,7 +393,7 @@ export class NovaAgent implements AgentRuntime {
       model: null,
       settings,
     });
-    return { mcpConnections, mcpFailures, skills };
+    return { mcpServers, mcpConnections, mcpFailures, skills };
   }
 
   async loadSession(
@@ -383,7 +405,7 @@ export class NovaAgent implements AgentRuntime {
       throw sessionNotFound(params.sessionId);
     }
 
-    const { mcpConnections, mcpFailures, skills } = await this.setupSession(
+    const { mcpServers, mcpConnections, mcpFailures, skills } = await this.setupSession(
       params.sessionId,
       params,
       stored.messages,
@@ -410,7 +432,7 @@ export class NovaAgent implements AgentRuntime {
         permissionModeOption(this.requireSession(params.sessionId).policy.mode),
       ],
       _meta: sessionStatusMeta(
-        params.mcpServers,
+        mcpServers,
         mcpConnections,
         mcpFailures,
         skills,
@@ -516,7 +538,7 @@ export class NovaAgent implements AgentRuntime {
     if (!forked) {
       throw sessionNotFound(params.sessionId);
     }
-    await this.setupSession(
+    const { mcpServers, mcpConnections, mcpFailures, skills } = await this.setupSession(
       newSessionId,
       params,
       forked.messages,
@@ -529,6 +551,7 @@ export class NovaAgent implements AgentRuntime {
       configOptions: await this.configOptions(
         this.requireSession(newSessionId),
       ),
+      _meta: sessionStatusMeta(mcpServers, mcpConnections, mcpFailures, skills),
     };
   }
 
@@ -540,7 +563,7 @@ export class NovaAgent implements AgentRuntime {
     if (!stored) {
       throw sessionNotFound(params.sessionId);
     }
-    await this.setupSession(
+    const { mcpServers, mcpConnections, mcpFailures, skills } = await this.setupSession(
       params.sessionId,
       params,
       stored.messages,
@@ -552,6 +575,7 @@ export class NovaAgent implements AgentRuntime {
       configOptions: await this.configOptions(
         this.requireSession(params.sessionId),
       ),
+      _meta: sessionStatusMeta(mcpServers, mcpConnections, mcpFailures, skills),
     };
   }
 
@@ -594,6 +618,80 @@ export class NovaAgent implements AgentRuntime {
       permissionModeOption(session.policy.mode),
       ...(await this.models.buildConfigOptions(session)),
     ];
+  }
+
+  /**
+   * `_nova/workspace/trust`: trusting a workspace lets its allow rules apply
+   * and its MCP servers start (from the next session); without `trusted` it
+   * only reports the state. `needsTrust`: untrusted and asking for either.
+   */
+  workspaceTrust(params: { cwd: string; trusted?: boolean }): {
+    trusted: boolean;
+    needsTrust: boolean;
+  } {
+    if (params.trusted !== undefined) setWorkspaceTrusted(params.cwd, params.trusted);
+    return { trusted: isWorkspaceTrusted(params.cwd), needsTrust: workspaceNeedsTrust(params.cwd) };
+  }
+
+  /** `_nova/skills/list`: every skill discovered for `cwd`, switched-off ones included. */
+  listSkills(params: { cwd: string }): { skills: SkillState[] } {
+    const disabled = disabledSkillNames(params.cwd);
+    return {
+      skills: discoverSkills(params.cwd).map(({ name, description, source, path }) => ({
+        name,
+        description,
+        source,
+        path,
+        enabled: !disabled.has(name),
+      })),
+    };
+  }
+
+  /**
+   * `_nova/skills/set_enabled`: switches a skill in this project's private
+   * settings or (`global`) the user's; sessions pick it up from their next turn.
+   */
+  setSkillEnabled(params: {
+    cwd: string;
+    name: string;
+    enabled: boolean;
+    scope: "project" | "global";
+  }): { skills: SkillState[] } {
+    if (!discoverSkills(params.cwd).some((skill) => skill.name === params.name)) {
+      throw acp.RequestError.invalidParams({ name: params.name }, `No skill named "${params.name}".`);
+    }
+    setSkillEnabled(params.cwd, params.scope, params.name, params.enabled);
+    return this.listSkills(params);
+  }
+
+  listModels(params: { preferred?: string }) {
+    return this.models.listModels(params.preferred);
+  }
+
+  /**
+   * `_nova/session/context_usage`: without a `contextWindow` the agent looks
+   * up the window of `model` (else the session's or the default model).
+   */
+  async sessionContextUsage(params: {
+    sessionId: string;
+    contextWindow?: number | null;
+    model?: string;
+    mode?: InteractionMode;
+  }): Promise<ContextUsage> {
+    const session = this.requireSession(params.sessionId);
+    let contextWindow = params.contextWindow ?? null;
+    const credentials = contextWindow === null ? readCredentials() : null;
+    if (credentials) {
+      const model =
+        params.model ?? session.model ?? (await this.models.defaultModel(credentials));
+      if (model) {
+        contextWindow = await this.models.resolveContextWindow(
+          createNovaClient(credentials.apiKey),
+          model,
+        );
+      }
+    }
+    return this.contextUsage({ ...params, contextWindow });
   }
 
   contextUsage(params: {
