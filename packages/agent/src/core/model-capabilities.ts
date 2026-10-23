@@ -92,6 +92,46 @@ export function modelSupportsImageInput(
   );
 }
 
+const REASONING_CAPABILITIES = new Set(["reasoning", "thinking"]);
+
+type ReasoningFields = Pick<ModelResponse, "capabilities" | "reasoning_efforts" | "reasoning_default">;
+
+/**
+ * Levels the model accepts for `reasoning_effort`, as the gateway lists
+ * them (lowest first). A model that can reason but lists none gets an
+ * off/on switch, ["none", "medium"]: "medium" stands for any level but
+ * "none". Same rules as the VS Code extension.
+ */
+export function modelEfforts(model: ReasoningFields | null | undefined): string[] {
+  const listed = (model?.reasoning_efforts ?? []).filter((level) => typeof level === "string" && level);
+  if (listed.length) return listed;
+  const reasons = (model?.capabilities ?? []).some((capability) =>
+    REASONING_CAPABILITIES.has(normalizeCapability(capability)),
+  );
+  return reasons ? ["none", "medium"] : [];
+}
+
+/** Whether the model thinks: it has levels, or thinks by itself at a fixed depth. */
+export function modelThinks(model: ReasoningFields | null | undefined): boolean {
+  return modelEfforts(model).length > 0 || model?.reasoning_default === "on";
+}
+
+/**
+ * The `reasoning_effort` to send: `chosen` when the model accepts it, else
+ * "none" for a model that thinks only on request, else its middle level
+ * ("medium" when listed). Undefined for a model without levels.
+ */
+export function resolveEffort(
+  model: ReasoningFields | null | undefined,
+  chosen?: string | null,
+): string | undefined {
+  const efforts = modelEfforts(model);
+  if (!efforts.length) return undefined;
+  if (chosen && efforts.includes(chosen)) return chosen;
+  if (efforts.includes("none") && model?.reasoning_default === "off") return "none";
+  return efforts.includes("medium") ? "medium" : efforts[Math.floor((efforts.length - 1) / 2)];
+}
+
 /**
  * The model's context window in tokens, or null when the gateway does not
  * say. Nova's gateway sends `contextWindow`; OpenAI-compatible servers use
@@ -120,7 +160,9 @@ export function findModelMetadata(
   modelId: string,
 ): ModelResponse | undefined {
   return models.find(
-    (model) => model.id === modelId || model.aliases?.includes(modelId),
+    // `aliases` is no longer typed by the SDK, but gateways still send it.
+    (model) =>
+      model.id === modelId || (Array.isArray(model.aliases) && model.aliases.includes(modelId)),
   );
 }
 
