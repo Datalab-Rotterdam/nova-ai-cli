@@ -143,7 +143,10 @@ export function App({ controller }: { controller: TuiController }) {
     if (rows) controller.scrollBy(rows);
   });
 
-  const viewportRows = Math.max(3, rows - (bottom.hasMeasured ? bottom.height : 6));
+  // One row short of the terminal: Ink clears the whole screen for every
+  // frame that is exactly as tall (always on Windows), which flickers.
+  const height = Math.max(4, rows - 1);
+  const viewportRows = Math.max(3, height - (bottom.hasMeasured ? bottom.height : 6));
   useEffect(() => {
     if (content.hasMeasured) controller.setViewport(viewportRows, content.height);
   }, [controller, viewportRows, content.hasMeasured, content.height]);
@@ -168,7 +171,7 @@ export function App({ controller }: { controller: TuiController }) {
   // ponytail: renders the whole transcript every frame (memoized blocks keep
   // that cheap); window to the blocks near the viewport if long sessions lag.
   return (
-    <Box flexDirection="column" height={rows}>
+    <Box flexDirection="column" height={height}>
       <Box
         flexDirection="column"
         height={viewportRows}
