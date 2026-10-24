@@ -18,7 +18,6 @@ import {
 import { readCredentials } from "../core/credentials.js";
 import {
   isInteractionMode,
-  type InteractionMode,
 } from "../core/interaction-modes.js";
 import {
   closeMcpConnections,
@@ -31,6 +30,7 @@ import {
 import { FileOAuthProvider, oauthConfigOf } from "../core/mcp-oauth.js";
 import { buildMemorySystemPrompt, sessionMemory } from "../core/memory.js";
 import { installSkills } from "@datalabrotterdam/nova-ai-skills";
+import { findAgentFile } from "../core/agent-files.js";
 import { isWorkspaceTrusted, novaHomeRoot, setWorkspaceTrusted } from "../core/nova-home.js";
 import { readWorkspaceMcpConfiguration, workspaceNeedsTrust } from "../core/workspace-mcp.js";
 import { MAX_STOP_HOOK_ROUNDS, runHooks } from "../core/hooks.js";
@@ -333,7 +333,7 @@ export class NovaAgent implements AgentRuntime {
     this.announceSession(sessionId, client);
     return {
       sessionId,
-      modes: sessionModeState("agent"),
+      modes: sessionModeState("agent", params.cwd),
       configOptions: [
         permissionModeOption(this.requireSession(sessionId).policy.mode),
       ],
@@ -441,7 +441,7 @@ export class NovaAgent implements AgentRuntime {
 
     this.announceSession(params.sessionId, client);
     return {
-      modes: sessionModeState("agent"),
+      modes: sessionModeState("agent", params.cwd),
       configOptions: [
         permissionModeOption(this.requireSession(params.sessionId).policy.mode),
       ],
@@ -520,7 +520,7 @@ export class NovaAgent implements AgentRuntime {
     params: acp.SetSessionModeRequest,
   ): acp.SetSessionModeResponse {
     const session = this.requireSession(params.sessionId);
-    if (!isInteractionMode(params.modeId)) {
+    if (!isInteractionMode(params.modeId) && !findAgentFile(session.cwd, params.modeId)) {
       throw acp.RequestError.invalidParams(
         { modeId: params.modeId },
         `Unknown interaction mode: ${params.modeId}`,
@@ -561,7 +561,7 @@ export class NovaAgent implements AgentRuntime {
     this.announceSession(newSessionId, client);
     return {
       sessionId: newSessionId,
-      modes: sessionModeState("agent"),
+      modes: sessionModeState("agent", params.cwd),
       configOptions: await this.configOptions(
         this.requireSession(newSessionId),
       ),
@@ -585,7 +585,7 @@ export class NovaAgent implements AgentRuntime {
     );
     this.announceSession(params.sessionId, client);
     return {
-      modes: sessionModeState("agent"),
+      modes: sessionModeState("agent", params.cwd),
       configOptions: await this.configOptions(
         this.requireSession(params.sessionId),
       ),
@@ -769,7 +769,7 @@ export class NovaAgent implements AgentRuntime {
     sessionId: string;
     contextWindow?: number | null;
     model?: string;
-    mode?: InteractionMode;
+    mode?: string;
   }): Promise<ContextUsage> {
     const session = this.requireSession(params.sessionId);
     let contextWindow = params.contextWindow ?? null;
@@ -790,7 +790,7 @@ export class NovaAgent implements AgentRuntime {
   contextUsage(params: {
     sessionId: string;
     contextWindow?: number | null;
-    mode?: InteractionMode;
+    mode?: string;
   }): ContextUsage {
     const session = this.requireSession(params.sessionId);
     const mode = params.mode === undefined ? session.mode : params.mode;
@@ -801,7 +801,7 @@ export class NovaAgent implements AgentRuntime {
     });
     return calculateContextUsage({
       history: session.history,
-      systemPrompt: buildModeSystemPrompt(mode),
+      systemPrompt: buildModeSystemPrompt(mode, session.cwd),
       skillsPrompt: buildSkillsSystemPrompt(session.skills),
       memoryPrompt: buildMemorySystemPrompt(session.memory, session.settings.memory),
       toolsPrompt: buildToolsSystemPrompt(tools, session.cwd),
@@ -1016,7 +1016,7 @@ export class NovaAgent implements AgentRuntime {
     });
     const systemPromptFor = (protocol: ToolProtocol) =>
       [
-        buildModeSystemPrompt(session.mode),
+        buildModeSystemPrompt(session.mode, session.cwd),
         buildSkillsSystemPrompt(session.skills, contentBlocksToText(params.prompt)),
         buildMemorySystemPrompt(session.memory, session.settings.memory),
         protocol === "native"

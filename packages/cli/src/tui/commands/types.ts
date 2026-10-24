@@ -31,6 +31,8 @@ export type SlashCommandContext = {
   getModel(): string;
   setModel(model: string): void;
   getInteractionMode(): InteractionMode;
+  /** Built-in modes, then the user's agent files. */
+  getInteractionModes(): InteractionMode[];
   setInteractionMode(mode: InteractionMode): void;
   getPermissionMode(): PermissionMode;
   setPermissionMode(mode: PermissionMode): void;

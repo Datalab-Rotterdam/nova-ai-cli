@@ -376,9 +376,6 @@ Nova AI Browser host they carry. Its folder holds `.nova-bundled.json`:
 
 ## Agents
 
-Extension only: nova-ai-cli does not read agent files yet (its `/agent`
-command starts a background agent, which is something else).
-
 An agent is a markdown file whose body is added to Nova's system prompt. The chat's
 mode menu (and Shift+Tab) switches between the built-in agents (Interactive, Plan,
 Autopilot, Ask) and your own. Put your own in `~/.nova-ai/agents/<name>.agent.md`
@@ -399,3 +396,14 @@ Instructions for the agent.
 
 Tool groups: `read`, `search`, `edit`, `run`, `web`, `memory`, `ask`, `todo`, `skills`,
 and `mcp` for MCP tools; or list tool names such as `read_file`.
+
+nova-ai-cli's agent reads the same files and offers each one as a session mode
+after its built-in `agent`, `ask` and `plan` (Shift+Tab and `/mode <id>` in the
+CLI; the id is the file name, `Code Review.agent.md` → `code-review`). A file
+named after a built-in mode is ignored. Differences from the extension:
+- `icon` and `autopilot` are not used.
+- The groups map to the agent's own tools (`edit` is `edit_file` and
+  `write_file`, `todo` is `update_plan`, `run` includes the background
+  commands); the extension's tool names (`list_dir`, `create_file`,
+  `todo_write`, `spawn_agents`) are accepted too.
+- The CLI's `/agent` command starts a background agent, which is something else.

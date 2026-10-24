@@ -76,3 +76,16 @@ test("session runner applies the agent's autonomous plan transition to the foote
   assert.equal(store.getState().permissionMode, "ask");
   assert.equal(store.getState().statusLine, "Agent switched to plan mode.");
 });
+
+test("a mode from one of the user's agent files is taken once the agent listed it", async () => {
+  const store = createStore(state());
+  const client = new TuiAcpClient(store, process.cwd(), undefined, (mode) =>
+    store.setState({ interactionMode: mode }),
+  );
+  const update = { sessionId: "session-1", update: { sessionUpdate: "current_mode_update" as const, currentModeId: "reviewer" } };
+  await client.sessionUpdate(update);
+  assert.equal(store.getState().interactionMode, "agent");
+  client.modeIds = ["agent", "ask", "plan", "reviewer"];
+  await client.sessionUpdate(update);
+  assert.equal(store.getState().interactionMode, "reviewer");
+});

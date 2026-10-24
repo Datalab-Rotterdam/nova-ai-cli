@@ -1,4 +1,3 @@
-import { INTERACTION_MODES } from "@datalabrotterdam/nova-ai-agent/core/interaction-modes.js";
 import {
   allCommands,
   findCommand,
@@ -554,8 +553,8 @@ export class TuiController {
   }
 
   cycleInteractionMode(): void {
-    const current = INTERACTION_MODES.indexOf(this.runner.interactionMode);
-    this.setInteractionMode(INTERACTION_MODES[(current + 1) % INTERACTION_MODES.length]!);
+    const modes = this.runner.modeIds;
+    this.setInteractionMode(modes[(modes.indexOf(this.runner.interactionMode) + 1) % modes.length]!);
   }
 
   appendAssistant(text: string): void {
@@ -606,6 +605,7 @@ export class TuiController {
     getModel: () => this.runner.model,
     setModel: (model) => this.setModel(model),
     getInteractionMode: () => this.runner.interactionMode,
+    getInteractionModes: () => this.runner.modeIds,
     setInteractionMode: (mode) => this.setInteractionMode(mode),
     getPermissionMode: () => this.store.getState().permissionMode,
     setPermissionMode: (mode) => this.setPermissionMode(mode),
