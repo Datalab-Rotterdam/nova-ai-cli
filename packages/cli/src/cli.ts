@@ -1,6 +1,6 @@
 import { cliVersion } from "./version.js";
 
-export type CliMode = "tui" | "print" | "acp" | "login" | "logout" | "version" | "help" | "web";
+export type CliMode = "tui" | "print" | "acp" | "login" | "logout" | "version" | "help";
 
 export type CliCommand =
   | { mode: CliMode; args: string[] }
@@ -22,7 +22,6 @@ const MODE_FLAGS: Record<string, CliMode> = {
   "--setup": "login",
   "--version": "version",
   "-v": "version",
-  "--web": "web",
 };
 
 /**
@@ -45,7 +44,7 @@ export function parseCli(argv: string[]): CliCommand {
   const wantsHelp = options.includes("--help") || options.includes("-h");
   if (!mode) return wantsHelp ? { mode: "help", args: [] } : { mode: "tui", args: argv };
   // Mode flags the target does not parse itself are removed.
-  const drop = new Set(["--acp", "--headless", "--setup", "--version", "-v", "--web"]);
+  const drop = new Set(["--acp", "--headless", "--setup", "--version", "-v"]);
   return { mode, args: argv.filter((arg, index) => !(drop.has(arg) && (end < 0 || index < end))) };
 }
 

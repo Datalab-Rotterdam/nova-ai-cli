@@ -73,11 +73,6 @@ async function main(): Promise<number> {
       const { runLogout } = await import("@datalabrotterdam/nova-ai-agent/commands/login.js");
       return runLogout();
     }
-    case "web": {
-      const { default: runWebUi } = await import("./webui/index.js");
-      await runWebUi();
-      return 0;
-    }
     case "tui": {
       let options;
       try {

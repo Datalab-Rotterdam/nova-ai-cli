@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
-import { describe, it } from "node:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, it, test } from "node:test";
 import {
   applySessionSettings,
   DEFAULT_SESSION_SETTINGS,
@@ -61,4 +64,18 @@ describe("session settings", () => {
     });
     assert.equal(sessionSettingsView(DEFAULT_SESSION_SETTINGS).commandTimeoutSeconds, null);
   });
+});
+
+test("a SearXNG server in the Nova settings is the default; a client's own wins", () => {
+  const home = mkdtempSync(join(tmpdir(), "nova-searxng-"));
+  try {
+    writeFileSync(join(home, "settings.json"), JSON.stringify({ webSearch: { searxngUrl: "https://search.example.org" } }));
+    assert.equal(settingsFromMeta(undefined, home).searxngUrl, "https://search.example.org");
+    assert.equal(settingsFromMeta({ [SETTINGS_META_KEY]: { searxngUrl: "https://mine.example.org" } }, home).searxngUrl, "https://mine.example.org");
+    assert.equal(settingsFromMeta({ [SETTINGS_META_KEY]: { searxngUrl: "" } }, home).searxngUrl, null);
+    writeFileSync(join(home, "settings.json"), JSON.stringify({ webSearch: { searxngUrl: "file:///etc/passwd" } }));
+    assert.equal(settingsFromMeta(undefined, home).searxngUrl, null);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
 });

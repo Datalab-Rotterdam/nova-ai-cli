@@ -1,3 +1,6 @@
+import { join } from "node:path";
+import { novaHomeRoot } from "../nova-home.js";
+import { readSettings } from "../policy/settings.js";
 /**
  * Per-session behaviour a client can set (the VS Code extension maps its
  * settings onto these). Absent values keep the agent's defaults, so a client
@@ -65,11 +68,17 @@ export function applySessionSettings(
   return next;
 }
 
-/** The settings a client sent in a request's `_meta`, over the defaults. */
-export function settingsFromMeta(meta: unknown): SessionSettings {
+/**
+ * The settings a client sent in a request's `_meta`, over the defaults. A
+ * SearXNG server in ~/.nova-ai/settings.json (`webSearch.searxngUrl`) is the
+ * default for clients that send none, such as the CLI.
+ */
+export function settingsFromMeta(meta: unknown, novaHome = novaHomeRoot()): SessionSettings {
   const settings =
     meta && typeof meta === "object" ? (meta as Record<string, unknown>)[SETTINGS_META_KEY] : undefined;
-  return applySessionSettings(DEFAULT_SESSION_SETTINGS, settings);
+  const webSearch = readSettings(join(novaHome, "settings.json"))?.webSearch;
+  const searxngUrl = webSearch && typeof webSearch === "object" ? (webSearch as { searxngUrl?: unknown }).searxngUrl : undefined;
+  return applySessionSettings(applySessionSettings(DEFAULT_SESSION_SETTINGS, { searxngUrl }), settings);
 }
 
 /** The settings as clients send them (seconds instead of milliseconds). */
