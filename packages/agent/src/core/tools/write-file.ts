@@ -1,4 +1,5 @@
 import type { ToolDefinition } from "./types.js";
+import { bundledSkillError } from "../skills.js";
 import { resolveWorkspaceFile } from "./workspace-paths.js";
 
 export const writeFileTool: ToolDefinition = {
@@ -23,6 +24,8 @@ export const writeFileTool: ToolDefinition = {
     const resolved = await resolveWorkspaceFile(cwd, args.path);
     if ("error" in resolved) return resolved;
     const { path } = resolved;
+    const bundled = bundledSkillError(path);
+    if (bundled) return { error: bundled };
 
     let oldText: string | null = null;
     try {

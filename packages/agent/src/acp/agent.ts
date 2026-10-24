@@ -131,7 +131,7 @@ export {
   frameSteeringPrompt,
 } from "./prompt-content.js";
 
-export type SkillState = Pick<SkillDefinition, "name" | "description" | "source" | "path"> & {
+export type SkillState = Pick<SkillDefinition, "name" | "description" | "source" | "path" | "bundledBy"> & {
   enabled: boolean;
 };
 
@@ -722,11 +722,12 @@ export class NovaAgent implements AgentRuntime {
   listSkills(params: { cwd: string }): { skills: SkillState[] } {
     const disabled = disabledSkillNames(params.cwd);
     return {
-      skills: discoverSkills(params.cwd).map(({ name, description, source, path }) => ({
+      skills: discoverSkills(params.cwd).map(({ name, description, source, path, bundledBy }) => ({
         name,
         description,
         source,
         path,
+        ...(bundledBy ? { bundledBy } : {}),
         enabled: !disabled.has(name),
       })),
     };
