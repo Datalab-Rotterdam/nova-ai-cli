@@ -105,7 +105,10 @@ row. To select text, hold Shift (Option in some macOS terminals) while dragging.
 Slash commands: `/help`, `/model`, `/effort` (thinking models), `/mode`, `/permission`, `/session`,
 `/resume`, `/clear`, `/compact`, `/rewind [n]`, `/queue`, `/steer`, `/usage`,
 `/tools`, `/mcp`, `/skills`, `/shell` and `/agent` (background jobs), `/trust`
-and `/exit`. Details:
+and `/exit`. Your own commands are markdown files in `~/.nova-ai/commands/` or
+the repository's `.nova-ai/commands/` (Claude Code's format, so
+`.claude/commands` works too): the file is the prompt, `$ARGUMENTS` what you
+type after the command, and they show up in the `/` menu. Details:
 [`src/tui/README.md`](https://github.com/Datalab-Rotterdam/nova-ai-cli/blob/main/packages/cli/src/tui/README.md).
 
 ## Headless

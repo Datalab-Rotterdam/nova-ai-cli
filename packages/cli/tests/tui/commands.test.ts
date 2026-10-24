@@ -137,6 +137,7 @@ test("/effort is offered only when the selected model has thinking levels", asyn
       return `Thinking effort: ${level}.`;
     },
     print: (text: string) => printed.push(text),
+    agentCommands: () => [],
   } as unknown as SlashCommandContext;
   const names = () => allCommands(context).map((command) => command.name);
 

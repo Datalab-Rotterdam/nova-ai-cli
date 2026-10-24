@@ -17,7 +17,7 @@ there), otherwise `~/.nova-ai`. Directories are created `0700`, files `0600`.
   memory/<name>.md              global memory notes
   skills/<name>/SKILL.md        global skills (see "Skills")
   agents/<name>.agent.md        global agents (see "Agents")
-  commands/<name>.md            extension: global slash commands (see "Commands"; subfolders: ns:name)
+  commands/<name>.md            global slash commands (see "Commands"; subfolders: ns:name)
   settings.json                 user settings: permission rules, default mode
   mcp.json                      extension: user MCP servers (see "MCP servers")
   credentials.json              CLI only: API key + default model and thinking level
@@ -40,7 +40,7 @@ there), otherwise `~/.nova-ai`. Directories are created `0700`, files `0600`.
 <workspace>/.nova-ai/settings.json        team settings, committed
 <workspace>/.nova-ai/settings.local.json  personal settings, git-ignored
 <workspace>/.nova-ai/skills/<name>/SKILL.md  project skills, committed
-<workspace>/.nova-ai/commands/<name>.md       extension: project slash commands, committed
+<workspace>/.nova-ai/commands/<name>.md       project slash commands, committed
 <workspace>/NOVA.md             team instructions, committed, read-only for Nova
 <workspace>/AGENTS.md           team instructions, committed, read-only for Nova
 ```
@@ -384,7 +384,6 @@ Nova AI Browser host they carry. Its folder holds `.nova-bundled.json`:
 
 Slash commands as markdown files, in Claude Code's format: the file's text is the
 prompt, sent as the user's message when they run `/<name> [arguments]`.
-Extension only: nova-ai-cli does not read command files yet.
 
 ```markdown
 ---
@@ -406,6 +405,10 @@ Write unit tests for $ARGUMENTS in the style of the existing tests.
 - `allowed-tools` is read by Claude Code; Nova ignores it for now.
 - Built-in commands win a name clash. The extension also offers enabled skills as
   `/<skill-name>` and MCP prompts as `/mcp__<server>__<prompt>`.
+- nova-ai-cli's agent reads the same files for every ACP client: it lists them
+  in `available_commands_update` (read again after each turn) and expands a
+  prompt that starts with `/<name>`. It always reads the `.claude/commands`
+  folders, as it does `.claude/skills`; `model` must be a model of the account.
 
 ## Agents
 
