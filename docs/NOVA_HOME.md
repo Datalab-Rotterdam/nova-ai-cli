@@ -97,6 +97,9 @@ Sources, all merged:
   confirmed unless an allow rule names it.
 - Trust also gates MCP servers the workspace declares (see "MCP servers"):
   they are only started in a trusted workspace.
+- `webSearch.searxngUrl` in `~/.nova-ai/settings.json` (an http(s) URL) is the
+  SearXNG server nova-ai-cli's `web_search` tries first; a client that sets
+  its own (VS Code's `nova.webSearch.searxng`) overrides it.
 
 ### Hooks
 

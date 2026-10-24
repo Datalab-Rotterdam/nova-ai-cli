@@ -172,7 +172,9 @@ need ACP. Everything is documented in
 - **Web pages are fetched only with approval.** `fetch_url` asks every time
   unless a rule allows that URL (a URL can carry data out), and a redirect to
   another site needs its own approval. `web_search` asks the same way, since
-  the query goes to the search providers (You.com, DuckDuckGo).
+  the query goes to the search providers (You.com, DuckDuckGo; your own
+  SearXNG server first when `~/.nova-ai/settings.json` has
+  `"webSearch": { "searxngUrl": "https://…" }`).
 - **File access stays in the workspace** (symlinks resolved); commands run in
   their own process group with a timeout, and the whole tree is stopped on
   cancel.

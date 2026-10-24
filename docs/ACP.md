@@ -106,7 +106,7 @@ numbers are clamped to the range shown, other types are ignored.
 | `compactThreshold` | 0.3–0.95 | 0.8 | Share of the context window at which a turn compacts before calling the model |
 | `memory` | boolean | `true` | Memory, `NOVA.md` and `AGENTS.md` in the prompt, and the memory tools |
 | `commandTimeoutSeconds` | 5–600 | 120 | Time limit for commands that set no `timeout_seconds` |
-| `searxngUrl` | http(s) URL, or `null`/`""` | `null` | A SearXNG server (JSON format enabled) that `web_search` tries before You.com and DuckDuckGo |
+| `searxngUrl` | http(s) URL, or `null`/`""` | `webSearch.searxngUrl` of `~/.nova-ai/settings.json`, else `null` | A SearXNG server (JSON format enabled) that `web_search` tries before You.com and DuckDuckGo |
 
 ### Modes
 
