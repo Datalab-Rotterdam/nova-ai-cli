@@ -207,6 +207,13 @@ export const builtinCommands: SlashCommand[] = [
     },
   },
   {
+    name: "copy",
+    description: "Copy the last answer to the clipboard (Ctrl+S selects text with the mouse)",
+    async run(ctx) {
+      ctx.print(await ctx.copyLastAnswer());
+    },
+  },
+  {
     name: "usage",
     description: "Inspect estimated context usage by category",
     run(ctx) {

@@ -112,6 +112,7 @@ added to the transcript once.
 | Shift+Tab                        | Cycle agent / ask / plan mode                                                           |
 | Escape                           | Cancel active work; otherwise jump back to the newest output                            |
 | PgUp / PgDn, mouse wheel         | Scroll the transcript (Shift+drag selects text)                                         |
+| Ctrl+S                           | Select mode: mouse reporting off, so the terminal selects text; Ctrl+S again restores the wheel |
 | Ctrl+C twice                     | Cancel, then exit with a resume command                                                 |
 | Ctrl+O                           | Expand or collapse the model's thinking and verbose inline tool/background details; activity blocks stay compact |
 | Ctrl+T                           | Open the tool inspector                                                                 |

@@ -33,6 +33,8 @@ export type SlashCommandContext = {
   getInteractionMode(): InteractionMode;
   /** Built-in modes, then the user's agent files. */
   getInteractionModes(): InteractionMode[];
+  /** Copies the last answer to the clipboard; returns what happened. */
+  copyLastAnswer(): Promise<string>;
   /** Commands the agent offers that the CLI doesn't have itself (the user's command files). */
   agentCommands(): { name: string; description: string }[];
   setInteractionMode(mode: InteractionMode): void;

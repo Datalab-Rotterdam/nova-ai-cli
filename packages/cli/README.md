@@ -75,7 +75,9 @@ The UI runs full screen (the terminal's alternate screen, like `less` or
 `vim`) and gives your shell its screen back on exit. The mouse wheel or
 PgUp/PgDn scroll the transcript, Esc jumps back to the newest output, and
 while you read an answer the prompt that asked for it stays pinned on the top
-row. To select text, hold Shift (Option in some macOS terminals) while dragging.
+row. To select text, hold Shift (Option in some macOS terminals) while dragging,
+or press Ctrl+S to turn the mouse over to your terminal (select mode; Ctrl+S
+again gives the wheel back). `/copy` copies the last answer.
 
 - **Modes** (Shift+Tab): `agent` does the work; `plan` reads the code, asks
   questions and builds a task list but changes nothing; `ask` only answers;
@@ -102,10 +104,11 @@ row. To select text, hold Shift (Option in some macOS terminals) while dragging.
 | Shift+Tab | Cycle agent / ask / plan / autopilot and your own agents |
 | Ctrl+R / Ctrl+P / Ctrl+K | Sessions / models / permission mode |
 | Ctrl+O / Ctrl+T / Ctrl+B | Thinking and verbose tool output / tool inspector / background jobs |
+| Ctrl+S | Select mode: the mouse selects text instead of scrolling (again to switch back) |
 | Alt+V | Paste a clipboard image |
 
 Slash commands: `/help`, `/model`, `/effort` (thinking models), `/mode`, `/permission`, `/session`,
-`/resume`, `/clear`, `/compact`, `/rewind [n]`, `/queue`, `/steer`, `/usage` (context, and the session's tokens and estimated cost; the status line shows `≈ €0.0123` once a priced model answered),
+`/resume`, `/clear`, `/compact`, `/copy`, `/rewind [n]`, `/queue`, `/steer`, `/usage` (context, and the session's tokens and estimated cost; the status line shows `≈ €0.0123` once a priced model answered),
 `/tools`, `/mcp`, `/skills`, `/shell` and `/agent` (background jobs), `/trust`
 and `/exit`. Your own commands are markdown files in `~/.nova-ai/commands/` or
 the repository's `.nova-ai/commands/` (Claude Code's format, so
