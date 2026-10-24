@@ -5,6 +5,7 @@ import { describe, it } from "node:test";
 import * as acp from "@agentclientprotocol/sdk";
 import { NovaAgent } from "../../src/acp/agent.js";
 import { sse, text, withFakeNova } from "../../../../test-support/fake-nova.js";
+import { loadStoredSession } from "../../src/core/sessions.js";
 
 function recordingClient() {
   const updates: Array<Record<string, unknown>> = [];
@@ -61,12 +62,38 @@ describe("session updates", () => {
         await agent.prompt({ sessionId, prompt: [{ type: "text", text: "Say hi" }] }, client);
         assert.deepEqual(
           ofKind("usage_update").map((u) => [u.used, u.size, u._meta ?? null]),
-          [[1230, 100000, null]],
+          [[1230, 100000, { "nova-ai-cli/usageTotals": { promptTokens: 1200, completionTokens: 30, cachedTokens: 0 } }]],
         );
         const info = ofKind("session_info_update").at(-1)!;
         assert.equal(info.title, "Say hi");
         assert.ok(typeof info.updatedAt === "string");
       },
+    );
+  });
+
+  it("adds up tokens and the estimated cost per session, also after a reload", async () => {
+    await withFakeNova(
+      () =>
+        sse([
+          text("Hi."),
+          { choices: [], usage: { prompt_tokens: 1_000_000, completion_tokens: 500_000, prompt_tokens_details: { cached_tokens: 200_000 } } },
+        ]),
+      async (_requests, home) => {
+        const { client, ofKind } = recordingClient();
+        const { agent, sessionId } = await start(home, client);
+        await agent.prompt({ sessionId, prompt: [{ type: "text", text: "one" }] }, client);
+        await agent.prompt({ sessionId, prompt: [{ type: "text", text: "two" }] }, client);
+        const last = ofKind("usage_update").at(-1)!;
+        // 2 × (1M × €2 + 0.5M × €8) / 1M = €12
+        assert.deepEqual(last.cost, { amount: 12, currency: "EUR" });
+        assert.deepEqual((last._meta as Record<string, unknown>)["nova-ai-cli/usageTotals"], {
+          promptTokens: 2_000_000, completionTokens: 1_000_000, cachedTokens: 400_000, cost: 12, currency: "EUR",
+        });
+        assert.deepEqual(loadStoredSession(sessionId)!.usageTotals, {
+          promptTokens: 2_000_000, completionTokens: 1_000_000, cachedTokens: 400_000, cost: 12, currency: "EUR",
+        });
+      },
+      [{ id: "fake-model", object: "model", created: 0, owned_by: "x", context_window: 100000, inputCostPer1M: 2, outputCostPer1M: 8 }],
     );
   });
 

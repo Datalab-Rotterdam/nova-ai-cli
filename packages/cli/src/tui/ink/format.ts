@@ -1,5 +1,6 @@
 import { diffLines } from "diff";
 import type { ContextUsage } from "@datalabrotterdam/nova-ai-agent/core/context-usage.js";
+import type { UsageTotals } from "@datalabrotterdam/nova-ai-agent/core/usage.js";
 import type { ToolCallView } from "../state/types.js";
 import { highlightLines, languageFromPath } from "./highlight.js";
 
@@ -14,6 +15,21 @@ export function formatElapsedTime(elapsedMs: number): string {
   if (hours > 0) return `${hours}h ${minutes}m ${seconds}s`;
   if (minutes > 0) return `${minutes}m ${seconds}s`;
   return `${seconds}s`;
+}
+
+/** A cost with enough digits for the fraction of a cent one request often costs (as in VS Code). */
+export function formatCost(amount: number, currency = "EUR"): string {
+  try {
+    return new Intl.NumberFormat("en-US", { style: "currency", currency, maximumFractionDigits: amount < 1 ? 4 : 2 }).format(amount);
+  } catch {
+    return `${amount.toFixed(4)} ${currency}`;
+  }
+}
+
+/** The session's totals for /usage: tokens in (cached) and out, and the estimated cost. */
+export function formatUsageTotals(totals: UsageTotals): string {
+  const cost = totals.cost !== undefined ? ` · ≈ ${formatCost(totals.cost, totals.currency)} (from the models' prices per 1M tokens; cached tokens count as input)` : "";
+  return `This session: ${formatTokenCount(totals.promptTokens)} in${totals.cachedTokens ? ` (${formatTokenCount(totals.cachedTokens)} cached)` : ""} · ${formatTokenCount(totals.completionTokens)} out${cost}`;
 }
 
 export function formatTokenCount(value: number): string {

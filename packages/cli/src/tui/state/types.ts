@@ -1,3 +1,4 @@
+import type { UsageTotals } from "@datalabrotterdam/nova-ai-agent/core/usage.js";
 import type { ContextUsage } from "@datalabrotterdam/nova-ai-agent/core/context-usage.js";
 import type {
   UserInputRequest,
@@ -109,5 +110,7 @@ export type UIState = {
   statusLine: string | null;
   queuedCount: number;
   contextUsage: ContextUsage | null;
+  /** The session's tokens and estimated cost, from the agent's usage updates. */
+  usageTotals?: UsageTotals | null;
   updateAvailable: UpdateAvailable | null;
 };

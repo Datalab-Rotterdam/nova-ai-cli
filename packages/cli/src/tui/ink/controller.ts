@@ -39,7 +39,7 @@ import {
 import { effortLabel } from "@datalabrotterdam/nova-ai-agent/core/model-capabilities.js";
 import type { KeyPress } from "./editor/prompt-editor.js";
 import { PromptEditor } from "./editor/prompt-editor.js";
-import { formatContextUsage, formatImageSize } from "./format.js";
+import { formatContextUsage, formatImageSize, formatUsageTotals } from "./format.js";
 import { bindPromptSubmission } from "./prompt-submission.js";
 import { ASSISTANT_MARKER, WORKING_FRAMES } from "./theme.js";
 import {
@@ -492,7 +492,8 @@ export class TuiController {
     this.showText("Context usage", "Calculating context usage...");
     try {
       const usage = await this.runner.refreshContextUsage();
-      this.showText("Context usage", formatContextUsage(usage));
+      const totals = this.store.getState().usageTotals;
+      this.showText("Context usage", [formatContextUsage(usage), ...(totals ? [formatUsageTotals(totals)] : [])].join("\n\n"));
     } catch (error) {
       this.showText("Context usage", errorMessage(error, "Failed to calculate context usage."));
     }

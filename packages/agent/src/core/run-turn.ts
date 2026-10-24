@@ -26,6 +26,7 @@ import {
   runToolBatch,
   type ToolBatchContext,
 } from "./tool-batch.js";
+import { readUsage, type RequestUsage } from "./usage.js";
 
 const DEFAULT_MAX_TOOL_ROUNDS = 64;
 const MAX_EMPTY_COMPLETION_RETRIES = 2;
@@ -256,6 +257,7 @@ export async function runTurn(
                   { role: "user" as const, content: retryInstruction },
                 ]
               : messages;
+        let requestUsage: RequestUsage | null = null;
         for await (const event of novaClient.chat.completions.stream(
           // History may hold native tool exchanges from before this model
           // fell back to the text protocol; render them as text.
@@ -263,6 +265,7 @@ export async function runTurn(
             model,
             messages: toLegacyMessages(requestMessages),
             ...(deps.reasoningEffort ? { reasoning_effort: deps.reasoningEffort } : {}),
+            stream_options: { include_usage: true },
           },
           { signal },
         )) {
@@ -271,6 +274,8 @@ export async function runTurn(
             continue;
           }
           if (event.type !== "chunk") continue;
+          // ponytail: usage comes in the last chunk, so a stream cut short at a tool call reports none.
+          requestUsage = readUsage(event.data) ?? requestUsage;
 
           const choice = event.data.choices?.[0];
           if (typeof choice?.finish_reason === "string") {
@@ -325,6 +330,7 @@ export async function runTurn(
             }
           }
         }
+        if (requestUsage) await emit({ type: "usage", ...requestUsage });
       } catch (error) {
         if (
           !contextCompactionUsed &&

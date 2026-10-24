@@ -1,3 +1,4 @@
+import { parseUsageTotals } from "@datalabrotterdam/nova-ai-agent/core/usage.js";
 import type { ChildProcess } from "node:child_process";
 import { NOVA_NOTIFICATIONS } from "@datalabrotterdam/nova-ai-agent/acp/extensions.js";
 import { openBrowser } from "@datalabrotterdam/nova-ai-agent/acp/auth-server.js";
@@ -419,6 +420,11 @@ export class TuiAcpClient {
           });
         }
         return;
+      case "usage_update": {
+        const totals = parseUsageTotals(update._meta?.["nova-ai-cli/usageTotals"]);
+        if (totals) this.store.setState({ usageTotals: totals });
+        return;
+      }
       case "available_commands_update":
         this.agentCommands = update.availableCommands.map(({ name, description, input }) => ({
           name,

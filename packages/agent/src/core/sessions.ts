@@ -13,6 +13,7 @@ import { chatContentToText } from "./chat-content.js";
 import { importExtensionSessions } from "./extension-sessions.js";
 import { ensureProject, novaHomeRoot, projectsDir } from "./nova-home.js";
 import { truncateStoredToolMessage } from "./tool-output.js";
+import { parseUsageTotals, type UsageTotals } from "./usage.js";
 
 export type StoredSession = {
   sessionId: string;
@@ -20,6 +21,8 @@ export type StoredSession = {
   title: string | null;
   updatedAt: string;
   messages: ChatMessage[];
+  /** Tokens and estimated cost so far (the latest header's). */
+  usageTotals?: UsageTotals;
 };
 
 /**
@@ -33,7 +36,11 @@ type HeaderLine = {
   version?: number;
   cwd: string;
   title: string | null;
+  usageTotals?: UsageTotals;
 };
+
+/** What every session write restates in its header line. */
+type SessionHeader = { cwd: string; title: string | null; usageTotals?: UsageTotals };
 type MessageLine = { kind: "message"; updatedAt: string; message: ChatMessage };
 type TurnLine = {
   kind: "turn";
@@ -259,6 +266,7 @@ function parseSessionTimeline(raw: string): {
       title: header.title,
       updatedAt,
       messages,
+      ...(parseUsageTotals(header.usageTotals) ? { usageTotals: parseUsageTotals(header.usageTotals)! } : {}),
     },
     checkpoints,
   };
@@ -293,7 +301,7 @@ export function loadStoredSession(sessionId: string): StoredSession | null {
  */
 export function appendSessionTurn(
   sessionId: string,
-  header: { cwd: string; title: string | null },
+  header: SessionHeader,
   newMessages: ChatMessage[],
 ): SessionCheckpoint {
   const path = sessionFileForWrite(sessionId, header.cwd);
@@ -308,6 +316,7 @@ export function appendSessionTurn(
       version: SESSION_FORMAT_VERSION,
       cwd: header.cwd,
       title: header.title,
+      ...(header.usageTotals ? { usageTotals: header.usageTotals } : {}),
     } satisfies HeaderLine),
   );
   const checkpointId = crypto.randomUUID();
@@ -337,7 +346,7 @@ export function appendSessionTurn(
  */
 export function writeImportedSession(
   sessionId: string,
-  header: { cwd: string; title: string | null },
+  header: SessionHeader,
   turns: Array<{ updatedAt: string; messages: ChatMessage[] }>,
 ): boolean {
   if (findSessionFile(sessionId)) return false;
@@ -348,6 +357,7 @@ export function writeImportedSession(
       version: SESSION_FORMAT_VERSION,
       cwd: header.cwd,
       title: header.title,
+      ...(header.usageTotals ? { usageTotals: header.usageTotals } : {}),
     } satisfies HeaderLine),
     ...turns.map((turn) =>
       JSON.stringify({
@@ -370,7 +380,7 @@ export function writeImportedSession(
  */
 export function appendSessionCompaction(
   sessionId: string,
-  header: { cwd: string; title: string | null },
+  header: SessionHeader,
   messages: ChatMessage[],
 ): void {
   const path = sessionFileForWrite(sessionId, header.cwd);
@@ -381,6 +391,7 @@ export function appendSessionCompaction(
       version: SESSION_FORMAT_VERSION,
       cwd: header.cwd,
       title: header.title,
+      ...(header.usageTotals ? { usageTotals: header.usageTotals } : {}),
     } satisfies HeaderLine),
     JSON.stringify({
       kind: "compaction",
@@ -516,6 +527,8 @@ export function rewindStoredSession(
         version: SESSION_FORMAT_VERSION,
         cwd: timeline.session.cwd,
         title: deriveTitle(messages),
+        // Rewinding takes back messages, not the tokens they cost.
+        ...(timeline.session.usageTotals ? { usageTotals: timeline.session.usageTotals } : {}),
       } satisfies HeaderLine),
       JSON.stringify({
         kind: "rewind",
@@ -563,7 +576,7 @@ export function forkStoredSession(
   if (!source) return null;
   appendSessionTurn(
     newSessionId,
-    { cwd: overrides.cwd, title: source.title },
+    { cwd: overrides.cwd, title: source.title, ...(source.usageTotals ? { usageTotals: source.usageTotals } : {}) },
     source.messages,
   );
   return { ...source, sessionId: newSessionId, cwd: overrides.cwd };

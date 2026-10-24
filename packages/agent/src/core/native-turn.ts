@@ -13,6 +13,7 @@ import {
 } from "./model/tool-support.js";
 import type { RunTurnDeps, RunTurnResult } from "./run-turn.js";
 import { runToolBatch, type BatchEntry } from "./tool-batch.js";
+import { readUsage, type RequestUsage } from "./usage.js";
 
 const DEFAULT_MAX_TOOL_ROUNDS = 64;
 const MAX_EMPTY_COMPLETION_RETRIES = 2;
@@ -111,7 +112,7 @@ export async function runNativeTurn(
     let text = "";
     const calls: StreamedCall[] = [];
     let finishReason: string | null = null;
-    let reportedUsage: { promptTokens: number; completionTokens: number } | null = null;
+    let reportedUsage: RequestUsage | null = null;
     // Parser callbacks are synchronous; their emits are awaited per chunk so
     // client notifications keep the stream's order and backpressure.
     let pending: Array<void | Promise<void>> = [];
@@ -157,13 +158,7 @@ export async function runNativeTurn(
         { signal },
       )) {
         if (event.type !== "chunk") continue;
-        const usage = event.data.usage;
-        if (usage && typeof usage.prompt_tokens === "number") {
-          reportedUsage = {
-            promptTokens: usage.prompt_tokens,
-            completionTokens: typeof usage.completion_tokens === "number" ? usage.completion_tokens : 0,
-          };
-        }
+        reportedUsage = readUsage(event.data) ?? reportedUsage;
         for (const choice of event.data.choices ?? []) {
           if (typeof choice.finish_reason === "string") {
             finishReason = choice.finish_reason;

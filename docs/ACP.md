@@ -141,7 +141,10 @@ mode.
 Besides text (`agent_message_chunk`), reasoning (`agent_thought_chunk`),
 `tool_call`/`tool_call_update` and `plan`, the agent sends:
 
-- `usage_update` after each turn (token usage from the gateway);
+- `usage_update` after each model request (token usage from the gateway),
+  with the session's cumulative `cost` when its models have a price and the
+  token totals in `_meta["nova-ai-cli/usageTotals"]` (NOVA_HOME.md,
+  "Sessions"); background agents' requests count too;
 - `session_info_update` with the title derived from the conversation;
 - `available_commands_update`: `/compact` (summarize older messages), then
   the user's command files, skills and MCP prompts with an `input.hint`; sent
