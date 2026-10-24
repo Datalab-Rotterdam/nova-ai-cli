@@ -19,7 +19,7 @@ there), otherwise `~/.nova-ai`. Directories are created `0700`, files `0600`.
   agents/<name>.agent.md        global agents (see "Agents")
   commands/<name>.md            global slash commands (see "Commands"; subfolders: ns:name)
   settings.json                 user settings: permission rules, default mode
-  mcp.json                      extension: user MCP servers (see "MCP servers")
+  mcp.json                      user MCP servers (see "MCP servers")
   credentials.json              CLI only: API key + default model and thinking level
   model-capabilities.json       CLI only: learned native tool-call support
   update-check.json             CLI only: npm's latest versions (asked at most daily), skipped/snoozed update
@@ -151,9 +151,9 @@ name):
 
 | File | Scope | Read by |
 |---|---|---|
-| `~/.nova-ai/mcp.json` | the user's, every workspace | extension |
+| `~/.nova-ai/mcp.json` | the user's, every workspace | both |
 | `<workspace>/.mcp.json` | team, committed (also read by Claude Code) | both |
-| `<workspace>/.nova-ai/mcp.json` | team, committed | extension |
+| `<workspace>/.nova-ai/mcp.json` | team, committed | both |
 | `mcpServers` in `<workspace>/.nova-ai/settings.json` | team, ACP format (`[{ name, command, args, env }]`) | CLI |
 
 ```json
@@ -166,9 +166,8 @@ name):
 - `type` is `stdio` (default when `command` is set), `http` (Streamable
   HTTP; default when `url` is set) or `sse`. The extension falls back from
   `http` to SSE; the CLI connects with the given type only.
-- Extension: `${VAR}` and `${VAR:-default}` expand from the environment in
-  `command`, `args`, `env`, `url` and `headers`. The CLI takes values as
-  written.
+- `${VAR}` and `${VAR:-default}` expand from the environment in `command`,
+  `args`, `env`, `url` and `headers`.
 - OAuth: servers that answer 401 are signed in to through the browser with a
   loopback redirect `http://127.0.0.1:<port>/callback`, from the extension's
   **Nova AI: MCP Servers** command or the CLI's `/mcp login <server>` (any

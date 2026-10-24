@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type * as acp from "@agentclientprotocol/sdk";
 import { OAUTH_META_KEY } from "./mcp-oauth.js";
-import { isWorkspaceTrusted } from "./nova-home.js";
+import { isWorkspaceTrusted, novaHomeRoot } from "./nova-home.js";
 import { readSettings } from "./policy/settings.js";
 
 export type McpConfigurationFailure = {
@@ -21,38 +21,53 @@ export const UNTRUSTED_MCP_MESSAGE =
   "Not started: MCP servers declared by this workspace only run once you trust it (/trust in the TUI, --trust-workspace headless).";
 
 /**
- * MCP servers the workspace declares (`.mcp.json`, `mcpServers` in
- * .nova-ai/settings.json). Declaring a stdio server means running a command,
- * so a cloned repository's servers only start in a trusted workspace.
+ * MCP servers from the user's `~/.nova-ai/mcp.json` and those the workspace
+ * declares (`mcpServers` in .nova-ai/settings.json, `.mcp.json`,
+ * `.nova-ai/mcp.json`); a later source replaces a server of the same name,
+ * as in the extension's `src/mcp/config.ts`. Declaring a stdio server means
+ * running a command, so a cloned repository's servers only start in a
+ * trusted workspace.
  */
 export function readWorkspaceMcpConfiguration(
   cwd: string,
   options: { trusted?: boolean } = {},
 ): WorkspaceMcpConfiguration {
-  const fromSettings = readSettings(join(cwd, ".nova-ai", "settings.json"))?.mcpServers;
-  const configured = Array.isArray(fromSettings) ? (fromSettings as acp.McpServer[]) : [];
-  const project = readProjectMcpConfiguration(cwd);
-  const servers = new Map(configured.map((server) => [server.name, server]));
-  for (const server of project.servers) servers.set(server.name, server);
-  const declared = [...servers.values()];
-  if (declared.length && !(options.trusted ?? isWorkspaceTrusted(cwd))) {
+  const user = readMcpFile(join(novaHomeRoot(), "mcp.json"), "~/.nova-ai/mcp.json");
+  const workspace = readDeclaredMcpConfiguration(cwd);
+  const servers = new Map(user.servers.map((server) => [server.name, server]));
+  const failures = [...user.failures, ...workspace.failures];
+  if (workspace.servers.length && !(options.trusted ?? isWorkspaceTrusted(cwd))) {
     return {
-      servers: [],
+      servers: [...servers.values()],
       failures: [
-        ...project.failures,
-        ...declared.map((server) => ({ serverName: server.name, message: UNTRUSTED_MCP_MESSAGE })),
+        ...failures,
+        ...workspace.servers.map((server) => ({ serverName: server.name, message: UNTRUSTED_MCP_MESSAGE })),
       ],
-      untrusted: declared.map((server) => server.name),
+      untrusted: workspace.servers.map((server) => server.name),
     };
   }
-  return { servers: declared, failures: project.failures };
+  for (const server of workspace.servers) servers.set(server.name, server);
+  return { servers: [...servers.values()], failures };
 }
 
 /** Whether this workspace asks for anything that needs trust. */
 export function workspaceNeedsTrust(cwd: string): boolean {
   if (isWorkspaceTrusted(cwd)) return false;
-  if (readWorkspaceMcpConfiguration(cwd, { trusted: true }).servers.length) return true;
+  if (readDeclaredMcpConfiguration(cwd).servers.length) return true;
   return loadWorkspaceAllowRules(cwd).length > 0;
+}
+
+/** The servers the workspace itself declares, in merge order. */
+function readDeclaredMcpConfiguration(cwd: string): WorkspaceMcpConfiguration {
+  const fromSettings = readSettings(join(cwd, ".nova-ai", "settings.json"))?.mcpServers;
+  const configured = Array.isArray(fromSettings) ? (fromSettings as acp.McpServer[]) : [];
+  const files = [
+    readProjectMcpConfiguration(cwd),
+    readMcpFile(join(cwd, ".nova-ai", "mcp.json"), ".nova-ai/mcp.json"),
+  ];
+  const servers = new Map(configured.map((server) => [server.name, server]));
+  for (const file of files) for (const server of file.servers) servers.set(server.name, server);
+  return { servers: [...servers.values()], failures: files.flatMap((file) => file.failures) };
 }
 
 function loadWorkspaceAllowRules(cwd: string): string[] {
@@ -63,20 +78,24 @@ function loadWorkspaceAllowRules(cwd: string): string[] {
 }
 
 export function readProjectMcpConfiguration(cwd: string): WorkspaceMcpConfiguration {
-  const path = join(cwd, ".mcp.json");
+  return readMcpFile(join(cwd, ".mcp.json"), ".mcp.json");
+}
+
+/** One file in Claude's format (`{ "mcpServers": { … } }`); `label` names it in failures. */
+function readMcpFile(path: string, label: string): WorkspaceMcpConfiguration {
   let raw: string;
   try {
     raw = readFileSync(path, "utf8");
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return { servers: [], failures: [] };
-    return { servers: [], failures: [{ serverName: ".mcp.json", message: errorMessage(error, "Could not read file") }] };
+    return { servers: [], failures: [{ serverName: label, message: errorMessage(error, "Could not read file") }] };
   }
 
   let document: unknown;
   try {
     document = JSON.parse(raw);
   } catch (error) {
-    return { servers: [], failures: [{ serverName: ".mcp.json", message: errorMessage(error, "Invalid JSON") }] };
+    return { servers: [], failures: [{ serverName: label, message: errorMessage(error, "Invalid JSON") }] };
   }
 
   const root = asRecord(document);
@@ -84,7 +103,7 @@ export function readProjectMcpConfiguration(cwd: string): WorkspaceMcpConfigurat
   if (!definitions) {
     return {
       servers: [],
-      failures: [{ serverName: ".mcp.json", message: 'Expected an "mcpServers" object.' }],
+      failures: [{ serverName: label, message: 'Expected an "mcpServers" object.' }],
     };
   }
 
@@ -96,7 +115,7 @@ export function readProjectMcpConfiguration(cwd: string): WorkspaceMcpConfigurat
     try {
       servers.push(normalizeProjectServer(name, config));
     } catch (error) {
-      failures.push({ serverName: `.mcp.json:${name}`, message: errorMessage(error, "Invalid server configuration") });
+      failures.push({ serverName: `${label}:${name}`, message: errorMessage(error, "Invalid server configuration") });
     }
   }
   return { servers, failures };
@@ -108,8 +127,9 @@ function normalizeProjectServer(name: string, config: Record<string, unknown> | 
 
   if (type === "http" || type === "sse") {
     if (typeof config.url !== "string" || !config.url) throw new Error(`${type} server requires a URL.`);
+    const url = expand(config.url);
     try {
-      new URL(config.url);
+      new URL(url);
     } catch {
       throw new Error(`${type} server requires a valid URL.`);
     }
@@ -117,7 +137,7 @@ function normalizeProjectServer(name: string, config: Record<string, unknown> | 
     return {
       name,
       type,
-      url: config.url,
+      url,
       headers: normalizePairs(config.headers, "headers"),
       ...(oauth ? { _meta: { [OAUTH_META_KEY]: oauth } } : {}),
     };
@@ -130,8 +150,8 @@ function normalizeProjectServer(name: string, config: Record<string, unknown> | 
   }
   return {
     name,
-    command: config.command,
-    args: (config.args as string[] | undefined) ?? [],
+    command: expand(config.command),
+    args: ((config.args as string[] | undefined) ?? []).map((arg) => expand(arg)),
     env: normalizePairs(config.env, "env"),
   };
 }
@@ -147,7 +167,7 @@ function normalizePairs(value: unknown, label: string): Array<{ name: string; va
     }
     return value.map((entry) => {
       const pair = entry as { name: string; value: string };
-      return { name: pair.name, value: pair.value };
+      return { name: pair.name, value: expand(pair.value) };
     });
   }
 
@@ -155,7 +175,12 @@ function normalizePairs(value: unknown, label: string): Array<{ name: string; va
   if (!record || !Object.values(record).every((entry) => typeof entry === "string")) {
     throw new Error(`${label} must be an object of string values.`);
   }
-  return Object.entries(record).map(([name, entry]) => ({ name, value: entry as string }));
+  return Object.entries(record).map(([name, entry]) => ({ name, value: expand(entry as string) }));
+}
+
+/** `${VAR}` and `${VAR:-default}` from the environment, as in Claude's `.mcp.json` (and the extension). */
+export function expand(value: string, env: NodeJS.ProcessEnv = process.env): string {
+  return value.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}/g, (_, name: string, fallback?: string) => env[name] ?? fallback ?? "");
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
