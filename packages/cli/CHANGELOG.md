@@ -1,3 +1,10 @@
+# [@datalabrotterdam/nova-ai-cli-v1.2.0-alpha.11](https://github.com/Datalab-Rotterdam/nova-ai-cli/compare/@datalabrotterdam/nova-ai-cli@1.2.0-alpha.10...@datalabrotterdam/nova-ai-cli@1.2.0-alpha.11) (2026-10-24)
+
+
+### Features
+
+* **agent:** skills and MCP prompts as slash commands ([95bb049](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/95bb04932c9edc12f964832b3e5274b3100387d1))
+
 # [@datalabrotterdam/nova-ai-cli-v1.2.0-alpha.10](https://github.com/Datalab-Rotterdam/nova-ai-cli/compare/@datalabrotterdam/nova-ai-cli@1.2.0-alpha.9...@datalabrotterdam/nova-ai-cli@1.2.0-alpha.10) (2026-10-24)
 
 
