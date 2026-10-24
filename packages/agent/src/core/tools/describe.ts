@@ -42,6 +42,8 @@ export function describeToolCall(
       }
       return { title: `Fetch ${clip(host)}`, locations: [] };
     }
+    case "web_search":
+      return { title: `Search the web for "${clip(str("query"))}"`, locations: [] };
     case "search_text":
       return { title: `Search for "${clip(str("query") || str("pattern"))}"`, locations };
     case "memory_write":

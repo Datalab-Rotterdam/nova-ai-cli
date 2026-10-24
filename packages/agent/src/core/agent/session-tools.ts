@@ -11,6 +11,7 @@ import { createEnterPlanModeTool } from "../tools/enter-plan-mode.js";
 import { availableTools } from "../tools/registry.js";
 import type { ToolDefinition } from "../tools/types.js";
 import { createUpdatePlanTool } from "../tools/update-plan.js";
+import { createWebSearchTool } from "../tools/web-search.js";
 import type { Session } from "./session.js";
 
 export function createMemoryTools(session: Session): ToolDefinition[] {
@@ -46,6 +47,7 @@ export function buildSessionTools(
   const baseTools = [
     ...(options.updatePlan ? [createUpdatePlanTool(options.updatePlan)] : []),
     ...availableTools(caps, session.environment, { background: true }),
+    createWebSearchTool(() => session.settings.searxngUrl),
     ...(session.skills.length ? [createLoadSkillTool(session.skills)] : []),
     ...(session.settings.memory ? createMemoryTools(session) : []),
     ...session.mcpTools,

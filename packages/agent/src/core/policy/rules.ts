@@ -198,6 +198,8 @@ function permissionTarget(
       return { names: [toolName], value: stringArg(args.pattern), path: false, shell: false };
     case "fetch_url":
       return { names: [toolName], value: stringArg(args.url), path: false, shell: false };
+    case "web_search":
+      return { names: [toolName], value: stringArg(args.query), path: false, shell: false };
     case "update_plan":
     case "todo_write": // nova-ai-vscode
       return { names: ["update_plan", "todo_write"], value: "", path: false, shell: false };
