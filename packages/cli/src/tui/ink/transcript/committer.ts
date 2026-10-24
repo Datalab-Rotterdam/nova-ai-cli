@@ -18,6 +18,7 @@ export type TranscriptBlock =
       /** The first part of a message carries the assistant marker. */
       first: boolean;
       streaming: boolean;
+      thinking?: boolean;
     }
   | { key: string; kind: "error"; text: string }
   | { key: string; kind: "tool"; call: ToolCallView; expanded: boolean }
@@ -173,6 +174,7 @@ export class TranscriptCommitter {
         text,
         first: offset === 0,
         streaming,
+        ...(message.thinking ? { thinking: true } : {}),
       }) as const;
 
     if (!message.streaming) {

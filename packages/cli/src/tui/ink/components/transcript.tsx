@@ -48,6 +48,15 @@ export function TranscriptBlockView({ block, frame = 0 }: BlockProps): ReactNode
     }
     case "assistant": {
       const text = block.first ? block.text.replace(/^\s+/, "") : block.text;
+      if (block.thinking) {
+        return (
+          <Prefixed prefix="  " color={palette.faint}>
+            <Text color={palette.muted} italic>
+              {block.first ? `thinking: ${text.trimEnd()}` : text.trimEnd()}
+            </Text>
+          </Prefixed>
+        );
+      }
       return (
         <Prefixed prefix={block.first ? `${ASSISTANT_MARKER} ` : "  "} color={palette.accent}>
           <Markdown text={text.trimEnd()} />

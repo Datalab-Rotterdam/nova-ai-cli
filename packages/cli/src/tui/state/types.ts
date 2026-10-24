@@ -43,7 +43,14 @@ export type UIMessage =
       text: string;
       queued?: "steer" | "followup";
     }
-  | { id: string; role: "assistant"; text: string; streaming: boolean }
+  | {
+      id: string;
+      role: "assistant";
+      text: string;
+      streaming: boolean;
+      /** The model's reasoning (agent_thought_chunk): one dim block per stretch of thinking. */
+      thinking?: boolean;
+    }
   | { id: string; role: "error"; text: string }
   | { id: string; role: "tool"; call: ToolCallView }
   | { id: string; role: "background"; job: BackgroundJobView };
