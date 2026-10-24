@@ -4,6 +4,8 @@ import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
+import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
+import { FileOAuthProvider, NeedsAuthError, oauthConfigOf } from "./mcp-oauth.js";
 import { truncateToolOutput } from "./tool-output.js";
 import { toToolParameters, type ToolParameters } from "./tools/schema.js";
 import type { ToolDefinition, ToolResult } from "./tools/types.js";
@@ -17,6 +19,11 @@ const WORKSPACE_PATH_HINT =
 
 function sanitize(name: string): string {
   return name.replace(/[^a-zA-Z0-9_-]/g, "_");
+}
+
+/** The name prefix of every tool listMcpTools makes for this server. */
+export function mcpToolPrefix(serverName: string): string {
+  return `${TOOL_NAME_PREFIX}${sanitize(serverName)}__`;
 }
 
 /**
@@ -54,14 +61,18 @@ function buildTransport(
   server: acp.McpServer,
   stderrTail: { text: string },
 ): Transport {
+  // Only used when the server answers 401: then stored tokens (refreshed as
+  // needed) or a NeedsAuthError; signing in is a separate step (_nova/mcp/login).
   if ("type" in server && server.type === "http") {
     return new StreamableHTTPClientTransport(new URL(server.url), {
       requestInit: { headers: headersToRecord(server.headers) },
+      authProvider: new FileOAuthProvider(server.name, server.url, oauthConfigOf(server)),
     });
   }
   if ("type" in server && server.type === "sse") {
     return new SSEClientTransport(new URL(server.url), {
       requestInit: { headers: headersToRecord(server.headers) },
+      authProvider: new FileOAuthProvider(server.name, server.url, oauthConfigOf(server)),
     });
   }
   const stdio = server as acp.McpServerStdio;
@@ -91,6 +102,8 @@ export type McpConnection = {
 export type McpConnectionFailure = {
   serverName: string;
   message: string;
+  /** The server wants an OAuth sign-in (_nova/mcp/login). */
+  needsAuth?: boolean;
 };
 
 export type McpConnectionResult = {
@@ -120,6 +133,9 @@ export async function connectMcpServers(
           return { serverName: server.name, client, close: () => client.close() };
         } catch (err) {
           await client.close().catch(() => {});
+          if (err instanceof NeedsAuthError || err instanceof UnauthorizedError) {
+            return { serverName: server.name, message: new NeedsAuthError(server.name).message, needsAuth: true };
+          }
           const reason = err instanceof Error ? err.message : "Connection failed.";
           const stderr = stderrTail.text.trim();
           return {
@@ -226,7 +242,7 @@ export async function listMcpTools(
     }
     for (const tool of serverTools) {
       // Sanitizing can map different names to one; keep every tool reachable.
-      const baseName = `${TOOL_NAME_PREFIX}${sanitize(connection.serverName)}__${sanitize(tool.name)}`;
+      const baseName = `${mcpToolPrefix(connection.serverName)}${sanitize(tool.name)}`;
       let qualifiedName = baseName;
       for (let suffix = 2; usedNames.has(qualifiedName); suffix++) {
         qualifiedName = `${baseName}_${suffix}`;

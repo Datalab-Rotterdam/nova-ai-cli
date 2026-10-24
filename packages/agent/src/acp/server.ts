@@ -1,3 +1,4 @@
+import { isAbsolute } from "node:path";
 import * as acp from "@agentclientprotocol/sdk";
 import type { NovaAgent } from "./agent.js";
 import { NOVA_METHODS } from "./extensions.js";
@@ -7,7 +8,6 @@ import {
   parseStartPromptParams,
   parseStartTerminalParams,
 } from "../core/background.js";
-import { isInteractionMode, type InteractionMode } from "../core/interaction-modes.js";
 import {
   parseEnqueuePromptParams,
   parseQueueEntryParams,
@@ -108,7 +108,21 @@ export function createAgentApp(agentImpl: NovaAgent): acp.AgentApp {
       return { compacted, removedMessages, keptMessages };
     })
     .onRequest(NOVA_METHODS.sessionContextUsage, parseContextUsageParams, (ctx) =>
-      agentImpl.contextUsage(ctx.params),
+      agentImpl.sessionContextUsage(ctx.params),
+    )
+    .onRequest(NOVA_METHODS.modelsList, parseModelsListParams, (ctx) =>
+      agentImpl.listModels(ctx.params),
+    )
+    .onRequest(NOVA_METHODS.mcpLogin, parseMcpServerParams, (ctx) =>
+      agentImpl.mcpLogin(ctx.params, ctx.client, ctx.signal),
+    )
+    .onRequest(NOVA_METHODS.mcpLogout, parseMcpServerParams, (ctx) => agentImpl.mcpLogout(ctx.params))
+    .onRequest(NOVA_METHODS.workspaceTrust, parseTrustParams, (ctx) =>
+      agentImpl.workspaceTrust(ctx.params),
+    )
+    .onRequest(NOVA_METHODS.skillsList, parseCwdParams, (ctx) => agentImpl.listSkills(ctx.params))
+    .onRequest(NOVA_METHODS.skillsSetEnabled, parseSetSkillParams, (ctx) =>
+      agentImpl.setSkillEnabled(ctx.params),
     )
     .onRequest(NOVA_METHODS.sessionSetSettings, parseSetSettingsParams, (ctx) =>
       agentImpl.setSessionSettings(ctx.params),
@@ -127,17 +141,67 @@ function parseCompactParams(params: unknown): { sessionId: string; model?: strin
 function parseContextUsageParams(params: unknown): {
   sessionId: string;
   contextWindow?: number | null;
-  mode?: InteractionMode;
+  model?: string;
+  mode?: string;
 } {
   const value = requireSessionParams(params);
-  if (value.mode !== undefined && !isInteractionMode(value.mode)) {
+  // A built-in mode or an agent file's id; an unknown one gets no tools, like ask.
+  if (value.mode !== undefined && typeof value.mode !== "string") {
     throw acp.RequestError.invalidParams({ mode: value.mode }, "Unknown interaction mode.");
   }
   return {
     sessionId: value.sessionId,
     contextWindow: typeof value.contextWindow === "number" ? value.contextWindow : null,
-    ...(value.mode !== undefined ? { mode: value.mode as InteractionMode } : {}),
+    ...(typeof value.model === "string" && value.model ? { model: value.model } : {}),
+    ...(value.mode !== undefined ? { mode: value.mode } : {}),
   };
+}
+
+function parseModelsListParams(params: unknown): { preferred?: string } {
+  const value = params && typeof params === "object" ? (params as Record<string, unknown>) : {};
+  return typeof value.preferred === "string" && value.preferred ? { preferred: value.preferred } : {};
+}
+
+function parseCwdParams(params: unknown): { cwd: string } {
+  const value = params && typeof params === "object" ? (params as Record<string, unknown>) : {};
+  if (typeof value.cwd !== "string" || !isAbsolute(value.cwd)) {
+    throw acp.RequestError.invalidParams({ cwd: value.cwd }, "cwd must be an absolute path.");
+  }
+  return { cwd: value.cwd };
+}
+
+function parseMcpServerParams(params: unknown): { sessionId: string; serverName: string } {
+  const value = requireSessionParams(params);
+  if (typeof value.serverName !== "string" || !value.serverName) {
+    throw acp.RequestError.invalidParams({ serverName: value.serverName }, "serverName is required.");
+  }
+  return { sessionId: value.sessionId, serverName: value.serverName };
+}
+
+function parseTrustParams(params: unknown): { cwd: string; trusted?: boolean } {
+  const { cwd } = parseCwdParams(params);
+  const trusted = (params as Record<string, unknown>).trusted;
+  if (trusted !== undefined && typeof trusted !== "boolean") {
+    throw acp.RequestError.invalidParams({ trusted }, "trusted must be a boolean.");
+  }
+  return trusted === undefined ? { cwd } : { cwd, trusted };
+}
+
+function parseSetSkillParams(params: unknown): {
+  cwd: string;
+  name: string;
+  enabled: boolean;
+  scope: "project" | "global";
+} {
+  const { cwd } = parseCwdParams(params);
+  const value = params as Record<string, unknown>;
+  if (typeof value.name !== "string" || !value.name || typeof value.enabled !== "boolean") {
+    throw acp.RequestError.invalidParams(params, "name (string) and enabled (boolean) are required.");
+  }
+  if (value.scope !== undefined && value.scope !== "project" && value.scope !== "global") {
+    throw acp.RequestError.invalidParams({ scope: value.scope }, 'scope must be "project" or "global".');
+  }
+  return { cwd, name: value.name, enabled: value.enabled, scope: value.scope ?? "project" };
 }
 
 function parseSetSettingsParams(params: unknown): { sessionId: string; settings: Record<string, unknown> } {

@@ -198,16 +198,21 @@ function permissionTarget(
       return { names: [toolName], value: stringArg(args.pattern), path: false, shell: false };
     case "fetch_url":
       return { names: [toolName], value: stringArg(args.url), path: false, shell: false };
+    case "web_search":
+      return { names: [toolName], value: stringArg(args.query), path: false, shell: false };
     case "update_plan":
     case "todo_write": // nova-ai-vscode
       return { names: ["update_plan", "todo_write"], value: "", path: false, shell: false };
-    default:
+    default: {
+      // `mcp__<server>` and `mcp__<server>__*` cover every tool of a server, as in the extension.
+      const server = /^mcp__(.+?)__./.exec(toolName)?.[1];
       return {
-        names: [toolName],
+        names: server ? [toolName, `mcp__${server}`, `mcp__${server}__*`] : [toolName],
         value: stableJson(args),
         path: false,
         shell: false,
       };
+    }
   }
 }
 

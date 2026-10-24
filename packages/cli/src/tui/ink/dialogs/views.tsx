@@ -5,6 +5,7 @@ import { OTHER_OPTION_ID } from "@datalabrotterdam/nova-ai-agent/core/user-quest
 import type { PermissionRequestView } from "../../state/types.js";
 import { formatToolCallDetails, sanitizeTerminalText, toolCallSummary } from "../format.js";
 import { palette } from "../theme.js";
+import { isMouseInput } from "../terminal-keyboard.js";
 import { StatusIcon } from "../components/transcript.js";
 import {
   permissionKey,
@@ -12,6 +13,7 @@ import {
   type QuestionState,
   type ScrollState,
   type SelectionState,
+  type SliderState,
   type ToolInspectorState,
   windowStart,
 } from "./state.js";
@@ -26,7 +28,7 @@ function useDialogInput(
   const [, setTick] = useState(0);
   useInput(
     (input, key) => {
-      if (handle(input, key) === "changed") setTick((tick) => tick + 1);
+      if (!isMouseInput(input) && handle(input, key) === "changed") setTick((tick) => tick + 1);
     },
     { isActive },
   );
@@ -45,6 +47,35 @@ export function Frame({ title, children, footer }: { title: string; children: Re
         </Text>
       ) : null}
     </Box>
+  );
+}
+
+/** `Off ──●── Low ──○── High`: the levels on one track, the chosen one marked. */
+export function SliderDialog({
+  title,
+  state,
+  isActive = true,
+}: { title: string; state: SliderState } & Keyed) {
+  useDialogInput((input, key) => state.handleKey(input, key), isActive);
+  const current = state.levels[state.selected];
+  return (
+    <Frame title={title} footer="←→ adjust · Enter apply · Esc cancel">
+      <Text wrap="truncate-end">
+        {state.levels.map((level, index) => {
+          const selected = index === state.selected;
+          return (
+            <Text key={level.value}>
+              {index > 0 ? <Text color={palette.faint}>{" ── "}</Text> : null}
+              <Text color={selected ? palette.primary : palette.faint}>{selected ? "● " : "○ "}</Text>
+              <Text bold={selected} color={selected ? undefined : palette.muted}>
+                {level.label}
+              </Text>
+            </Text>
+          );
+        })}
+      </Text>
+      {current?.description ? <Text color={palette.muted}>{current.description}</Text> : null}
+    </Frame>
   );
 }
 
@@ -219,7 +250,7 @@ export function QuestionDialog({
   const [, setTick] = useState(0);
   useInput(
     (input, key) => {
-      if (state.handleKey(input, key) === "changed") setTick((tick) => tick + 1);
+      if (!isMouseInput(input) && state.handleKey(input, key) === "changed") setTick((tick) => tick + 1);
     },
     { isActive },
   );
@@ -335,7 +366,7 @@ export function PermissionDialog({
 }: { request: PermissionRequestView; onClose: () => void } & Keyed) {
   useInput(
     (input, key) => {
-      if (permissionKey(request, input, key) === "closed") onClose();
+      if (!isMouseInput(input) && permissionKey(request, input, key) === "closed") onClose();
     },
     { isActive },
   );

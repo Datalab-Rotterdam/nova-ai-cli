@@ -6,7 +6,10 @@ import { ToolSupportStore } from "../core/model/tool-support.js";
 import { readCredentials, type StoredCredentials } from "../core/credentials.js";
 import { resolveModelContextWindow } from "../core/context-compaction.js";
 import {
+  effortLabel,
+  findModelMetadata,
   resolveDefaultModel,
+  resolveEffort,
   resolveModelSupportsImageInput,
 } from "../core/model-capabilities.js";
 import {
@@ -14,6 +17,8 @@ import {
   listJoinedModels,
   type JoinedModel,
 } from "./providers.js";
+
+export const THOUGHT_LEVEL_CONFIG_ID = "thought_level";
 
 /** Model discovery, per-model capability caches and the providers/* surface. */
 export class ModelService {
@@ -28,8 +33,10 @@ export class ModelService {
    * The model for a session that chose none (see resolveDefaultModel).
    * When the catalog can't be read, the saved default is used as is.
    */
-  async defaultModel(credentials: StoredCredentials): Promise<string | undefined> {
-    const preferred = credentials.defaultModel ?? process.env.NOVA_MODEL;
+  async defaultModel(
+    credentials: StoredCredentials,
+    preferred = credentials.defaultModel ?? process.env.NOVA_MODEL,
+  ): Promise<string | undefined> {
     try {
       return resolveDefaultModel(await this.modelCatalog(credentials.apiKey), preferred);
     } catch {
@@ -51,6 +58,27 @@ export class ModelService {
     return this.catalog.models;
   }
 
+  /**
+   * `_nova/models/list`: the chat models with what a client shows or checks
+   * (context window, image input), and the model to use given the client's
+   * `preferred` one (see resolveDefaultModel).
+   */
+  async listModels(
+    preferred?: string,
+  ): Promise<{ models: JoinedModel[]; defaultModel: string | null }> {
+    const credentials = readCredentials();
+    if (!credentials) throw acp.RequestError.authRequired();
+    const models = await listJoinedModels(
+      createNovaClient(credentials.apiKey),
+      this.disabledProviders,
+    );
+    const defaultModel = await this.defaultModel(
+      credentials,
+      preferred ?? credentials.defaultModel ?? process.env.NOVA_MODEL,
+    );
+    return { models, defaultModel: defaultModel ?? null };
+  }
+
   async buildConfigOptions(
     session: Session,
   ): Promise<acp.SessionConfigOption[]> {
@@ -66,19 +94,57 @@ export class ModelService {
       return [];
     }
     if (!models.length) return [];
-    return [
+    const currentModel =
+      session.model ?? (await this.defaultModel(credentials)) ?? models[0].id;
+    const current = models.find((m) => m.id === currentModel);
+    const options: acp.SessionConfigOption[] = [
       {
         id: "model",
         name: "Model",
         category: "model",
         type: "select",
-        currentValue:
-          session.model ??
-          (await this.defaultModel(credentials)) ??
-          models[0].id,
-        options: models.map((m) => ({ value: m.id, name: m.label })),
+        currentValue: currentModel,
+        options: models.map((m) => ({
+          value: m.id,
+          name: m.label,
+          ...(m.thinking ? { description: "Thinking model" } : {}),
+        })),
       },
     ];
+    if (current?.efforts.length) {
+      options.push({
+        id: THOUGHT_LEVEL_CONFIG_ID,
+        name: "Thinking",
+        category: "thought_level",
+        type: "select",
+        currentValue:
+          resolveEffort(
+            { reasoning_efforts: current.efforts, reasoning_default: current.reasoningDefault },
+            session.effort,
+          ) ?? current.efforts[0],
+        options: current.efforts.map((level) => ({
+          value: level,
+          name: effortLabel(level, current.efforts),
+        })),
+      });
+    }
+    return options;
+  }
+
+  /**
+   * The `reasoning_effort` to send for `model`: `chosen` when the model
+   * accepts it, else its default (see resolveEffort). Undefined for a model
+   * without levels, or when the catalog can't be read.
+   */
+  async effortFor(model: string, chosen: string | null): Promise<string | undefined> {
+    const credentials = readCredentials();
+    if (!credentials) return undefined;
+    try {
+      const catalog = await this.modelCatalog(credentials.apiKey);
+      return resolveEffort(findModelMetadata(catalog, model), chosen);
+    } catch {
+      return undefined;
+    }
   }
 
   async listProviders(): Promise<acp.ListProvidersResponse> {

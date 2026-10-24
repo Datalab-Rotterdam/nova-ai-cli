@@ -1,6 +1,5 @@
 import { realpath } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
-import { bundledSkillMessage, bundledSkillOf } from "../skills.js";
 
 export function resolveWorkspacePath(cwd: string, input: unknown): { path: string } | { error: string } {
   const requested = typeof input === "string" && input.trim() ? input : ".";
@@ -41,20 +40,6 @@ export async function resolveWorkspaceFile(
     };
   }
   return lexical;
-}
-
-/**
- * Like {@link resolveWorkspaceFile}, for tools that change files: bundled skills
- * (shipped and updated by a Nova app) are read-only and can only be switched off.
- */
-export async function resolveEditableWorkspaceFile(
-  cwd: string,
-  input: unknown,
-): Promise<{ path: string } | { error: string }> {
-  const resolved = await resolveWorkspaceFile(cwd, input);
-  if ("error" in resolved) return resolved;
-  const bundled = bundledSkillOf(resolved.path);
-  return bundled ? { error: bundledSkillMessage(bundled) } : resolved;
 }
 
 function isInside(root: string, candidate: string): boolean {

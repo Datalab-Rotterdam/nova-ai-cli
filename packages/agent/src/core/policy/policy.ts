@@ -10,7 +10,7 @@ import {
 
 export type PolicyDecision =
   | { decision: "deny"; reason: "deny-rule" }
-  | { decision: "allow"; reason: "read-only" | "allow-rule" | "session" | "mode" }
+  | { decision: "allow"; reason: "read-only" | "allow-rule" | "session" | "mode" | "hook" }
   | { decision: "ask" };
 
 /** Tools that change what Nova knows in every later chat: always confirmed unless a rule allows them. */

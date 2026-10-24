@@ -72,6 +72,15 @@ export async function emitToAcp(
         },
       });
       return;
+    case "notice":
+      await client.notify("session/update", {
+        sessionId,
+        update: {
+          sessionUpdate: "agent_thought_chunk",
+          content: { type: "text", text: event.text },
+        },
+      });
+      return;
     case "tool_pending": {
       const { title, locations } = describeToolCall(event.name, event.args, cwd);
       await client.notify("session/update", {
@@ -140,9 +149,14 @@ export function sessionStatusMeta(
 ): Record<string, unknown> {
   return {
     "nova-ai-cli/mcp": {
+      // Env and header values may be secrets: only their names leave the agent.
       configured: servers.map((server) => ({
         name: server.name,
         transport: "type" in server ? server.type : "stdio",
+        ...("url" in server ? { url: server.url } : {}),
+        ...("command" in server
+          ? { command: server.command, args: server.args, env: server.env.map((entry) => entry.name) }
+          : {}),
       })),
       connected: connections.map((connection) => connection.serverName),
       failures,

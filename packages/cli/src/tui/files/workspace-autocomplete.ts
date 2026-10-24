@@ -36,7 +36,8 @@ export class WorkspaceAutocompleteProvider {
   readonly triggerCharacters = ["@", "/"];
 
   constructor(
-    private readonly commands: CommandItem[],
+    /** A function when the list depends on state (e.g. /effort only for thinking models). */
+    private readonly commands: CommandItem[] | (() => CommandItem[]),
     private readonly cwd: string,
     private readonly files: string[],
     private readonly fdPath: string | null = null,
@@ -54,7 +55,8 @@ export class WorkspaceAutocompleteProvider {
     if (mention) return this.mentionSuggestions(mention, options.signal);
 
     if (cursorLine === 0 && before.startsWith("/") && !/\s/.test(before)) {
-      const items = filterCommands(this.commands, before.slice(1));
+      const commands = typeof this.commands === "function" ? this.commands() : this.commands;
+      const items = filterCommands(commands, before.slice(1));
       return items.length ? { items, prefix: before } : null;
     }
 

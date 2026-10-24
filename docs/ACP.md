@@ -58,7 +58,7 @@ needs Nova without credentials fails with `authRequired`.
 
 | Method | Notes |
 |---|---|
-| `session/new` | Starts MCP servers (in parallel, 10 s timeout each; failures are reported, not fatal). Returns `modes` and `configOptions`. |
+| `session/new` | Starts MCP servers (in parallel, 10 s timeout each; failures are reported, not fatal): the client's plus, in a trusted workspace, those it declares in `.mcp.json` and `.nova-ai/settings.json` (the client's win by name; `_meta["nova-ai-cli/workspaceMcp"]: false` leaves the workspace's out). Returns `modes` and `configOptions`. |
 | `session/load` | Replays the stored conversation: user and agent text, and tool calls with their final status, diff and (truncated) output. |
 | `session/resume` | Like load, without the replay. |
 | `session/fork` | Copies a stored session under a new id. |
@@ -66,7 +66,8 @@ needs Nova without credentials fails with `authRequired`.
 | `session/close` / `session/delete` | Close cancels a running turn and stops the session's MCP servers; delete also removes the stored file. Background jobs keep running until killed or the agent exits. |
 | `session/prompt` | One turn. Prompts for the same session are queued and run one after another. |
 | `session/cancel` | Aborts the model request and running tools, answers pending permission requests as cancelled, marks open tool calls failed ("Cancelled"), then returns `stopReason: "cancelled"`. |
-| `session/set_mode` | `agent`, `ask` or `plan` (see Modes). Permission modes are rejected here. |
+| `session/prompt` with `/<name> [arguments]` | For one of the user's command files (NOVA_HOME.md, "Commands"): the file's text with the arguments filled in is sent instead, with the file's `model` for that answer only. `/compact` is the agent's own. Other `/…` text is an ordinary prompt. |
+| `session/set_mode` | `agent`, `ask`, `plan` or one of the user's agent files (see Modes). Permission modes are rejected here. |
 | `session/set_config_option` | `permission_mode` and `model` (see below). |
 
 Session ids are UUIDs; anything else is rejected with `invalidParams`.
@@ -106,6 +107,7 @@ numbers are clamped to the range shown, other types are ignored.
 | `compactThreshold` | 0.3–0.95 | 0.8 | Share of the context window at which a turn compacts before calling the model |
 | `memory` | boolean | `true` | Memory, `NOVA.md` and `AGENTS.md` in the prompt, and the memory tools |
 | `commandTimeoutSeconds` | 5–600 | 120 | Time limit for commands that set no `timeout_seconds` |
+| `searxngUrl` | http(s) URL, or `null`/`""` | `webSearch.searxngUrl` of `~/.nova-ai/settings.json`, else `null` | A SearXNG server (JSON format enabled) that `web_search` tries before You.com and DuckDuckGo |
 
 ### Modes
 
@@ -114,6 +116,13 @@ numbers are clamped to the range shown, other types are ignored.
 | `agent` | All tools, plus `enter_plan_mode` |
 | `plan` | Read-only: `read_file`, `list_directory`, `find_files`, `search_text`, `memory_read`, `load_skill`, plus `ask_user` and `update_plan` |
 | `ask` | None |
+| `autopilot` | All tools; up to 1,000 tool rounds, and `ask_user` answers "choose the most reasonable option" itself. Permission requests still go to the client |
+| an agent file's id | What its `tools` and `readOnly` allow (all tools when it lists none); its body is added to the system prompt |
+
+`modes.availableModes` lists the built-in modes, then the user's agent files
+(`~/.nova-ai/agents/*.agent.md` and the project's; NOVA_HOME.md, "Agents"),
+read when the session starts. Files are read again on every prompt, so an
+edited one applies from the next message.
 
 The model can move itself from `agent` to `plan` with `enter_plan_mode`
 (reported as `current_mode_update`); it can never move to a less restricted
@@ -124,7 +133,8 @@ mode.
 | `configId` | Values |
 |---|---|
 | `permission_mode` | `default` (ask for every change), `acceptEdits` (file edits are accepted), `bypassPermissions` (everything is accepted; deny rules still apply). Set per session, never stored by the agent. |
-| `model` | The chat models of the account (embedding and speech models are left out). Present when the model list can be fetched; `config_option_update` follows when it loads late. |
+| `model` | The chat models of the account (embedding and speech models are left out); thinking models have the description "Thinking model". Present when the model list can be fetched; `config_option_update` follows when it loads late. |
+| `thought_level` (category `thought_level`) | The current model's `reasoning_effort` levels, lowest first (`none` is "Off"; a model that reasons without levels gets Off/On). Only present when the current model has levels. The choice is kept across model switches; a model that lacks it uses its default: `none` when it thinks only on request, else `medium` or its middle level. |
 
 ### Session updates
 
@@ -133,7 +143,9 @@ Besides text (`agent_message_chunk`), reasoning (`agent_thought_chunk`),
 
 - `usage_update` after each turn (token usage from the gateway);
 - `session_info_update` with the title derived from the conversation;
-- `available_commands_update`: `/compact` (summarize older messages);
+- `available_commands_update`: `/compact` (summarize older messages), then
+  the user's command files with their `argument-hint` as `input.hint`; sent
+  again after every turn;
 - `current_mode_update` and `config_option_update` when they change.
 
 Tool calls carry `kind`, `locations`, `rawInput`, `diff` content for edits
@@ -176,6 +188,13 @@ no capability: the agent fetches it itself. It always asks for approval
 unless a rule allows the URL, because a URL can carry data out. It only
 follows redirects on the same site; a redirect elsewhere is reported and needs
 its own call.
+
+`web_search` (also no capability) searches with keyless providers (the
+session's `searxngUrl` first, then You.com, then DuckDuckGo; one that fails
+falls through to the next), opens the top four result pages and returns the
+passages that match the query as numbered sources to cite. The query leaves
+the machine like a `fetch_url` URL, so it asks for approval unless a rule
+allows it (`web_search` or `web_search(<glob>)` on the query).
 
 MCP tools ask for approval unless the server marks them
 `annotations.readOnlyHint: true`.
@@ -220,12 +239,61 @@ Notification `_nova/queue/changed`: `{ sessionId, entries }`.
 | `_nova/session/checkpoints` | | `{ checkpoints: [{ checkpointId, createdAt, userText, messageCount }] }` |
 | `_nova/session/rewind` | `turns?` (default 1) | `{ removedCheckpoints, remainingCheckpoints, messageCount }`; clears the queue |
 | `_nova/session/compact` | `model?` | `{ compacted, removedMessages, keptMessages }` |
-| `_nova/session/context_usage` | `contextWindow?`, `mode?` | Estimated tokens per category (system, conversation, agents, thinking, tools, skills, memory) and the total |
+| `_nova/session/context_usage` | `contextWindow?`, `model?`, `mode?` | Estimated tokens per category (system, conversation, agents, thinking, tools, skills, memory) and the total; without `contextWindow` the agent looks up the window of `model` (else the session's or the default model) |
 | `_nova/session/set_settings` | `settings` (see Session settings) | `{ settings }`: the settings now in force, with `null` for "the agent's default". Merged over the current ones; applies from the next turn |
 
 Notification `_nova/session/rewound`: `{ sessionId, removedCheckpoints,
 remainingCheckpoints, messageCount }`. Rewind and compaction are refused while
 a prompt runs. Session files are append-only; a rewind appends a reset record.
+
+### Models
+
+| Method | Params | Result |
+|---|---|---|
+| `_nova/models/list` | `preferred?` (no session id needed) | `{ models, defaultModel }`: the chat models (fields as in `nova-ai-cli/models` below) and the model to use given `preferred` (else the saved default): kept unless the gateway says it cannot chat or is disabled, `null` when there is none |
+
+### Skills
+
+| Method | Params | Result |
+|---|---|---|
+| `_nova/skills/list` | `cwd` (no session id needed) | `{ skills: [{ name, description, source, path, enabled, bundledBy? }] }`: every skill discovered for the workspace, switched-off ones included; `bundledBy` names the app that ships a bundled skill (NOVA_HOME.md, "Bundled skills"), whose files the file tools refuse to change |
+| `_nova/skills/set_enabled` | `cwd`, `name`, `enabled`, `scope?` (`"project"`, the default, or `"global"`) | `{ skills }` after the change; sessions use it from their next turn. An unknown name is `invalidParams` |
+
+### Hooks
+
+The agent runs the user's hooks (Claude Code's format, `hooks` in the Nova
+settings files; a workspace's own only when it is trusted; see NOVA_HOME.md,
+"Hooks") for every client: `SessionStart` and `UserPromptSubmit` before a
+prompt, `PreToolUse` before the permission check (exit 2 or a `deny` blocks
+the call; an `allow` answers in place of `session/request_permission`, deny
+rules still win), `PostToolUse` after a tool ran (feedback for the model),
+and `Stop` when the turn would end (a block continues the turn, at most three
+times), also for background agents' tool calls. A blocked prompt ends the
+turn with an `agent_message_chunk` saying why; hook warnings and Stop
+decisions arrive as `agent_thought_chunk`.
+
+### MCP sign-in
+
+HTTP and SSE servers that answer 401 are signed in with OAuth (discovery,
+dynamic client registration, PKCE; tokens refreshed automatically and kept in
+`~/.nova-ai/mcp-auth`). Without tokens the server is reported in
+`nova-ai-cli/mcp` failures with `needsAuth: true`. A server's `_meta["nova-ai-cli/oauth"]`
+(`clientId`, `clientSecret`, `scope`, `callbackPort`; from `oauth` in
+`.mcp.json`) sets a client registered by hand.
+
+| Method | Params | Result |
+|---|---|---|
+| `_nova/mcp/login` | `serverName` | Signs in, then reconnects the server; returns the session's `nova-ai-cli/mcp` and `nova-ai-cli/skills` status. The page to open arrives first as notification `_nova/mcp/auth_url` `{ sessionId, serverName, url }`; the redirect goes to a one-off listener on `127.0.0.1`, and the request fails after 5 minutes or when cancelled |
+| `_nova/mcp/logout` | `serverName` | Forgets the tokens and the registered client, reconnects; same result |
+
+Clients should only open `http(s)` URLs from `auth_url`: the address comes
+from the MCP server's metadata.
+
+### Workspace trust
+
+| Method | Params | Result |
+|---|---|---|
+| `_nova/workspace/trust` | `cwd`, `trusted?` (no session id needed) | `{ trusted, needsTrust }`. Trust lets the workspace's `.nova-ai` allow rules apply and its MCP servers start (from the next session); remembered in `~/.nova-ai` (see NOVA_HOME.md). Without `trusted` it only reports; `needsTrust` is true when the workspace is untrusted and declares MCP servers or allow rules |
 
 ### Background jobs
 
@@ -252,9 +320,11 @@ also written under `~/.nova-ai/background-jobs/`.
 |---|---|---|
 | `session/new` / `load` / `resume` / `fork` params | `nova-ai-cli/settings` | Session settings (see Sessions) |
 | `session/prompt` params | `nova-ai-cli/model` | Model for this prompt only |
-| `session/new` / `load` result | `nova-ai-cli/mcp`, `nova-ai-cli/skills` | MCP servers (configured, connected, failures) and discovered skills |
+| `session/prompt` params | `nova-ai-cli/effort` | Thinking level for this prompt only (over `thought_level`) |
+| `session/new` / `load` / `resume` / `fork` params | `nova-ai-cli/workspaceMcp` | `false`: don't start the workspace's own MCP servers |
+| `session/new` / `load` / `resume` / `fork` result | `nova-ai-cli/mcp`, `nova-ai-cli/skills` | MCP servers (configured: `name`, `transport`, `url` or `command`, `args` and `env` names, never values; connected; failures, including configuration errors) and discovered skills |
 | tool calls | `nova-ai-cli/tool`, `nova-ai-cli/permission`, `nova-ai-cli/replayed` | Tool name, policy decision, replayed from history |
-| `providers/list` result | `nova-ai-cli/models` | Chat models: `id`, `label`, `providerId`, `providerName`, `enabled`, `contextWindow` and `maxOutputTokens` (tokens, `null` when the gateway does not say) |
+| `providers/list` result | `nova-ai-cli/models` | Chat models: `id`, `name` (`null` when the gateway has none), `label`, `providerId`, `providerName`, `enabled`, `contextWindow` and `maxOutputTokens` (tokens, `null` when the gateway does not say), `imageInput`, `efforts` (levels, lowest first; empty without), `reasoningDefault` (`"on"`, `"off"` or `null`), `thinking` (has levels or thinks at a fixed depth) |
 
 ## Unstable SDK features
 

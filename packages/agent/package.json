@@ -1,6 +1,6 @@
 {
   "name": "@datalabrotterdam/nova-ai-agent",
-  "version": "1.0.0-alpha.2",
+  "version": "1.0.0-alpha.6",
   "description": "Nova AI coding agent as an Agent Client Protocol (ACP) server: tools, permissions, sessions, memory and MCP, backed by @datalabrotterdam/nova-sdk",
   "license": "Apache-2.0",
   "author": "DataLab Rotterdam",
@@ -65,7 +65,8 @@
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^0.29.0",
-    "@datalabrotterdam/nova-sdk": "^1.3.2",
+    "@datalabrotterdam/nova-ai-skills": "^1.0.0",
+    "@datalabrotterdam/nova-sdk": "1.4.0-k8s.3",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@sourceregistry/node-webserver": "^1.8.0"
   },

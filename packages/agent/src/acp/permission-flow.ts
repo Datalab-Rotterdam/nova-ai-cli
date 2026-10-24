@@ -35,8 +35,12 @@ export async function authorizeToolCall(
   toolCallId: string,
   tool: ToolDefinition,
   args: Record<string, unknown>,
+  /** A PreToolUse hook approved the call: no question, but deny rules still win. */
+  hookAllowed = false,
 ): Promise<ToolAuthorization> {
-  const decision = options.policy.decide(tool, args);
+  const policyDecision = options.policy.decide(tool, args);
+  const decision: PolicyDecision =
+    policyDecision.decision === "ask" && hookAllowed ? { decision: "allow", reason: "hook" } : policyDecision;
   if (decision.decision !== "ask") {
     await reportDecision(options, toolCallId, decision);
     return decision.decision === "allow"

@@ -56,6 +56,8 @@ export type RunTurnDeps = {
   ): Promise<boolean>;
   /** See ToolBatchContext.authorize; the agent passes its permission policy here. */
   authorize?: ToolBatchContext["authorize"];
+  /** PreToolUse / PostToolUse hooks for every tool call. */
+  hooks?: ToolBatchContext["hooks"];
   compactContext?(
     messages: ChatMessage[],
     /** null when compaction is proactive rather than error-driven. */
@@ -74,6 +76,8 @@ export type RunTurnDeps = {
   emit(event: AgentEvent): void | Promise<void>;
   novaClient: NovaAI;
   model: string;
+  /** Sent as `reasoning_effort`; undefined leaves it out (models without levels). */
+  reasoningEffort?: string;
   /** Primarily injectable for focused tests; production uses the safety cap. */
   maxToolRounds?: number;
   /**
@@ -255,7 +259,11 @@ export async function runTurn(
         for await (const event of novaClient.chat.completions.stream(
           // History may hold native tool exchanges from before this model
           // fell back to the text protocol; render them as text.
-          { model, messages: toLegacyMessages(requestMessages) },
+          {
+            model,
+            messages: toLegacyMessages(requestMessages),
+            ...(deps.reasoningEffort ? { reasoning_effort: deps.reasoningEffort } : {}),
+          },
           { signal },
         )) {
           if (event.type === "done") {
@@ -521,6 +529,7 @@ export async function runTurn(
         findTool,
         requestPermission,
         authorize: deps.authorize,
+        hooks: deps.hooks,
         emit,
         disableTools: () => {
           toolsEnabled = false;

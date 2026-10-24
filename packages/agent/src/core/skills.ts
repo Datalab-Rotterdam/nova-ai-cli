@@ -12,43 +12,41 @@ export type SkillDefinition = {
   path: string;
   root: string;
   source: "user" | "workspace";
-  /** Bundled with a Nova app, which keeps it up to date: read-only, can only be switched off. */
+  /** Set for a bundled skill: the Nova app that ships and updates it (docs/NOVA_HOME.md, "Bundled skills"). */
   bundledBy?: string;
 };
 
-/** Marks a bundled skill (docs/NOVA_HOME.md in nova-ai-vscode, "Bundled skills"). */
 export const BUNDLE_FILE = ".nova-bundled.json";
 
-/** The app a skill folder is bundled with, if it is a bundled skill. */
+/** Who bundles the skill in `root`, from its `.nova-bundled.json`; undefined for a normal skill. */
 export function readBundledBy(root: string): string | undefined {
   try {
-    const parsed = JSON.parse(readFileSync(join(root, BUNDLE_FILE), "utf8")) as { bundledBy?: unknown };
-    return typeof parsed.bundledBy === "string" && parsed.bundledBy.trim() ? parsed.bundledBy : undefined;
+    const parsed: unknown = JSON.parse(readFileSync(join(root, BUNDLE_FILE), "utf8"));
+    const by = parsed && typeof parsed === "object" ? (parsed as { bundledBy?: unknown }).bundledBy : undefined;
+    return typeof by === "string" && by.trim() ? by : undefined;
   } catch {
     return undefined;
   }
 }
 
 /**
- * The bundled skill a file belongs to, if any: the nearest folder above it with a SKILL.md
- * and a bundle marker. The agent's file tools refuse to change such files.
+ * Why `file` may not be changed, when it belongs to a bundled skill: walks up
+ * to the nearest folder with a SKILL.md and checks its marker.
  */
-export function bundledSkillOf(file: string): { name: string; bundledBy: string } | undefined {
+export function bundledSkillError(file: string): string | undefined {
   let dir = dirname(resolve(file));
   for (let depth = 0; depth < 6; depth++) {
     if (existsSync(join(dir, "SKILL.md"))) {
-      const bundledBy = readBundledBy(dir);
-      return bundledBy ? { name: basename(dir), bundledBy } : undefined;
+      const by = readBundledBy(dir);
+      return by
+        ? `"${basename(dir)}" is a skill bundled with ${by}, which keeps it up to date; it cannot be edited, moved or deleted, only switched off.`
+        : undefined;
     }
     const parent = dirname(dir);
     if (parent === dir) break;
     dir = parent;
   }
   return undefined;
-}
-
-export function bundledSkillMessage(skill: { name: string; bundledBy: string }): string {
-  return `"${skill.name}" is bundled with ${skill.bundledBy}, which keeps it up to date; it cannot be edited, only switched off (/skills off ${skill.name}).`;
 }
 
 /**

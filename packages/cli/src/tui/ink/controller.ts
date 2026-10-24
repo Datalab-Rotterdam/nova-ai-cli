@@ -1,11 +1,3 @@
-import type { McpServer } from "@agentclientprotocol/sdk";
-import { setWorkspaceTrusted } from "@datalabrotterdam/nova-ai-agent/core/nova-home.js";
-import {
-  disabledSkillNames,
-  discoverSkills,
-  setSkillEnabled,
-} from "@datalabrotterdam/nova-ai-agent/core/skills.js";
-import { INTERACTION_MODES } from "@datalabrotterdam/nova-ai-agent/core/interaction-modes.js";
 import {
   allCommands,
   findCommand,
@@ -27,7 +19,7 @@ import {
   listSessionPickerItems,
   listSessionsForCwd,
 } from "../session/session-picker.js";
-import type { SessionRunner } from "../session/session-runner.js";
+import type { McpSessionStatus, SessionRunner } from "../session/session-runner.js";
 import type { Store } from "../state/store.js";
 import type {
   InteractionMode,
@@ -40,9 +32,11 @@ import {
   QuestionState,
   ScrollState,
   SelectionState,
+  SliderState,
   ToolInspectorState,
   type SelectionItem,
 } from "./dialogs/state.js";
+import { effortLabel } from "@datalabrotterdam/nova-ai-agent/core/model-capabilities.js";
 import type { KeyPress } from "./editor/prompt-editor.js";
 import { PromptEditor } from "./editor/prompt-editor.js";
 import { formatContextUsage, formatImageSize } from "./format.js";
@@ -55,6 +49,7 @@ import {
 
 export type Overlay =
   | { kind: "selection"; title: string; state: SelectionState }
+  | { kind: "slider"; title: string; state: SliderState }
   | { kind: "text"; title: string; content: string; state: ScrollState }
   | { kind: "tools"; state: ToolInspectorState };
 
@@ -72,9 +67,13 @@ export type ViewState = {
   overlay: Overlay | null;
   question: QuestionState | null;
   model: string;
+  /** The current model's thinking level ("High", "On"); null when it has none. */
+  effort: string | null;
   mcp: McpCounts;
   expandedTools: boolean;
   exiting: boolean;
+  /** Transcript rows scrolled up from the newest; 0 follows the output. */
+  scroll: number;
 };
 
 export type ControllerIo = {
@@ -82,12 +81,11 @@ export type ControllerIo = {
   write(data: string): void;
 };
 
-const CLEAR_SCREEN_AND_SCROLLBACK = "\u001b[2J\u001b[3J\u001b[H";
 const EXIT_CONFIRM_MS = 2_000;
 
 /**
  * The TUI's behaviour without React: commands, shortcuts, dialogs, prompt
- * submission and the transcript's scrollback. The Ink view only renders
+ * submission and transcript scrolling. The Ink view only renders
  * `getView()` and forwards keys.
  */
 export class TuiController {
@@ -101,6 +99,8 @@ export class TuiController {
   private exiting = false;
   private view: ViewState;
   private lastEpoch = 0;
+  private scroll = 0;
+  private viewport = { rows: 10, contentRows: 0 };
   private exitArmed = false;
   private exitTimer: ReturnType<typeof setTimeout> | undefined;
   private animationTimer: ReturnType<typeof setInterval> | undefined;
@@ -137,8 +137,9 @@ export class TuiController {
   getView = (): ViewState => this.view;
 
   start(): void {
-    // Fix a saved model that can't chat before the first prompt needs it.
-    void this.runner.ensureUsableModel().then(() => this.refresh());
+    // Fix a saved model that can't chat, and start the session (MCP servers,
+    // skills), before the first prompt needs them.
+    void this.runner.prepareSession().then(() => this.refresh());
     this.syncWindowTitle();
     this.animationTimer = setInterval(() => this.syncWindowTitle(true), 120);
     this.animationTimer.unref?.();
@@ -176,7 +177,16 @@ export class TuiController {
         this.runner.cancel();
         return true;
       }
+      if (this.scroll > 0) {
+        this.scrollTo(0);
+        return true;
+      }
       return false;
+    }
+    if (key.pageUp || key.pageDown) {
+      const page = Math.max(1, this.viewport.rows - 2);
+      this.scrollBy(key.pageUp ? page : -page);
+      return true;
     }
     if (key.tab && key.shift) {
       this.cycleInteractionMode();
@@ -292,8 +302,9 @@ export class TuiController {
         "Models",
         models.map((model) => ({
           value: model.id,
-          label: model.id,
-          description: model.name ?? undefined,
+          label: model.thinking ? `${model.id} ◆` : model.id,
+          description:
+            [model.name, model.thinking ? "thinking" : null].filter(Boolean).join(" · ") || undefined,
         })),
         "model-picker",
         (model) => this.setModel(model),
@@ -301,6 +312,64 @@ export class TuiController {
     } catch (error) {
       this.showText("Models", errorMessage(error, "Failed to list models."));
     }
+  };
+
+  private effortName(): string | null {
+    const level = this.runner.currentEffort();
+    const efforts = level ? this.runner.modelEffortLevels() : [];
+    return level ? effortLabel(level, efforts) : null;
+  }
+
+  /** The selected model's levels and current one, or why it has none. */
+  private async effortLevels(): Promise<{ efforts: string[]; current: string } | string> {
+    let info: Awaited<ReturnType<SessionRunner["modelDetails"]>>;
+    try {
+      info = await this.runner.modelDetails();
+    } catch (error) {
+      return errorMessage(error, "Could not load the model list.");
+    }
+    const model = this.runner.model || "This model";
+    if (!info?.efforts.length) {
+      return info?.thinking
+        ? `${model} thinks at a fixed depth; there is no level to choose.`
+        : `${model} is not a thinking model; /model lists the ones marked ◆.`;
+    }
+    return { efforts: info.efforts, current: this.runner.currentEffort() ?? info.efforts[0]! };
+  }
+
+  /** /effort: a slider over the selected model's levels. */
+  openEffort = async (): Promise<void> => {
+    const levels = await this.effortLevels();
+    if (typeof levels === "string") {
+      this.showText("Thinking effort", levels);
+      return;
+    }
+    const state = new SliderState(
+      levels.efforts.map((value) => ({ value, label: effortLabel(value, levels.efforts) })),
+      Math.max(0, levels.efforts.indexOf(levels.current)),
+      (item) => {
+        this.closeOverlay();
+        this.runner.setEffort(item.value);
+        this.store.setState({ statusLine: `Thinking effort: ${item.label}.` });
+      },
+      this.closeOverlay,
+    );
+    this.showOverlay({ kind: "slider", title: `Thinking effort · ${this.runner.model}`, state });
+  };
+
+  /** /effort <level>: by id ("high") or name ("Extra high", "off"). */
+  setEffort = async (level: string): Promise<string> => {
+    const levels = await this.effortLevels();
+    if (typeof levels === "string") return levels;
+    const wanted = level.trim().toLowerCase();
+    const value = levels.efforts.find(
+      (candidate) => candidate === wanted || effortLabel(candidate, levels.efforts).toLowerCase() === wanted,
+    );
+    const names = levels.efforts.map((candidate) => effortLabel(candidate, levels.efforts).toLowerCase());
+    if (!value) return `${this.runner.model} has these levels: ${names.join(", ")}.`;
+    this.runner.setEffort(value);
+    this.refresh();
+    return `Thinking effort: ${effortLabel(value, levels.efforts)}.`;
   };
 
   openPermissionModes = (): void => {
@@ -355,9 +424,13 @@ export class TuiController {
     });
   };
 
-  openMcpInspector = (): void => {
-    const servers = this.runner.configuredMcpServers();
+  openMcpInspector = async (): Promise<void> => {
+    if (!this.runner.sessionLoaded) {
+      this.showText("MCP servers", "Connecting MCP servers...");
+      await this.runner.prepareSession();
+    }
     const connection = this.runner.mcpSessionStatus();
+    const servers = connection.configured;
     const configuredNames = new Set(servers.map((server) => server.name));
     const configurationFailures = connection.failures
       .filter((failure) => !configuredNames.has(failure.serverName))
@@ -375,18 +448,22 @@ export class TuiController {
   };
 
   /** Every discovered skill with its state; switched-off skills stay listed. */
-  openSkillInspector = (): void => {
-    const cwd = this.runner.cwd;
-    const skills = discoverSkills(cwd);
-    const disabled = disabledSkillNames(cwd);
-    const on = skills.filter((skill) => !disabled.has(skill.name)).length;
+  openSkillInspector = async (): Promise<void> => {
+    let skills: Awaited<ReturnType<SessionRunner["listSkills"]>>;
+    try {
+      skills = await this.runner.listSkills();
+    } catch (error) {
+      this.showText("Skills", errorMessage(error, "Could not list the skills."));
+      return;
+    }
+    const on = skills.filter((skill) => skill.enabled).length;
     this.showText(
       `Skills (${on} on, ${skills.length - on} off)`,
       skills.length
         ? [
             ...skills.map(
               (skill) =>
-                `${skill.name} [${skill.source}]${skill.bundledBy ? ` (bundled with ${skill.bundledBy}, read-only)` : ""}${disabled.has(skill.name) ? " (off)" : ""}\n${skill.description}\n${skill.path}`,
+                `${skill.name} [${skill.bundledBy ? `bundled with ${skill.bundledBy}` : skill.source}]${skill.enabled ? "" : " (off)"}\n${skill.description}\n${skill.path}`,
             ),
             "/skills off <name> switches one off in this project (--global: everywhere); /skills on <name> switches it back on.",
           ].join("\n\n")
@@ -395,17 +472,15 @@ export class TuiController {
   };
 
   /** /skills on|off <name> [--global]: applies from the next message. */
-  switchSkill = (name: string, enabled: boolean, global: boolean): string => {
-    const cwd = this.runner.cwd;
-    if (!discoverSkills(cwd).some((skill) => skill.name === name)) {
-      return `No skill named "${name}". /skills lists them.`;
-    }
+  switchSkill = async (name: string, enabled: boolean, global: boolean): Promise<string> => {
+    let skills: Awaited<ReturnType<SessionRunner["setSkillEnabled"]>>;
     try {
-      setSkillEnabled(cwd, global ? "global" : "project", name, enabled);
+      skills = await this.runner.setSkillEnabled(name, enabled, global);
     } catch (error) {
-      return errorMessage(error, "Could not change the skill.");
+      const message = errorMessage(error, "Could not change the skill.");
+      return message.startsWith("No skill named") ? `${message} /skills lists them.` : message;
     }
-    const stillOff = enabled && disabledSkillNames(cwd).has(name);
+    const stillOff = enabled && skills.some((skill) => skill.name === name && !skill.enabled);
     return (
       stillOff
         ? `Switched "${name}" on ${global ? "globally" : "in this project"}, but it is still off ${global ? "in this project" : "globally"} (use ${global ? "/skills on " + name : "/skills on " + name + " --global"}).`
@@ -424,14 +499,25 @@ export class TuiController {
   };
 
   /**
-   * Prints the whole transcript again. After the width changed, the terminal
-   * re-wrapped what is on screen on its own and the live area can't be
-   * erased exactly (Ink leaves stale prompt borders), and old scrollback keeps
-   * the old wrapping.
+   * The view reports its transcript size after each layout. While scrolled
+   * up, new output below grows the offset so the rows being read stay put.
    */
-  redrawAll(): void {
-    if (this.stopped || this.exiting) return;
-    this.committer.requestRedraw();
+  setViewport(rows: number, contentRows: number): void {
+    const grown = contentRows - this.viewport.contentRows;
+    this.viewport = { rows, contentRows };
+    this.scrollTo(this.scroll > 0 && grown > 0 ? this.scroll + grown : this.scroll);
+  }
+
+  /** Positive scrolls toward older output. */
+  scrollBy(rows: number): void {
+    this.scrollTo(this.scroll + rows);
+  }
+
+  private scrollTo(offset: number): void {
+    const max = Math.max(0, this.viewport.contentRows - this.viewport.rows);
+    const next = Math.max(0, Math.min(offset, max));
+    if (next === this.scroll) return;
+    this.scroll = next;
     this.refresh();
   }
 
@@ -467,8 +553,8 @@ export class TuiController {
   }
 
   cycleInteractionMode(): void {
-    const current = INTERACTION_MODES.indexOf(this.runner.interactionMode);
-    this.setInteractionMode(INTERACTION_MODES[(current + 1) % INTERACTION_MODES.length]!);
+    const modes = this.runner.modeIds;
+    this.setInteractionMode(modes[(modes.indexOf(this.runner.interactionMode) + 1) % modes.length]!);
   }
 
   appendAssistant(text: string): void {
@@ -513,15 +599,37 @@ export class TuiController {
     },
     openSessionSwitcher: this.openSessions,
     openModelPicker: () => void this.openModels(),
+    hasThinkingLevels: () => this.runner.hasThinkingLevels(),
+    openEffortPicker: () => this.openEffort(),
+    setEffort: (level) => this.setEffort(level),
     getModel: () => this.runner.model,
     setModel: (model) => this.setModel(model),
     getInteractionMode: () => this.runner.interactionMode,
+    getInteractionModes: () => this.runner.modeIds,
+    agentCommands: () => this.agentCommands(),
     setInteractionMode: (mode) => this.setInteractionMode(mode),
     getPermissionMode: () => this.store.getState().permissionMode,
     setPermissionMode: (mode) => this.setPermissionMode(mode),
     openPermissionPicker: this.openPermissionModes,
-    trustWorkspace: () => {
-      setWorkspaceTrusted(this.runner.cwd, true);
+    mcpSignIn: async (serverName, signIn) => {
+      try {
+        const status = await this.runner.mcpSignIn(serverName, signIn);
+        this.refresh();
+        const failure = status.failures.find((item) => item.serverName === serverName);
+        if (!signIn) return `Signed out of "${serverName}".`;
+        return failure
+          ? `Signed in, but "${serverName}" did not connect: ${failure.message}`
+          : `Signed in to "${serverName}"; its tools are available from the next message.`;
+      } catch (error) {
+        return errorMessage(error, signIn ? "Sign-in failed." : "Sign-out failed.");
+      }
+    },
+    trustWorkspace: async () => {
+      try {
+        await this.runner.trustWorkspace();
+      } catch (error) {
+        return errorMessage(error, "Could not trust the workspace.");
+      }
       return "Workspace trusted: its allow rules apply now; MCP servers it declares start with the next session (/clear).";
     },
     openToolInspector: this.openToolInspector,
@@ -543,6 +651,13 @@ export class TuiController {
     releaseBackgroundJob: (jobId) => this.runner.releaseBackgroundJob(jobId),
   };
 
+  /** The agent's commands the CLI doesn't have itself; a hint is shown after the description. */
+  private agentCommands(): { name: string; description: string }[] {
+    return this.runner.agentCommands
+      .filter((command) => !findCommand(command.name))
+      .map(({ name, description, hint }) => ({ name, description: hint ? `${description} ${hint}` : description }));
+  }
+
   // ------------------------------------------------------------ prompt
 
   submit = async (
@@ -552,6 +667,7 @@ export class TuiController {
   ): Promise<void> => {
     const value = text.trim();
     if (!value) return;
+    this.scroll = 0;
     this.editor.addToHistory(value);
     this.store.setState((state) => ({
       inputHistory: [...state.inputHistory, value],
@@ -566,6 +682,11 @@ export class TuiController {
     const name = match?.[1] ?? "";
     const command = findCommand(name);
     if (!command) {
+      // The agent's own commands (the user's command files) are prompts it expands.
+      if (this.agentCommands().some((agentCommand) => agentCommand.name === name)) {
+        await this.runner.submit(value, images, pastes);
+        return;
+      }
       this.appendError(`Unknown command: /${name}`);
       return;
     }
@@ -629,10 +750,11 @@ export class TuiController {
     const fdPath = resolveFdPath();
     editor.setAutocompleteProvider(
       new WorkspaceAutocompleteProvider(
-        allCommands().map((command) => ({
-          name: command.name,
-          description: command.description,
-        })),
+        () =>
+          [...allCommands(this.commandContext), ...this.agentCommands()].map((command) => ({
+            name: command.name,
+            description: command.description,
+          })),
         runner.cwd,
         // fd (when available) walks the tree itself and respects .gitignore;
         // the pre-scanned list is only its fallback.
@@ -657,9 +779,11 @@ export class TuiController {
     this.view = this.buildView();
     if (this.view.transcript.epoch !== this.lastEpoch) {
       this.lastEpoch = this.view.transcript.epoch;
-      // The printed scrollback no longer matches the transcript (another
-      // session, a rewind, verbose tools): clear it and print it again.
-      this.io.write(CLEAR_SCREEN_AND_SCROLLBACK);
+      // Another session, a rewind or verbose tools: back to the newest output.
+      if (this.scroll) {
+        this.scroll = 0;
+        this.view = this.buildView();
+      }
     }
     for (const listener of this.listeners) listener();
   }
@@ -672,9 +796,11 @@ export class TuiController {
       overlay: this.overlay,
       question: this.questionState(ui.pendingQuestion),
       model: this.runner.model,
+      effort: this.effortName(),
       mcp: mcpCounts(this.runner),
       expandedTools: this.expandedTools,
       exiting: this.exiting,
+      scroll: this.scroll,
     };
   }
 
@@ -709,21 +835,21 @@ export class TuiController {
 }
 
 function formatMcpServer(
-  server: McpServer,
-  status: ReturnType<SessionRunner["mcpSessionStatus"]>,
+  server: McpSessionStatus["configured"][number],
+  status: McpSessionStatus,
 ): string {
-  const type = "type" in server ? server.type : "stdio";
-  const lines = [`${server.name} [${type}]`];
-  if ("url" in server) lines.push(`url: ${server.url}`);
-  if ("command" in server) {
+  const lines = [`${server.name} [${server.transport}]`];
+  if (server.url) lines.push(`url: ${server.url}`);
+  if (server.command) {
     lines.push(`command: ${server.command}`);
-    if (server.args.length) lines.push(`args: ${server.args.join(" ")}`);
-    if (server.env.length)
-      lines.push(`env: ${server.env.map((entry) => entry.name).join(", ")} (values hidden)`);
+    if (server.args?.length) lines.push(`args: ${server.args.join(" ")}`);
+    if (server.env?.length) lines.push(`env: ${server.env.join(", ")} (values hidden)`);
   }
   const failure = status.failures.find((item) => item.serverName === server.name);
   lines.push(
-    failure
+    failure?.needsAuth
+      ? `status: needs sign-in - /mcp login ${server.name}`
+      : failure
       ? `status: failed - ${failure.message}`
       : status.connected.includes(server.name)
         ? "status: connected"

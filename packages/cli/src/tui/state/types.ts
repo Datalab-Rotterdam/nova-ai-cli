@@ -1,5 +1,4 @@
 import type { ContextUsage } from "@datalabrotterdam/nova-ai-agent/core/context-usage.js";
-import type { InteractionMode } from "@datalabrotterdam/nova-ai-agent/core/interaction-modes.js";
 import type {
   UserInputRequest,
   UserInputResponse,
@@ -92,7 +91,8 @@ export type Mode =
   | "background-tasks";
 
 export type PermissionMode = "ask" | "acceptEdits" | "bypassAll";
-export type { InteractionMode } from "@datalabrotterdam/nova-ai-agent/core/interaction-modes.js";
+/** A built-in mode (agent, ask, plan) or the id of one of the user's agent files, as the agent lists them. */
+export type InteractionMode = string;
 
 export type UIState = {
   messages: UIMessage[];

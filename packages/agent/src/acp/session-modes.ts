@@ -1,5 +1,5 @@
 import type * as acp from "@agentclientprotocol/sdk";
-import type { InteractionMode } from "../core/interaction-modes.js";
+import { listAgentFiles } from "../core/agent-files.js";
 import type { PermissionMode } from "../core/policy/settings.js";
 
 const AVAILABLE_MODES: acp.SessionMode[] = [
@@ -19,14 +19,24 @@ const AVAILABLE_MODES: acp.SessionMode[] = [
     description:
       "Read the workspace, ask questions and track tasks to develop a plan, without changing files or running commands.",
   },
+  {
+    id: "autopilot",
+    name: "Autopilot",
+    description: "Work autonomously until the task is done, within your permissions; questions answer themselves.",
+  },
 ];
 
+/** The built-in modes, then the user's agent files for `cwd` (docs/NOVA_HOME.md, "Agents"). */
 export function sessionModeState(
-  currentModeId: InteractionMode,
+  currentModeId: string,
+  cwd: string,
 ): acp.SessionModeState {
   return {
     currentModeId,
-    availableModes: AVAILABLE_MODES.map((mode) => ({ ...mode })),
+    availableModes: [
+      ...AVAILABLE_MODES.map((mode) => ({ ...mode })),
+      ...listAgentFiles(cwd).map(({ id, name, description }) => ({ id, name, description })),
+    ],
   };
 }
 

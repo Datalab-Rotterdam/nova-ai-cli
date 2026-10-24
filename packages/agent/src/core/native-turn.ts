@@ -146,6 +146,7 @@ export async function runNativeTurn(
           model,
           messages: requestMessages,
           stream_options: { include_usage: true },
+          ...(deps.reasoningEffort ? { reasoning_effort: deps.reasoningEffort } : {}),
           ...(payload.tools.length
             ? {
                 tools: payload.tools,
@@ -300,6 +301,7 @@ export async function runNativeTurn(
           findTool,
           requestPermission: deps.requestPermission,
           authorize: deps.authorize,
+          hooks: deps.hooks,
           emit,
           disableTools: () => {
             toolsEnabled = false;

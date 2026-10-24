@@ -1,3 +1,4 @@
+import type * as acp from "@agentclientprotocol/sdk";
 import type { SessionSettings } from "./session-settings.js";
 import type { ChatMessage } from "@datalabrotterdam/nova-sdk";
 import type { InteractionMode } from "../interaction-modes.js";
@@ -28,16 +29,21 @@ export type Session = {
    */
   pendingBackgroundHandoffs: ChatMessage[];
   title: string | null;
+  /** The servers the session was set up with (workspace and client), for reconnecting one. */
+  mcpServers: acp.McpServer[];
   mcpConnections: McpConnection[];
   mcpTools: ToolDefinition[];
   mcpFailures: McpConnectionFailure[];
   environment: ToolEnvironment;
   skills: SkillDefinition[];
   memory: MemorySnapshot;
-  mode: InteractionMode;
+  /** A built-in InteractionMode, or the id of one of the user's agent files. */
+  mode: InteractionMode | string;
   /** Permission rules, mode and approvals of this session. */
   policy: PermissionPolicy;
   model: string | null;
+  /** `reasoning_effort` the client chose (thought_level); null: the model's default. */
+  effort: string | null;
   /** Client-provided behaviour (tool rounds, compaction, memory, timeouts). */
   settings: SessionSettings;
 };

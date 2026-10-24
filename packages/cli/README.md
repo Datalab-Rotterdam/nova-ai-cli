@@ -71,12 +71,18 @@ Interactive options:
 
 ## Terminal UI
 
-The UI renders inline below your shell prompt. Finished messages go to the
-terminal's own scrollback (scroll, search and copy as usual); only the
-streaming answer, running tools, the prompt and the status rows are redrawn.
+The UI runs full screen (the terminal's alternate screen, like `less` or
+`vim`) and gives your shell its screen back on exit. The mouse wheel or
+PgUp/PgDn scroll the transcript, Esc jumps back to the newest output, and
+while you read an answer the prompt that asked for it stays pinned on the top
+row. To select text, hold Shift (Option in some macOS terminals) while dragging.
 
 - **Modes** (Shift+Tab): `agent` does the work; `plan` reads the code, asks
-  questions and builds a task list but changes nothing; `ask` only answers.
+  questions and builds a task list but changes nothing; `ask` only answers;
+  `autopilot` works on until the task is done, picking defaults instead of
+  asking (approvals still ask you).
+  Your own agents (`~/.nova-ai/agents/<name>.agent.md`, the format the VS Code
+  extension uses) are extra modes after these; `/mode` lists them.
 - **Permissions**: before an edit or command you choose once, for this
   session, always (saved as an exact rule) or deny. Ctrl+K switches between
   asking, accepting edits, and bypass (never remembered).
@@ -93,15 +99,18 @@ streaming answer, running tools, the prompt and the status rows are redrawn.
 | Enter / Shift+Enter | Send / new line (Shift+Enter where the terminal supports the kitty keyboard protocol: VS Code, kitty, WezTerm, Ghostty, foot, Alacritty, recent iTerm2; Alt+Enter, Ctrl+J or a trailing `\` work everywhere) |
 | Esc | Cancel the running turn |
 | Ctrl+C twice | Exit; prints `nova-ai --resume <id>` |
-| Shift+Tab | Cycle agent / ask / plan |
+| Shift+Tab | Cycle agent / ask / plan / autopilot and your own agents |
 | Ctrl+R / Ctrl+P / Ctrl+K | Sessions / models / permission mode |
 | Ctrl+O / Ctrl+T / Ctrl+B | Verbose tool output / tool inspector / background jobs |
 | Alt+V | Paste a clipboard image |
 
-Slash commands: `/help`, `/model`, `/mode`, `/permission`, `/session`,
+Slash commands: `/help`, `/model`, `/effort` (thinking models), `/mode`, `/permission`, `/session`,
 `/resume`, `/clear`, `/compact`, `/rewind [n]`, `/queue`, `/steer`, `/usage`,
 `/tools`, `/mcp`, `/skills`, `/shell` and `/agent` (background jobs), `/trust`
-and `/exit`. Details:
+and `/exit`. Your own commands are markdown files in `~/.nova-ai/commands/` or
+the repository's `.nova-ai/commands/` (Claude Code's format, so
+`.claude/commands` works too): the file is the prompt, `$ARGUMENTS` what you
+type after the command, and they show up in the `/` menu. Details:
 [`src/tui/README.md`](https://github.com/Datalab-Rotterdam/nova-ai-cli/blob/main/packages/cli/src/tui/README.md).
 
 ## Headless
@@ -167,7 +176,10 @@ need ACP. Everything is documented in
   and nested shells need an exact rule.
 - **Web pages are fetched only with approval.** `fetch_url` asks every time
   unless a rule allows that URL (a URL can carry data out), and a redirect to
-  another site needs its own approval.
+  another site needs its own approval. `web_search` asks the same way, since
+  the query goes to the search providers (You.com, DuckDuckGo; your own
+  SearXNG server first when `~/.nova-ai/settings.json` has
+  `"webSearch": { "searxngUrl": "https://…" }`).
 - **File access stays in the workspace** (symlinks resolved); commands run in
   their own process group with a timeout, and the whole tree is stopped on
   cancel.
@@ -192,7 +204,22 @@ VS Code extension: settings, per-project trust, sessions and memory.
   skills folders are read too). `/skills` lists them; `/skills off <name>`
   switches one off in this project (`--global`: everywhere). Only names and
   short descriptions go into the prompt; Nova loads a skill when it fits.
+  Nova installs its own skills for Word, Excel, PowerPoint and PDF files
+  (`nova-docx`, `nova-xlsx`, `nova-pptx`, `nova-pdf`, from
+  [nova-ai-skills](https://github.com/Datalab-Rotterdam/nova-ai-skills)) in
+  `~/.nova-ai/skills` and keeps them up to date; they need Python 3.
+- **Hooks**: Claude Code's `hooks` format in the same settings files (a
+  repository's own only once you trust the workspace): `PreToolUse`,
+  `PostToolUse`, `UserPromptSubmit`, `SessionStart` and `Stop`, with Claude
+  Code's tool names as matchers, so hooks from `.claude/settings.json` work
+  when copied over.
 - **MCP servers**: `.mcp.json` or `mcpServers` in `.nova-ai/settings.json`.
+  HTTP servers that use OAuth show "needs sign-in" in `/mcp`; `/mcp login
+  <server>` opens the sign-in page in your browser (tokens are kept in
+  `~/.nova-ai/mcp-auth`, refreshed automatically), `/mcp logout <server>`
+  forgets them. A server that wants a client registered by hand takes
+  `"oauth": { "clientId", "clientSecret", "scope", "callbackPort" }` in
+  `.mcp.json`.
 
 The complete layout and rule syntax: [docs/NOVA_HOME.md](https://github.com/Datalab-Rotterdam/nova-ai-cli/blob/main/docs/NOVA_HOME.md).
 
@@ -204,6 +231,12 @@ remembers the choice), `--model` or `NOVA_MODEL` sets it for one run. Nova uses 
 to a text protocol for models that don't support it. When the context window
 fills up, older messages are summarized automatically (`/compact` does it by
 hand).
+
+Thinking models are marked ◆ in the model list. For those with levels the
+status line shows the current one (`· thinking medium`) and `/effort` opens a
+slider (←/→, Enter), or sets one directly (`/effort high`, `/effort off`). The
+choice is remembered like the model; a model without that level uses its own
+default.
 
 | Environment | |
 |---|---|

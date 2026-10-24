@@ -1,5 +1,6 @@
 import type { ChildProcess } from "node:child_process";
 import { NOVA_NOTIFICATIONS } from "@datalabrotterdam/nova-ai-agent/acp/extensions.js";
+import { openBrowser } from "@datalabrotterdam/nova-ai-agent/acp/auth-server.js";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import type * as acp from "@agentclientprotocol/sdk";
@@ -29,16 +30,14 @@ import type { UserInputResponse } from "@datalabrotterdam/nova-ai-agent/core/use
 import { resolveWorkspaceFile } from "@datalabrotterdam/nova-ai-agent/core/tools/workspace-paths.js";
 import type { PromptQueueEntryView } from "@datalabrotterdam/nova-ai-agent/core/prompt-queue.js";
 import {
-  isInteractionMode,
-  type InteractionMode,
-} from "@datalabrotterdam/nova-ai-agent/core/interaction-modes.js";
-import {
   fromElicitationRequest,
   toElicitationResponse,
 } from "@datalabrotterdam/nova-ai-agent/acp/user-questions.js";
+import { INTERACTION_MODES } from "@datalabrotterdam/nova-ai-agent/core/interaction-modes.js";
 import type { Store } from "../state/store.js";
 import type {
   BackgroundJobView,
+  InteractionMode,
   PermissionScope,
   PlanEntryView,
   ToolCallView,
@@ -68,6 +67,11 @@ type TerminalRecord = {
 };
 
 export class TuiAcpClient {
+  /** The modes the agent offers (built-in, then the user's agent files); set by the runner. */
+  modeIds: string[] = [...INTERACTION_MODES];
+  /** Slash commands the agent understands, such as the user's command files. */
+  agentCommands: { name: string; description: string; hint?: string }[] = [];
+
   readonly capabilities = {
     fs: { readTextFile: true, writeTextFile: true },
     terminal: true,
@@ -151,6 +155,30 @@ export class TuiAcpClient {
 
   appendUserMessage(text: string): void {
     this.appendMessage({ id: uid(), role: "user", text });
+  }
+
+  /** An MCP server's sign-in page: opened in the browser, and printed in case that fails. */
+  mcpAuthUrl(params: unknown): void {
+    const { serverName, url } = (params ?? {}) as { serverName?: unknown; url?: unknown };
+    if (typeof serverName !== "string" || typeof url !== "string") return;
+    let page: URL;
+    try {
+      page = new URL(url);
+    } catch {
+      return;
+    }
+    // The address comes from the MCP server's metadata: never hand the OS another scheme.
+    if (page.protocol !== "https:" && page.protocol !== "http:") {
+      this.appendError(`MCP server "${serverName}" sent a sign-in address that is not a web page; not opened.`);
+      return;
+    }
+    openBrowser(page.toString());
+    this.appendMessage({
+      id: uid(),
+      role: "assistant",
+      streaming: false,
+      text: `Sign in to MCP server "${serverName}" in your browser. If it did not open, visit:\n${page}`,
+    });
   }
 
   appendError(text: string): void {
@@ -391,8 +419,16 @@ export class TuiAcpClient {
           });
         }
         return;
+      case "available_commands_update":
+        this.agentCommands = update.availableCommands.map(({ name, description, input }) => ({
+          name,
+          description,
+          ...(input && "hint" in input && input.hint ? { hint: input.hint } : {}),
+        }));
+        return;
       case "current_mode_update":
-        if (isInteractionMode(update.currentModeId)) {
+        // Only a mode the agent listed: an id such as "bypassAll" is never taken.
+        if (this.modeIds.includes(update.currentModeId)) {
           this.onInteractionModeChange?.(update.currentModeId);
         }
         return;
@@ -544,6 +580,8 @@ export class TuiAcpClient {
         return this.backgroundUpdate(params);
       case NOVA_NOTIFICATIONS.queueChanged:
         return this.queueChanged(params);
+      case NOVA_NOTIFICATIONS.mcpAuthUrl:
+        return this.mcpAuthUrl(params);
       default:
         return;
     }

@@ -41,6 +41,10 @@ export const text = (content: string) => ({ choices: [{ delta: { content }, fini
 export async function withFakeNova(
   reply: (request: FakeRequest, index: number) => Response | Promise<Response>,
   run: (requests: FakeRequest[], home: string) => Promise<void>,
+  /** What /models answers; one plain "fake-model" by default. */
+  models: Array<Record<string, unknown>> = [
+    { id: "fake-model", object: "model", created: 0, owned_by: "x", context_window: 100000 },
+  ],
 ): Promise<void> {
   const previous = {
     fetch: globalThis.fetch,
@@ -65,7 +69,7 @@ export async function withFakeNova(
     }
     if (url.includes("/models")) {
       return new Response(
-        JSON.stringify({ object: "list", data: [{ id: "fake-model", object: "model", created: 0, owned_by: "x", context_window: 100000 }] }),
+        JSON.stringify({ object: "list", data: models }),
         { status: 200, headers: { "content-type": "application/json" } },
       );
     }

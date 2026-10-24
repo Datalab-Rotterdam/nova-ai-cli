@@ -214,3 +214,11 @@ test("tools named differently in nova-ai-vscode match each other's rules", () =>
     "ask",
   );
 });
+
+test("mcp__<server> and mcp__<server>__* rules cover every tool of the server", () => {
+  for (const rule of ["mcp__github", "mcp__github__*", "MCP__GITHUB"]) {
+    assert.equal(evaluatePermissionRules({ deny: [rule] }, "mcp__github__create_issue", {}), "deny", rule);
+  }
+  assert.equal(evaluatePermissionRules({ deny: ["mcp__github__list_issues"] }, "mcp__github__create_issue", {}), "ask");
+  assert.equal(evaluatePermissionRules({ deny: ["mcp__git"] }, "mcp__github__create_issue", {}), "ask");
+});

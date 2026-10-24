@@ -3,7 +3,6 @@ import type {
   BackgroundJobKind,
   BackgroundJobSummary,
 } from "@datalabrotterdam/nova-ai-agent/core/background.js";
-import { isInteractionMode } from "@datalabrotterdam/nova-ai-agent/core/interaction-modes.js";
 
 const permissionModes = ["ask", "acceptEdits", "bypassAll"] as const;
 
@@ -12,7 +11,8 @@ export const builtinCommands: SlashCommand[] = [
     name: "help",
     description: "Show available commands",
     run(ctx) {
-      const lines = builtinCommands.map((c) => `/${c.name} — ${c.description}`);
+      const lines = [...builtinCommands.filter((c) => c.available?.(ctx) ?? true), ...ctx.agentCommands()]
+        .map((c) => `/${c.name} — ${c.description}`);
       ctx.print(lines.join("\n"));
     },
   },
@@ -100,15 +100,15 @@ export const builtinCommands: SlashCommand[] = [
   },
   {
     name: "mode",
-    description: "Switch interaction mode (/mode agent|ask|plan)",
+    description: "Switch interaction mode (/mode agent|ask|plan|<agent file>)",
     run(ctx, args) {
       const mode = args.trim();
       if (!mode) {
-        ctx.print(`Current mode: ${ctx.getInteractionMode()}`);
+        ctx.print(`Current mode: ${ctx.getInteractionMode()} (available: ${ctx.getInteractionModes().join(", ")})`);
         return;
       }
-      if (!isInteractionMode(mode)) {
-        ctx.print("Usage: /mode agent|ask|plan");
+      if (!ctx.getInteractionModes().includes(mode)) {
+        ctx.print(`Usage: /mode ${ctx.getInteractionModes().join("|")}`);
         return;
       }
       ctx.setInteractionMode(mode);
@@ -135,8 +135,8 @@ export const builtinCommands: SlashCommand[] = [
     name: "trust",
     description:
       "Trust this workspace: start the MCP servers it declares and apply its .nova-ai allow rules",
-    run(ctx) {
-      ctx.print(ctx.trustWorkspace());
+    async run(ctx) {
+      ctx.print(await ctx.trustWorkspace());
     },
   },
   {
@@ -154,6 +154,16 @@ export const builtinCommands: SlashCommand[] = [
     },
   },
   {
+    name: "effort",
+    description: "Set how hard the model thinks (/effort <level>, or no args for a slider)",
+    available: (ctx) => ctx.hasThinkingLevels(),
+    async run(ctx, args) {
+      const level = args.trim();
+      if (level) ctx.print(await ctx.setEffort(level));
+      else await ctx.openEffortPicker();
+    },
+  },
+  {
     name: "tools",
     description: "Inspect tool calls from this session",
     run(ctx) {
@@ -162,18 +172,29 @@ export const builtinCommands: SlashCommand[] = [
   },
   {
     name: "mcp",
-    description: "Inspect configured MCP servers",
-    run(ctx) {
-      ctx.openMcpInspector();
+    description: "Inspect MCP servers, or sign in to one: /mcp login|logout <server>",
+    async run(ctx, args) {
+      const [action, ...rest] = args.trim().split(/\s+/).filter(Boolean);
+      const name = rest.join(" ");
+      if (!action) {
+        await ctx.openMcpInspector();
+        return;
+      }
+      if ((action !== "login" && action !== "logout") || !name) {
+        ctx.print("Usage: /mcp, or /mcp login|logout <server>");
+        return;
+      }
+      if (action === "login") ctx.print(`Signing in to "${name}"… (waits up to 5 minutes for the browser)`);
+      ctx.print(await ctx.mcpSignIn(name, action === "login"));
     },
   },
   {
     name: "skills",
     description: "List skills, or switch one: /skills on|off <name> [--global]",
-    run(ctx, args) {
+    async run(ctx, args) {
       const words = args.trim().split(/\s+/).filter(Boolean);
       if (!words.length) {
-        ctx.openSkillInspector();
+        await ctx.openSkillInspector();
         return;
       }
       const global = words.includes("--global");
@@ -182,7 +203,7 @@ export const builtinCommands: SlashCommand[] = [
         ctx.print("Usage: /skills, or /skills on|off <name> [--global]");
         return;
       }
-      ctx.print(ctx.switchSkill(name, action === "on", global));
+      ctx.print(await ctx.switchSkill(name, action === "on", global));
     },
   },
   {

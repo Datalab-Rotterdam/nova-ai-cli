@@ -6,8 +6,8 @@ import test from "node:test";
 import {
   readWorkspaceMcpConfiguration,
   workspaceNeedsTrust,
-} from "../../src/tui/settings/workspace-mcp.js";
-import { setWorkspaceTrusted } from "@datalabrotterdam/nova-ai-agent/core/nova-home.js";
+} from "../../src/core/workspace-mcp.js";
+import { setWorkspaceTrusted } from "../../src/core/nova-home.js";
 
 test("project .mcp.json servers are normalized and override workspace settings by name", () => {
   const cwd = mkdtempSync(join(tmpdir(), "nova-project-mcp-"));

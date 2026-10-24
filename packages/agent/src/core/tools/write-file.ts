@@ -1,5 +1,6 @@
 import type { ToolDefinition } from "./types.js";
-import { resolveEditableWorkspaceFile } from "./workspace-paths.js";
+import { bundledSkillError } from "../skills.js";
+import { resolveWorkspaceFile } from "./workspace-paths.js";
 
 export const writeFileTool: ToolDefinition = {
   name: "write_file",
@@ -20,9 +21,11 @@ export const writeFileTool: ToolDefinition = {
     if (typeof args.path !== "string" || !args.path) {
       return { error: "write_file requires a 'path' argument." };
     }
-    const resolved = await resolveEditableWorkspaceFile(cwd, args.path);
+    const resolved = await resolveWorkspaceFile(cwd, args.path);
     if ("error" in resolved) return resolved;
     const { path } = resolved;
+    const bundled = bundledSkillError(path);
+    if (bundled) return { error: bundled };
 
     let oldText: string | null = null;
     try {

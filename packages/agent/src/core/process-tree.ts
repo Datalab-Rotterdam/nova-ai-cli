@@ -7,6 +7,8 @@ export type SpawnCommandOptions = {
   env?: NodeJS.ProcessEnv;
   /** When given, `command` is executed directly with these args (no shell). */
   args?: string[];
+  /** Keep stdin open as a pipe (hooks get their event there); closed otherwise. */
+  stdin?: boolean;
 };
 
 /** Children that are still running, so they can be stopped when the CLI exits. */
@@ -29,7 +31,7 @@ export function spawnCommand(
     env: options.env ?? process.env,
     detached: process.platform !== "win32",
     windowsHide: true,
-    stdio: ["ignore", "pipe", "pipe"] as ["ignore", "pipe", "pipe"],
+    stdio: [options.stdin ? "pipe" : "ignore", "pipe", "pipe"] as ["pipe" | "ignore", "pipe", "pipe"],
   };
   const child = options.args?.length
     ? spawn(command, options.args, common)

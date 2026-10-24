@@ -46,12 +46,14 @@ async function runPtyScenario(): Promise<void> {
     harness.write(ESCAPE);
     await harness.waitFor(/Request cancel/);
 
-    // Inline mode: earlier transcript lives in the terminal's own scrollback.
+    // Full screen: earlier transcript is reached with PgUp, the prompt stays pinned.
     harness.write("fixture-fill\r");
     await harness.waitFor(/fixture scroll line 48/);
     assert.doesNotMatch(harness.screen(), /fixture scroll line 01/);
-    assert.match(harness.buffer(), /fixture scroll line 01[\s\S]*fixture scroll line 48/);
-    assert.equal(harness.buffer().match(/fixture scroll line 01/g)?.length, 1);
+    harness.write("\u001b[5~".repeat(10));
+    await harness.waitFor(/fixture scroll line 01/);
+    harness.write(ESCAPE);
+    await harness.waitFor(/fixture scroll line 48/);
 
     harness.resize(96, 30);
     await harness.waitFor(/fixture-model \| agent/);
@@ -68,8 +70,8 @@ async function runPtyScenario(): Promise<void> {
       harness.output(),
       /Resume this session with: nova-ai --resume /,
     );
-    // The transcript stays in the terminal after exit; the prompt does not.
-    assert.match(harness.buffer(), /fixture scroll line 48/);
+    // The alternate screen is gone after exit, prompt and status with it.
+    assert.match(harness.output(), /\u001b\[\?1049l/);
     assert.doesNotMatch(harness.screen(), /fixture-model \| agent/);
   } finally {
     harness.dispose();

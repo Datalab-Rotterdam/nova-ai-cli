@@ -26,24 +26,24 @@ export type TranscriptBlock =
   | { key: string; kind: "plan"; entries: PlanEntryView[] };
 
 export type TranscriptSnapshot = {
-  /** Changes when the printed scrollback no longer matches and must be redrawn. */
+  /** Changes when the transcript was replaced rather than appended to. */
   epoch: number;
-  /** Append-only within an epoch: rendered once into the terminal's scrollback. */
+  /** Append-only within an epoch. */
   committed: readonly TranscriptBlock[];
-  /** Still changing; redrawn on every frame below the scrollback. */
+  /** Still changing; follows the committed blocks. */
   live: TranscriptBlock[];
 };
 
 const FINAL_JOB_STATUSES = new Set(["completed", "failed", "killed", "released"]);
 
 /**
- * Decides which parts of the transcript are final. Ink prints final blocks
- * once (`<Static>`), so the terminal keeps them as ordinary scrollback that
- * can be scrolled, searched and copied; everything else is the live area.
+ * Decides which parts of the transcript are final; everything else is the
+ * live area. Final blocks keep their React keys, so the full-screen view
+ * re-renders only the live tail while a turn streams.
  *
  * Final blocks always form a prefix of the transcript. Anything that breaks
  * that prefix (another session, a rewind, toggling verbose tool output)
- * starts a new epoch: the view clears the screen and prints everything again.
+ * starts a new epoch, which scrolls the view back to the newest output.
  */
 export class TranscriptCommitter {
   private epoch = 0;
@@ -59,13 +59,6 @@ export class TranscriptCommitter {
   private planSignature: string | null = null;
   private snapshot: TranscriptSnapshot | null = null;
   private lastState: UIState | null = null;
-  private redrawRequested = false;
-
-  /** The next sync starts a new epoch, e.g. after the terminal width changed. */
-  requestRedraw(): void {
-    this.redrawRequested = true;
-    this.lastState = null;
-  }
 
   sync(state: UIState, expanded: boolean): TranscriptSnapshot {
     if (this.snapshot && state === this.lastState && expanded === this.expanded)
@@ -73,7 +66,6 @@ export class TranscriptCommitter {
     this.lastState = state;
 
     if (
-      this.redrawRequested ||
       state.sessionId !== this.sessionId ||
       expanded !== this.expanded ||
       !this.prefixIntact(state.messages)
@@ -161,8 +153,7 @@ export class TranscriptCommitter {
 
     this.emitPlan(state, committing, live);
 
-    // <Static> notices new items by array identity, so every growth needs a
-    // fresh array; unchanged scrollback keeps its reference.
+    // Every growth gets a fresh array; an unchanged transcript keeps its reference.
     if (this.committedView.length !== this.committed.length)
       this.committedView = this.committed.slice();
     this.snapshot = { epoch: this.epoch, committed: this.committedView, live };
@@ -262,7 +253,6 @@ export class TranscriptCommitter {
   }
 
   private startEpoch(state: UIState, expanded: boolean): void {
-    this.redrawRequested = false;
     this.epoch++;
     this.sessionId = state.sessionId;
     this.expanded = expanded;

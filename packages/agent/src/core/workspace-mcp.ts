@@ -1,9 +1,9 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type * as acp from "@agentclientprotocol/sdk";
-import { isWorkspaceTrusted } from "@datalabrotterdam/nova-ai-agent/core/nova-home.js";
-import { readSettings } from "@datalabrotterdam/nova-ai-agent/core/policy/settings.js";
-import { readWorkspaceSettings } from "./workspace-settings.js";
+import { OAUTH_META_KEY } from "./mcp-oauth.js";
+import { isWorkspaceTrusted } from "./nova-home.js";
+import { readSettings } from "./policy/settings.js";
 
 export type McpConfigurationFailure = {
   serverName: string;
@@ -29,7 +29,8 @@ export function readWorkspaceMcpConfiguration(
   cwd: string,
   options: { trusted?: boolean } = {},
 ): WorkspaceMcpConfiguration {
-  const configured = readWorkspaceSettings(cwd).mcpServers ?? [];
+  const fromSettings = readSettings(join(cwd, ".nova-ai", "settings.json"))?.mcpServers;
+  const configured = Array.isArray(fromSettings) ? (fromSettings as acp.McpServer[]) : [];
   const project = readProjectMcpConfiguration(cwd);
   const servers = new Map(configured.map((server) => [server.name, server]));
   for (const server of project.servers) servers.set(server.name, server);
@@ -112,11 +113,13 @@ function normalizeProjectServer(name: string, config: Record<string, unknown> | 
     } catch {
       throw new Error(`${type} server requires a valid URL.`);
     }
+    const oauth = asRecord(config.oauth);
     return {
       name,
       type,
       url: config.url,
       headers: normalizePairs(config.headers, "headers"),
+      ...(oauth ? { _meta: { [OAUTH_META_KEY]: oauth } } : {}),
     };
   }
 

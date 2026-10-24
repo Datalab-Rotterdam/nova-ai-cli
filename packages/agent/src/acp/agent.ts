@@ -16,18 +16,24 @@ import {
   type ContextCompactionResult,
 } from "../core/context-compaction.js";
 import { readCredentials } from "../core/credentials.js";
-import {
-  isInteractionMode,
-  type InteractionMode,
-} from "../core/interaction-modes.js";
+import { AUTOPILOT_MAX_TOOL_ROUNDS, isInteractionMode } from "../core/interaction-modes.js";
 import {
   closeMcpConnections,
   connectMcpServers,
   listMcpTools,
+  mcpToolPrefix,
   type McpConnection,
   type McpConnectionFailure,
 } from "../core/mcp.js";
+import { FileOAuthProvider, oauthConfigOf } from "../core/mcp-oauth.js";
 import { buildMemorySystemPrompt, sessionMemory } from "../core/memory.js";
+import { installSkills } from "@datalabrotterdam/nova-ai-skills";
+import { findAgentFile, isAutopilot } from "../core/agent-files.js";
+import { expandCommand, listCommandFiles } from "../core/command-files.js";
+import { isWorkspaceTrusted, novaHomeRoot, setWorkspaceTrusted } from "../core/nova-home.js";
+import { readWorkspaceMcpConfiguration, workspaceNeedsTrust } from "../core/workspace-mcp.js";
+import { MAX_STOP_HOOK_ROUNDS, runHooks } from "../core/hooks.js";
+import type { ToolHooks } from "../core/tool-batch.js";
 import {
   applySessionSettings,
   sessionSettingsView,
@@ -50,7 +56,10 @@ import {
 } from "../core/sessions.js";
 import {
   buildSkillsSystemPrompt,
+  disabledSkillNames,
   discoverEnabledSkills,
+  discoverSkills,
+  setSkillEnabled,
   type SkillDefinition,
 } from "../core/skills.js";
 import { detectToolEnvironment } from "../core/tools/environment.js";
@@ -87,12 +96,13 @@ import {
 import type { AgentRuntime } from "./agent-runtime.js";
 import { runBrowserAuth } from "./auth-server.js";
 import { BackgroundService } from "./background-service.js";
-import { ModelService } from "./model-service.js";
+import { ModelService, THOUGHT_LEVEL_CONFIG_ID } from "./model-service.js";
 import { NesService } from "./nes-service.js";
 import { selectPositionEncoding } from "./nes.js";
 import {
   contentBlocksToNovaContent,
   contentBlocksToText,
+  getPromptEffort,
   getPromptModel,
 } from "./prompt-content.js";
 import { QueueService } from "./queue-service.js";
@@ -120,6 +130,12 @@ export {
   contentBlocksToText,
   frameSteeringPrompt,
 } from "./prompt-content.js";
+
+export type SkillState = Pick<SkillDefinition, "name" | "description" | "source" | "path" | "bundledBy"> & {
+  enabled: boolean;
+};
+
+let skillsInstall: Promise<string[]> | undefined;
 
 const AUTH_METHOD_ID = "nova-api-key";
 const ENV_AUTH_METHOD_ID = "nova-api-key-env";
@@ -175,6 +191,41 @@ function replayedToolCall(
 }
 
 /** The command name when the prompt is exactly one advertised slash command. */
+/** The agent's own commands, then the user's command files (a built-in wins a name clash). */
+function availableCommands(cwd: string): acp.AvailableCommand[] {
+  const builtIn = new Set(AVAILABLE_COMMANDS.map((command) => command.name));
+  return [
+    ...AVAILABLE_COMMANDS,
+    ...listCommandFiles(cwd)
+      .filter((command) => !builtIn.has(command.name))
+      .map(({ name, description, argumentHint }) => ({
+        name,
+        description,
+        ...(argumentHint ? { input: { hint: argumentHint } } : {}),
+      })),
+  ];
+}
+
+/**
+ * A prompt that starts with `/<name> [arguments]` for one of the user's
+ * command files becomes the file's expanded text (other content blocks are
+ * kept), with the file's `model` for this answer only.
+ */
+function expandCommandFile(cwd: string, params: acp.PromptRequest): acp.PromptRequest {
+  const [first, ...rest] = params.prompt;
+  if (first?.type !== "text") return params;
+  const match = /^\/([a-z0-9][\w:-]*)(?:\s+([\s\S]*))?$/.exec(first.text.trim());
+  const command = match && !AVAILABLE_COMMANDS.some((builtIn) => builtIn.name === match[1])
+    ? listCommandFiles(cwd).find((file) => file.name === match[1])
+    : undefined;
+  if (!command) return params;
+  return {
+    ...params,
+    prompt: [{ type: "text", text: expandCommand(command, match![2]?.trim() ?? "") }, ...rest],
+    ...(command.model ? { _meta: { ...params._meta, "nova-ai-cli/model": command.model } } : {}),
+  };
+}
+
 function slashCommandName(prompt: acp.PromptRequest["prompt"]): string | null {
   if (prompt.length !== 1 || prompt[0]!.type !== "text") return null;
   const match = /^\/([a-z][a-z0-9-]*)\s*$/.exec(prompt[0]!.text.trim());
@@ -220,6 +271,10 @@ export class NovaAgent implements AgentRuntime {
    * asked for; per the spec the client then decides whether it can continue.
    */
   initialize(params: acp.InitializeRequest): acp.InitializeResponse {
+    // The skills every Nova app ships (Word, Excel, PowerPoint, PDF), in the
+    // background: a current copy is left alone, so later starts only compare.
+    // ponytail: two apps updating at the same moment can race on a folder; the next start repairs it.
+    skillsInstall ??= installSkills(novaHomeRoot()).catch(() => []);
     this.clientCapabilities = params.clientCapabilities;
     this.clientInfo = params.clientInfo ?? null;
     this.positionEncoding = selectPositionEncoding(
@@ -303,7 +358,7 @@ export class NovaAgent implements AgentRuntime {
     client?: acp.AgentContext,
   ): Promise<acp.NewSessionResponse> {
     const sessionId = crypto.randomUUID();
-    const { mcpConnections, mcpFailures, skills } = await this.setupSession(
+    const { mcpServers, mcpConnections, mcpFailures, skills } = await this.setupSession(
       sessionId,
       params,
       [],
@@ -312,12 +367,12 @@ export class NovaAgent implements AgentRuntime {
     this.announceSession(sessionId, client);
     return {
       sessionId,
-      modes: sessionModeState("agent"),
+      modes: sessionModeState("agent", params.cwd),
       configOptions: [
         permissionModeOption(this.requireSession(sessionId).policy.mode),
       ],
       _meta: sessionStatusMeta(
-        params.mcpServers,
+        mcpServers,
         mcpConnections,
         mcpFailures,
         skills,
@@ -335,14 +390,27 @@ export class NovaAgent implements AgentRuntime {
     history: ChatMessage[],
     title: string | null,
   ): Promise<{
+    mcpServers: acp.McpServer[];
     mcpConnections: McpConnection[];
     mcpFailures: McpConnectionFailure[];
     skills: SkillDefinition[];
   }> {
-    const connectedMcp = await connectMcpServers(params.mcpServers ?? []);
+    // The workspace's own servers (.mcp.json, .nova-ai/settings.json; trusted
+    // workspaces only) plus the client's, which win by name. A client that
+    // configures MCP itself opts out with `nova-ai-cli/workspaceMcp: false`.
+    const workspaceMcp =
+      params._meta?.["nova-ai-cli/workspaceMcp"] === false
+        ? { servers: [], failures: [] }
+        : readWorkspaceMcpConfiguration(params.cwd);
+    const mcpServers = [
+      ...new Map(
+        [...workspaceMcp.servers, ...(params.mcpServers ?? [])].map((server) => [server.name, server]),
+      ).values(),
+    ];
+    const connectedMcp = await connectMcpServers(mcpServers);
     const loadedMcp = await listMcpTools(connectedMcp.connections);
     const mcpConnections = loadedMcp.connections;
-    const mcpFailures = [...connectedMcp.failures, ...loadedMcp.failures];
+    const mcpFailures = [...workspaceMcp.failures, ...connectedMcp.failures, ...loadedMcp.failures];
     const mcpTools = loadedMcp.tools;
     const environment = await detectToolEnvironment(
       params.cwd,
@@ -360,6 +428,7 @@ export class NovaAgent implements AgentRuntime {
       history,
       pendingBackgroundHandoffs: [],
       title,
+      mcpServers,
       mcpConnections,
       mcpTools,
       mcpFailures,
@@ -369,9 +438,10 @@ export class NovaAgent implements AgentRuntime {
       mode: "agent",
       policy: new PermissionPolicy(params.cwd),
       model: null,
+      effort: null,
       settings,
     });
-    return { mcpConnections, mcpFailures, skills };
+    return { mcpServers, mcpConnections, mcpFailures, skills };
   }
 
   async loadSession(
@@ -383,7 +453,7 @@ export class NovaAgent implements AgentRuntime {
       throw sessionNotFound(params.sessionId);
     }
 
-    const { mcpConnections, mcpFailures, skills } = await this.setupSession(
+    const { mcpServers, mcpConnections, mcpFailures, skills } = await this.setupSession(
       params.sessionId,
       params,
       stored.messages,
@@ -405,12 +475,12 @@ export class NovaAgent implements AgentRuntime {
 
     this.announceSession(params.sessionId, client);
     return {
-      modes: sessionModeState("agent"),
+      modes: sessionModeState("agent", params.cwd),
       configOptions: [
         permissionModeOption(this.requireSession(params.sessionId).policy.mode),
       ],
       _meta: sessionStatusMeta(
-        params.mcpServers,
+        mcpServers,
         mcpConnections,
         mcpFailures,
         skills,
@@ -484,7 +554,7 @@ export class NovaAgent implements AgentRuntime {
     params: acp.SetSessionModeRequest,
   ): acp.SetSessionModeResponse {
     const session = this.requireSession(params.sessionId);
-    if (!isInteractionMode(params.modeId)) {
+    if (!isInteractionMode(params.modeId) && !findAgentFile(session.cwd, params.modeId)) {
       throw acp.RequestError.invalidParams(
         { modeId: params.modeId },
         `Unknown interaction mode: ${params.modeId}`,
@@ -516,7 +586,7 @@ export class NovaAgent implements AgentRuntime {
     if (!forked) {
       throw sessionNotFound(params.sessionId);
     }
-    await this.setupSession(
+    const { mcpServers, mcpConnections, mcpFailures, skills } = await this.setupSession(
       newSessionId,
       params,
       forked.messages,
@@ -525,10 +595,11 @@ export class NovaAgent implements AgentRuntime {
     this.announceSession(newSessionId, client);
     return {
       sessionId: newSessionId,
-      modes: sessionModeState("agent"),
+      modes: sessionModeState("agent", params.cwd),
       configOptions: await this.configOptions(
         this.requireSession(newSessionId),
       ),
+      _meta: sessionStatusMeta(mcpServers, mcpConnections, mcpFailures, skills),
     };
   }
 
@@ -540,7 +611,7 @@ export class NovaAgent implements AgentRuntime {
     if (!stored) {
       throw sessionNotFound(params.sessionId);
     }
-    await this.setupSession(
+    const { mcpServers, mcpConnections, mcpFailures, skills } = await this.setupSession(
       params.sessionId,
       params,
       stored.messages,
@@ -548,10 +619,11 @@ export class NovaAgent implements AgentRuntime {
     );
     this.announceSession(params.sessionId, client);
     return {
-      modes: sessionModeState("agent"),
+      modes: sessionModeState("agent", params.cwd),
       configOptions: await this.configOptions(
         this.requireSession(params.sessionId),
       ),
+      _meta: sessionStatusMeta(mcpServers, mcpConnections, mcpFailures, skills),
     };
   }
 
@@ -570,6 +642,14 @@ export class NovaAgent implements AgentRuntime {
       session.policy.setMode(params.value, false);
       return { configOptions: await this.configOptions(session) };
     }
+    if (params.configId === THOUGHT_LEVEL_CONFIG_ID) {
+      if (typeof params.value !== "string" || !params.value) {
+        throw acp.RequestError.invalidParams(params, "thought_level requires a level id");
+      }
+      // Kept across model switches; a model that lacks the level uses its default.
+      session.effort = params.value;
+      return { configOptions: await this.configOptions(session) };
+    }
     if (params.configId !== "model") {
       throw acp.RequestError.invalidParams(
         params,
@@ -586,7 +666,7 @@ export class NovaAgent implements AgentRuntime {
     return { configOptions: await this.configOptions(session) };
   }
 
-  /** Permission mode (always) and model (when the model list can be fetched). */
+  /** Permission mode (always), model and thinking level (when the model list can be fetched). */
   private async configOptions(
     session: Session,
   ): Promise<acp.SessionConfigOption[]> {
@@ -596,10 +676,155 @@ export class NovaAgent implements AgentRuntime {
     ];
   }
 
+  /**
+   * `_nova/mcp/login`: signs in to an HTTP/SSE server with OAuth. The page to
+   * open arrives as `_nova/mcp/auth_url`; the request ends when the browser
+   * comes back (or after 5 minutes), and the server is then reconnected.
+   * Returns the session's MCP and skill status, as on session/new.
+   */
+  async mcpLogin(
+    params: { sessionId: string; serverName: string },
+    client: acp.AgentContext,
+    signal?: AbortSignal,
+  ): Promise<Record<string, unknown>> {
+    const session = this.requireSession(params.sessionId);
+    const server = this.httpMcpServer(session, params.serverName);
+    const provider = new FileOAuthProvider(server.name, server.url, oauthConfigOf(server));
+    await provider.authorize(
+      server.url,
+      async (url) => {
+        await client.notify(NOVA_NOTIFICATIONS.mcpAuthUrl, {
+          sessionId: params.sessionId,
+          serverName: server.name,
+          url: url.toString(),
+        });
+      },
+      signal,
+    );
+    return this.reconnectMcpServer(params.sessionId, session, server);
+  }
+
+  /** `_nova/mcp/logout`: forgets the server's tokens and reconnects it (now signed out). */
+  async mcpLogout(params: { sessionId: string; serverName: string }): Promise<Record<string, unknown>> {
+    const session = this.requireSession(params.sessionId);
+    const server = this.httpMcpServer(session, params.serverName);
+    new FileOAuthProvider(server.name, server.url, oauthConfigOf(server)).forget();
+    return this.reconnectMcpServer(params.sessionId, session, server);
+  }
+
+  private httpMcpServer(session: Session, name: string): Extract<acp.McpServer, { url: string }> {
+    const server = session.mcpServers.find((candidate) => candidate.name === name);
+    if (!server || !("url" in server)) {
+      throw acp.RequestError.invalidParams({ serverName: name }, `No HTTP or SSE MCP server named "${name}" in this session.`);
+    }
+    return server;
+  }
+
+  /** Replaces one server's connection, tools and failures in the session. */
+  private async reconnectMcpServer(
+    sessionId: string,
+    session: Session,
+    server: acp.McpServer,
+  ): Promise<Record<string, unknown>> {
+    const ours = (name: string) => name === server.name;
+    await closeMcpConnections(session.mcpConnections.filter((c) => ours(c.serverName)));
+    const connected = await connectMcpServers([server]);
+    const loaded = await listMcpTools(connected.connections);
+    if (this.sessions.get(sessionId) !== session) {
+      // Closed meanwhile: nothing would close these.
+      await closeMcpConnections(loaded.connections);
+      throw sessionNotFound(sessionId);
+    }
+    const prefix = mcpToolPrefix(server.name);
+    session.mcpConnections = [...session.mcpConnections.filter((c) => !ours(c.serverName)), ...loaded.connections];
+    session.mcpTools = [...session.mcpTools.filter((tool) => !tool.name.startsWith(prefix)), ...loaded.tools];
+    session.mcpFailures = [
+      ...session.mcpFailures.filter((failure) => !ours(failure.serverName)),
+      ...connected.failures,
+      ...loaded.failures,
+    ];
+    return sessionStatusMeta(session.mcpServers, session.mcpConnections, session.mcpFailures, session.skills);
+  }
+
+  /**
+   * `_nova/workspace/trust`: trusting a workspace lets its allow rules apply
+   * and its MCP servers start (from the next session); without `trusted` it
+   * only reports the state. `needsTrust`: untrusted and asking for either.
+   */
+  workspaceTrust(params: { cwd: string; trusted?: boolean }): {
+    trusted: boolean;
+    needsTrust: boolean;
+  } {
+    if (params.trusted !== undefined) setWorkspaceTrusted(params.cwd, params.trusted);
+    return { trusted: isWorkspaceTrusted(params.cwd), needsTrust: workspaceNeedsTrust(params.cwd) };
+  }
+
+  /** `_nova/skills/list`: every skill discovered for `cwd`, switched-off ones included. */
+  listSkills(params: { cwd: string }): { skills: SkillState[] } {
+    const disabled = disabledSkillNames(params.cwd);
+    return {
+      skills: discoverSkills(params.cwd).map(({ name, description, source, path, bundledBy }) => ({
+        name,
+        description,
+        source,
+        path,
+        ...(bundledBy ? { bundledBy } : {}),
+        enabled: !disabled.has(name),
+      })),
+    };
+  }
+
+  /**
+   * `_nova/skills/set_enabled`: switches a skill in this project's private
+   * settings or (`global`) the user's; sessions pick it up from their next turn.
+   */
+  setSkillEnabled(params: {
+    cwd: string;
+    name: string;
+    enabled: boolean;
+    scope: "project" | "global";
+  }): { skills: SkillState[] } {
+    if (!discoverSkills(params.cwd).some((skill) => skill.name === params.name)) {
+      throw acp.RequestError.invalidParams({ name: params.name }, `No skill named "${params.name}".`);
+    }
+    setSkillEnabled(params.cwd, params.scope, params.name, params.enabled);
+    return this.listSkills(params);
+  }
+
+  listModels(params: { preferred?: string }) {
+    return this.models.listModels(params.preferred);
+  }
+
+  /**
+   * `_nova/session/context_usage`: without a `contextWindow` the agent looks
+   * up the window of `model` (else the session's or the default model).
+   */
+  async sessionContextUsage(params: {
+    sessionId: string;
+    contextWindow?: number | null;
+    model?: string;
+    mode?: string;
+  }): Promise<ContextUsage> {
+    const session = this.requireSession(params.sessionId);
+    let contextWindow = params.contextWindow ?? null;
+    const credentials = contextWindow === null ? readCredentials() : null;
+    if (credentials) {
+      const model =
+        params.model ?? session.model ?? (await this.models.defaultModel(credentials));
+      if (model) {
+        contextWindow = await this.models.resolveContextWindow(
+          createNovaClient(credentials.apiKey),
+          model,
+        );
+      }
+    }
+    return this.contextUsage({ ...params, contextWindow });
+  }
+
   contextUsage(params: {
     sessionId: string;
     contextWindow?: number | null;
-    mode?: InteractionMode;
+    mode?: string;
   }): ContextUsage {
     const session = this.requireSession(params.sessionId);
     const mode = params.mode === undefined ? session.mode : params.mode;
@@ -610,7 +835,7 @@ export class NovaAgent implements AgentRuntime {
     });
     return calculateContextUsage({
       history: session.history,
-      systemPrompt: buildModeSystemPrompt(mode),
+      systemPrompt: buildModeSystemPrompt(mode, session.cwd),
       skillsPrompt: buildSkillsSystemPrompt(session.skills),
       memoryPrompt: buildMemorySystemPrompt(session.memory, session.settings.memory),
       toolsPrompt: buildToolsSystemPrompt(tools, session.cwd),
@@ -739,6 +964,39 @@ export class NovaAgent implements AgentRuntime {
     if (slashCommandName(params.prompt) === "compact") {
       return this.runCompactCommand(session, params.sessionId, client);
     }
+    params = expandCommandFile(session.cwd, params);
+    // Hooks may block the message or add context; SessionStart only before a chat's first message.
+    const hookOptions = { cwd: session.cwd, sessionId: params.sessionId, signal: abortController.signal };
+    const notice = (text: string) =>
+      emitToAcp(client, params.sessionId, { type: "notice", text }, session.cwd).catch(() => {});
+    const started = session.history.length
+      ? undefined
+      : await runHooks("SessionStart", { source: "startup" }, hookOptions);
+    const submitted = await runHooks("UserPromptSubmit", { prompt: contentBlocksToText(params.prompt) }, hookOptions);
+    for (const warning of [...(started?.warnings ?? []), ...submitted.warnings]) await notice(warning);
+    if (abortController.signal.aborted) return { stopReason: "cancelled" };
+    if (submitted.block) {
+      await client
+        .notify("session/update", {
+          sessionId: params.sessionId,
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: `A hook blocked this message: ${submitted.block}` },
+          },
+        })
+        .catch(() => {});
+      return { stopReason: "end_turn" };
+    }
+    const hookContext = [started?.context, submitted.context].filter(Boolean).join("\n");
+    const hookMessages: ChatMessage[] = hookContext
+      ? [{ role: "user", content: `Context from the user's hooks:\n${hookContext}` }]
+      : [];
+    const toolHooks: ToolHooks = {
+      before: (tool, args) => runHooks("PreToolUse", { tool_name: tool.name, tool_input: args }, hookOptions),
+      after: (tool, args, response) =>
+        runHooks("PostToolUse", { tool_name: tool.name, tool_input: args, tool_response: response }, hookOptions),
+    };
+
     const credentials = readCredentials();
     if (!credentials) {
       throw acp.RequestError.authRequired();
@@ -759,6 +1017,10 @@ export class NovaAgent implements AgentRuntime {
     }
     await this.models.assertImageInputSupported(novaClient, model, params.prompt);
     const contextWindow = await this.models.resolveContextWindow(novaClient, model);
+    const reasoningEffort = await this.models.effortFor(
+      model,
+      getPromptEffort(params) ?? session.effort,
+    );
 
     session.environment = await detectToolEnvironment(
       session.cwd,
@@ -789,7 +1051,7 @@ export class NovaAgent implements AgentRuntime {
     });
     const systemPromptFor = (protocol: ToolProtocol) =>
       [
-        buildModeSystemPrompt(session.mode),
+        buildModeSystemPrompt(session.mode, session.cwd),
         buildSkillsSystemPrompt(session.skills, contentBlocksToText(params.prompt)),
         buildMemorySystemPrompt(session.memory, session.settings.memory),
         protocol === "native"
@@ -809,7 +1071,7 @@ export class NovaAgent implements AgentRuntime {
     // Finished background jobs hand their notes to the next foreground turn
     // here, keeping history and the session file in the order the model saw.
     const backgroundHandoffs = session.pendingBackgroundHandoffs.splice(0);
-    session.history.push(...backgroundHandoffs, userMessage);
+    session.history.push(...backgroundHandoffs, userMessage, ...hookMessages);
 
     const messages: ChatMessage[] = [
       ...(systemPrompt
@@ -840,6 +1102,7 @@ export class NovaAgent implements AgentRuntime {
       toolCallId: string,
       tool: ToolDefinition,
       args: Record<string, unknown>,
+      hookAllowed?: boolean,
     ) =>
       authorizeToolCall(
         {
@@ -853,6 +1116,7 @@ export class NovaAgent implements AgentRuntime {
         toolCallId,
         tool,
         args,
+        hookAllowed,
       );
     const requestPermission = async (
       toolCallId: string,
@@ -863,7 +1127,7 @@ export class NovaAgent implements AgentRuntime {
     let turnMessages: ChatMessage[] = [];
     let contextCompacted = false;
     try {
-      const result = await runWithToolProtocol({
+      const runOnce = () => runWithToolProtocol({
         model,
         support: this.models.toolSupport,
         hasTools: tools.length > 0,
@@ -883,7 +1147,8 @@ export class NovaAgent implements AgentRuntime {
             tools,
             requestPermission,
             authorize,
-            maxToolRounds: session.settings.maxToolRounds ?? undefined,
+            hooks: toolHooks,
+            maxToolRounds: isAutopilot(session.cwd, session.mode) ? AUTOPILOT_MAX_TOOL_ROUNDS : session.settings.maxToolRounds ?? undefined,
             compactThreshold: session.settings.compactThreshold ?? undefined,
             compactContext: !session.settings.autoCompact ? undefined : async (currentMessages, error) => {
               const compaction = await compactConversation(
@@ -915,10 +1180,31 @@ export class NovaAgent implements AgentRuntime {
             emit,
             novaClient,
             model,
+            reasoningEffort,
           });
         },
       });
-      turnMessages = result.turnMessages;
+      let result = await runOnce();
+      turnMessages = [...result.turnMessages];
+      // A Stop hook can send the agent back to work (until the tests pass, say), a few times at most.
+      for (
+        let round = 0;
+        round < MAX_STOP_HOOK_ROUNDS && result.stopReason === "end_turn" && !abortController.signal.aborted;
+        round++
+      ) {
+        const stop = await runHooks("Stop", { stop_hook_active: round > 0 }, hookOptions);
+        for (const warning of stop.warnings) await notice(warning);
+        if (!stop.block || abortController.signal.aborted) break;
+        await notice(`A Stop hook asked Nova to continue: ${stop.block}`);
+        const nudge: ChatMessage = {
+          role: "user",
+          content: `A Stop hook did not let you finish yet:\n${stop.block}\nContinue the task.`,
+        };
+        messages.push(nudge);
+        turnMessages.push(nudge);
+        result = await runOnce();
+        turnMessages.push(...result.turnMessages);
+      }
       return { stopReason: result.stopReason };
     } catch (err) {
       if (abortController.signal.aborted) {
@@ -941,7 +1227,7 @@ export class NovaAgent implements AgentRuntime {
         appendSessionTurn(
           params.sessionId,
           { cwd: session.cwd, title: session.title },
-          [...backgroundHandoffs, userMessage, ...turnMessages],
+          [...backgroundHandoffs, userMessage, ...hookMessages, ...turnMessages],
         );
       }
       await this.announceTurnEnd(params.sessionId, session, client, {
@@ -979,6 +1265,16 @@ export class NovaAgent implements AgentRuntime {
     return { stopReason: "end_turn" };
   }
 
+  /** The slash commands this session understands (read again after every turn, so new files show up). */
+  private async announceCommands(sessionId: string, session: Session, client: acp.AgentContext): Promise<void> {
+    await client
+      .notify("session/update", {
+        sessionId,
+        update: { sessionUpdate: "available_commands_update", availableCommands: availableCommands(session.cwd) },
+      })
+      .catch(() => {});
+  }
+
   /** Title, last activity and (when the server reported none) estimated context use. */
   private async announceTurnEnd(
     sessionId: string,
@@ -987,6 +1283,8 @@ export class NovaAgent implements AgentRuntime {
     options: { contextWindow: number; reportedUsage: boolean },
   ): Promise<void> {
     if (!this.sessions.has(sessionId)) return;
+    // ponytail: sent after every turn, not only when a file changed; diff it if clients mind.
+    await this.announceCommands(sessionId, session, client);
     await client
       .notify("session/update", {
         sessionId,
@@ -1016,17 +1314,9 @@ export class NovaAgent implements AgentRuntime {
     if (!client) return;
     setTimeout(() => {
       void (async () => {
-        await client
-          .notify("session/update", {
-            sessionId,
-            update: {
-              sessionUpdate: "available_commands_update",
-              availableCommands: AVAILABLE_COMMANDS,
-            },
-          })
-          .catch(() => {});
         const session = this.sessions.get(sessionId);
         if (!session) return;
+        await this.announceCommands(sessionId, session, client);
         const options = await this.configOptions(session).catch(() => []);
         if (options.length > 1 && this.sessions.has(sessionId)) {
           await client

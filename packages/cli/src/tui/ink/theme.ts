@@ -12,6 +12,7 @@ export const palette = {
   code: "#fcd34d",
   diffAddBg: "#1b3a24",
   diffRemoveBg: "#3d1f1f",
+  stickyBackground: "#1e293b",
 } as const;
 
 /** The same colors as ANSI string helpers, for text built outside JSX. */

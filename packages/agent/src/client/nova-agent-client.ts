@@ -9,7 +9,6 @@ import type {
   StartTerminalParams,
 } from "../core/background.js";
 import type { ContextUsage } from "../core/context-usage.js";
-import type { InteractionMode } from "../core/interaction-modes.js";
 import type {
   EnqueuePromptParams,
   PromptQueueEntry,
@@ -19,6 +18,8 @@ import type {
   UpdateQueuedPromptParams,
 } from "../core/prompt-queue.js";
 import type { SessionCheckpoint } from "../core/sessions.js";
+import type { JoinedModel } from "../acp/providers.js";
+import type { SkillState } from "../acp/agent.js";
 
 type Entries = { entries: PromptQueueEntryView[] };
 
@@ -88,9 +89,31 @@ export class NovaAgentClient {
   sessionContextUsage(params: {
     sessionId: string;
     contextWindow?: number | null;
-    mode?: InteractionMode;
+    model?: string;
+    mode?: string;
   }) {
     return this.ext<ContextUsage>(NOVA_METHODS.sessionContextUsage, params);
+  }
+  mcpLogin(params: { sessionId: string; serverName: string }) {
+    return this.ext<Record<string, unknown>>(NOVA_METHODS.mcpLogin, params);
+  }
+  mcpLogout(params: { sessionId: string; serverName: string }) {
+    return this.ext<Record<string, unknown>>(NOVA_METHODS.mcpLogout, params);
+  }
+  workspaceTrust(params: { cwd: string; trusted?: boolean }) {
+    return this.ext<{ trusted: boolean; needsTrust: boolean }>(NOVA_METHODS.workspaceTrust, params);
+  }
+  skillsList(params: { cwd: string }) {
+    return this.ext<{ skills: SkillState[] }>(NOVA_METHODS.skillsList, params);
+  }
+  skillsSetEnabled(params: { cwd: string; name: string; enabled: boolean; scope?: "project" | "global" }) {
+    return this.ext<{ skills: SkillState[] }>(NOVA_METHODS.skillsSetEnabled, params);
+  }
+  modelsList(params: { preferred?: string } = {}) {
+    return this.ext<{ models: JoinedModel[]; defaultModel: string | null }>(
+      NOVA_METHODS.modelsList,
+      params,
+    );
   }
   sessionRewind(params: { sessionId: string; turns?: number }) {
     return this.ext<{

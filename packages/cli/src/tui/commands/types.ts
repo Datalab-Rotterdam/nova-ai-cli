@@ -23,20 +23,31 @@ export type SlashCommandContext = {
   resumeSession(sessionId?: string): boolean;
   openSessionSwitcher(): void;
   openModelPicker(): void;
+  /** The selected model has thinking levels to choose from. */
+  hasThinkingLevels(): boolean;
+  openEffortPicker(): void | Promise<void>;
+  /** Sets the thinking level by id or name; returns a message. */
+  setEffort(level: string): string | Promise<string>;
   getModel(): string;
   setModel(model: string): void;
   getInteractionMode(): InteractionMode;
+  /** Built-in modes, then the user's agent files. */
+  getInteractionModes(): InteractionMode[];
+  /** Commands the agent offers that the CLI doesn't have itself (the user's command files). */
+  agentCommands(): { name: string; description: string }[];
   setInteractionMode(mode: InteractionMode): void;
   getPermissionMode(): PermissionMode;
   setPermissionMode(mode: PermissionMode): void;
   openPermissionPicker(): void;
   /** Trusts the workspace (its MCP servers and allow rules); returns a message. */
-  trustWorkspace(): string;
+  trustWorkspace(): string | Promise<string>;
   openToolInspector(): void;
-  openMcpInspector(): void;
-  openSkillInspector(): void;
+  openMcpInspector(): void | Promise<void>;
+  /** /mcp login|logout <server>: returns a message when done. */
+  mcpSignIn(serverName: string, signIn: boolean): Promise<string>;
+  openSkillInspector(): void | Promise<void>;
   /** Switches a skill on or off (this project, or everywhere); returns a message. */
-  switchSkill(name: string, enabled: boolean, global: boolean): string;
+  switchSkill(name: string, enabled: boolean, global: boolean): string | Promise<string>;
   openUsageInspector(): void | Promise<void>;
   steerMessage(message: string): boolean;
   queuedMessages(): string[];
@@ -46,7 +57,7 @@ export type SlashCommandContext = {
     removedCheckpoints: SessionCheckpoint[];
     remainingCheckpoints: SessionCheckpoint[];
   }>;
-  listModels(): Promise<Array<{ id: string; name?: string | null }>>;
+  listModels(): Promise<Array<{ id: string; name?: string | null; thinking?: boolean }>>;
   startBackgroundShell(command: string): Promise<BackgroundJobSummary>;
   startBackgroundAgent(prompt: string): Promise<BackgroundJobSummary>;
   listBackgroundJobs(kind?: BackgroundJobKind): Promise<BackgroundJobSummary[]>;
@@ -59,4 +70,6 @@ export type SlashCommand = {
   name: string;
   description: string;
   run(ctx: SlashCommandContext, args: string): void | Promise<void>;
+  /** Hidden from /help and completion when false; typing it still runs it. */
+  available?(ctx: SlashCommandContext): boolean;
 };

@@ -23,12 +23,19 @@ export const NOVA_METHODS = {
   sessionCompact: "_nova/session/compact",
   sessionContextUsage: "_nova/session/context_usage",
   sessionSetSettings: "_nova/session/set_settings",
+  modelsList: "_nova/models/list",
+  skillsList: "_nova/skills/list",
+  skillsSetEnabled: "_nova/skills/set_enabled",
+  workspaceTrust: "_nova/workspace/trust",
+  mcpLogin: "_nova/mcp/login",
+  mcpLogout: "_nova/mcp/logout",
 } as const;
 
 export const NOVA_NOTIFICATIONS = {
   backgroundUpdate: "_nova/background/update",
   queueChanged: "_nova/queue/changed",
   sessionRewound: "_nova/session/rewound",
+  mcpAuthUrl: "_nova/mcp/auth_url",
 } as const;
 
 /** Bump when an extension changes incompatibly. */

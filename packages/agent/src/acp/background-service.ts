@@ -18,6 +18,7 @@ import {
 } from "../core/background.js";
 import { chatContentToText } from "../core/chat-content.js";
 import { readCredentials } from "../core/credentials.js";
+import { runHooks } from "../core/hooks.js";
 import { buildMemorySystemPrompt, sessionMemory } from "../core/memory.js";
 import { stripReasoningTags } from "../core/reasoning-tags.js";
 import { runTurn } from "../core/run-turn.js";
@@ -333,13 +334,14 @@ export class BackgroundService {
       novaClient,
       model,
     );
+    const reasoningEffort = await this.runtime.models.effortFor(model, session.effort);
     const background = this.createBackgroundToolApi(params.sessionId, client);
     const tools = buildSessionTools(session, this.runtime.clientCapabilities, {
       mode: null,
     });
     const systemPromptFor = (protocol: ToolProtocol) =>
       [
-        buildModeSystemPrompt(getPromptMode(params)),
+        buildModeSystemPrompt(getPromptMode(params), session.cwd),
         buildSkillsSystemPrompt(session.skills, contentBlocksToText(params.prompt)),
         buildMemorySystemPrompt(session.memory, session.settings.memory),
         protocol === "native"
@@ -367,10 +369,12 @@ export class BackgroundService {
     const host = new AcpToolHost(client, params.sessionId, {
       defaultTimeoutMs: session.settings.commandTimeoutMs ?? undefined,
     });
+    const hookOptions = { cwd: session.cwd, sessionId: params.sessionId, signal: abortController.signal };
     const authorize = (
       toolCallId: string,
       tool: ToolDefinition,
       args: Record<string, unknown>,
+      hookAllowed?: boolean,
     ) =>
       authorizeToolCall(
         {
@@ -384,6 +388,7 @@ export class BackgroundService {
         toolCallId,
         tool,
         args,
+        hookAllowed,
       );
     const requestPermission = async (
       toolCallId: string,
@@ -415,11 +420,17 @@ export class BackgroundService {
             tools,
             requestPermission,
             authorize,
+            hooks: {
+              before: (tool, args) => runHooks("PreToolUse", { tool_name: tool.name, tool_input: args }, hookOptions),
+              after: (tool, args, response) =>
+                runHooks("PostToolUse", { tool_name: tool.name, tool_input: args, tool_response: response }, hookOptions),
+            },
             contextWindow,
             maxToolRounds: session.settings.maxToolRounds ?? undefined,
             emit,
             novaClient,
             model,
+            reasoningEffort,
           });
         },
       });

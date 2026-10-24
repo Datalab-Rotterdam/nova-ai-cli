@@ -17,6 +17,7 @@ function session(): Session {
     history: [],
     pendingBackgroundHandoffs: [],
     title: null,
+    mcpServers: [],
     mcpConnections: [],
     mcpTools: [],
     mcpFailures: [],
@@ -26,6 +27,7 @@ function session(): Session {
     mode: "agent",
     policy: new PermissionPolicy(process.cwd(), "default"),
     model: null,
+    effort: null,
     settings: { ...DEFAULT_SESSION_SETTINGS },
   };
 }

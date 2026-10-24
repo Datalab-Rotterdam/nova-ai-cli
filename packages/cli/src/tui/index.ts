@@ -12,7 +12,7 @@ import {
 } from "../update-install.js";
 import { cliVersion } from "../version.js";
 import { runInkTui } from "./ink/app.js";
-import { workspaceNeedsTrust } from "./settings/workspace-mcp.js";
+import { workspaceNeedsTrust } from "@datalabrotterdam/nova-ai-agent/core/workspace-mcp.js";
 
 export async function runChat(options: TuiOptions): Promise<number> {
   const stored = readCredentials();
@@ -20,7 +20,9 @@ export async function runChat(options: TuiOptions): Promise<number> {
     console.error("nova-ai isn't connected to a Nova AI account yet. Run `nova-ai login` first.");
     return 1;
   }
-  const credentials = options.model ? { ...stored, defaultModel: options.model } : stored;
+  // No model yet: the session takes the account's default (SessionRunner.ensureUsableModel).
+  const model = options.model ?? stored.defaultModel ?? process.env.NOVA_MODEL;
+  const credentials = { ...stored, defaultModel: model };
 
   // One npm check per start: the prompt below and the TUI's reminder share it.
   const updateCheck = checkForUpdate().then((update) => withInstallability(update));

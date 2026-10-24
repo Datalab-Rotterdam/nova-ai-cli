@@ -7,11 +7,17 @@ import { palette } from "../theme.js";
 export function StatusLine({
   ui,
   model,
+  effort = null,
   mcp,
+  scroll = 0,
 }: {
   ui: UIState;
   model: string;
+  /** Thinking level name for a thinking model with levels. */
+  effort?: string | null;
   mcp: McpCounts;
+  /** Transcript rows scrolled up from the newest. */
+  scroll?: number;
 }) {
   const separator = <Text color={palette.faint}> | </Text>;
   const usage = ui.contextUsage
@@ -29,6 +35,7 @@ export function StatusLine({
       {ui.statusLine ? <Text color={palette.muted}>{ui.statusLine}</Text> : null}
       <Text wrap="truncate-end">
         <Text color={palette.muted}>{model}</Text>
+        {effort ? <Text color={palette.muted}>{` · thinking ${effort.toLowerCase()}`}</Text> : null}
         {separator}
         {ui.interactionMode}
         {separator}
@@ -52,6 +59,12 @@ export function StatusLine({
             {separator}
             {`mcp:${mcp.connected}/${mcp.configured}`}
             {mcp.failed ? <Text color={palette.danger}>{` !${mcp.failed}`}</Text> : null}
+          </>
+        ) : null}
+        {scroll ? (
+          <>
+            {separator}
+            <Text color={palette.warning}>{`↑${scroll} lines · PgDn/Esc`}</Text>
           </>
         ) : null}
         {mcp.skills ? (

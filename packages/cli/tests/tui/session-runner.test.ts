@@ -544,42 +544,6 @@ test("session runner attaches mentioned file contents to the model prompt", asyn
   }
 });
 
-test("session runner exposes project .mcp.json servers and configuration failures", () => {
-  const cwd = mkdtempSync(join(tmpdir(), "nova-session-mcp-"));
-  setWorkspaceTrusted(cwd, true);
-  try {
-    writeFileSync(
-      join(cwd, ".mcp.json"),
-      JSON.stringify({
-        mcpServers: {
-          local: { command: process.execPath, args: ["server.js"] },
-          broken: { type: "http" },
-        },
-      }),
-    );
-    const store = createStore({ ...state(), cwd });
-    const runner = new SessionRunner(
-      store,
-      { apiKey: "test", defaultModel: "test-model" },
-      cwd,
-    );
-
-    assert.deepEqual(
-      runner.configuredMcpServers().map((server) => server.name),
-      ["local"],
-    );
-    assert.deepEqual(runner.mcpSessionStatus().configured, [
-      { name: "local", transport: "stdio" },
-    ]);
-    assert.equal(
-      runner.mcpSessionStatus().failures[0]?.serverName,
-      ".mcp.json:broken",
-    );
-  } finally {
-    rmSync(cwd, { recursive: true, force: true });
-  }
-});
-
 test("terminal output updates its pending tool call while the command runs", async () => {
   const store = createStore(state());
   const client = new TuiAcpClient(store, process.cwd());
@@ -735,4 +699,13 @@ test("the TUI client refuses file access outside its workspace", async () => {
   } finally {
     rmSync(base, { recursive: true, force: true });
   }
+});
+
+test("an MCP sign-in address that is not a web page is never opened", () => {
+  const store = createStore(state());
+  const client = new TuiAcpClient(store, process.cwd());
+  client.mcpAuthUrl({ serverName: "evil", url: "file:///etc/passwd" });
+  const last = store.getState().messages.at(-1);
+  assert.equal(last?.role, "error");
+  assert.match(last && "text" in last ? last.text : "", /not a web page; not opened/);
 });
