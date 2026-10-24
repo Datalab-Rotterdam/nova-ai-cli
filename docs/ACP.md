@@ -246,7 +246,7 @@ a prompt runs. Session files are append-only; a rewind appends a reset record.
 
 | Method | Params | Result |
 |---|---|---|
-| `_nova/skills/list` | `cwd` (no session id needed) | `{ skills: [{ name, description, source, path, enabled }] }`: every skill discovered for the workspace, switched-off ones included |
+| `_nova/skills/list` | `cwd` (no session id needed) | `{ skills: [{ name, description, source, path, enabled, bundledBy? }] }`: every skill discovered for the workspace, switched-off ones included; `bundledBy` names the app that ships a bundled skill (NOVA_HOME.md, "Bundled skills"), whose files the file tools refuse to change |
 | `_nova/skills/set_enabled` | `cwd`, `name`, `enabled`, `scope?` (`"project"`, the default, or `"global"`) | `{ skills }` after the change; sessions use it from their next turn. An unknown name is `invalidParams` |
 
 ### Hooks

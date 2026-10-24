@@ -13,6 +13,9 @@ import {
   setSkillEnabled,
 } from "../../src/core/skills.js";
 import type { ToolContext } from "../../src/core/tools/types.js";
+import { editFileTool } from "../../src/core/tools/edit-file.js";
+import { writeFileTool } from "../../src/core/tools/write-file.js";
+import { makeToolContext } from "./tools/test-helpers.js";
 
 test("skills are discovered from user and workspace roots with workspace precedence", () => {
   const root = mkdtempSync(join(tmpdir(), "nova-skills-"));
@@ -176,6 +179,42 @@ test("skills are switched on and off per scope without touching other settings",
   } finally {
     if (previousHome === undefined) delete process.env.NOVA_AI_HOME;
     else process.env.NOVA_AI_HOME = previousHome;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("bundled skills are marked and their files cannot be changed by the file tools", async () => {
+  const root = mkdtempSync(join(tmpdir(), "nova-skills-"));
+  const home = join(root, "home");
+  const cwd = join(root, "workspace");
+  try {
+    const bundled = join(cwd, ".nova-ai", "skills", "nova-docx");
+    const own = join(cwd, ".nova-ai", "skills", "mine");
+    mkdirSync(join(bundled, "scripts"), { recursive: true });
+    mkdirSync(own, { recursive: true });
+    writeFileSync(join(bundled, "SKILL.md"), "---\nname: nova-docx\ndescription: Word.\n---\n");
+    writeFileSync(join(bundled, ".nova-bundled.json"), JSON.stringify({ bundledBy: "Nova AI for VS Code", version: "1" }));
+    writeFileSync(join(own, "SKILL.md"), "---\nname: mine\ndescription: Mine.\n---\n");
+
+    const skills = discoverSkills(cwd, home, join(root, "nova"));
+    assert.equal(skills.find((skill) => skill.name === "nova-docx")?.bundledBy, "Nova AI for VS Code");
+    assert.equal(skills.find((skill) => skill.name === "mine")?.bundledBy, undefined);
+
+    let written = "";
+    const ctx = makeToolContext({
+      cwd,
+      host: { readTextFile: async () => "old", writeTextFile: async (path: string) => void (written = path) },
+    });
+    for (const result of [
+      await writeFileTool.execute(ctx, { path: join(bundled, "scripts", "new.py"), content: "x" }),
+      await editFileTool.execute(ctx, { path: join(bundled, "SKILL.md"), old_string: "old", new_string: "new" }),
+    ]) {
+      assert.ok("error" in result && /bundled with Nova AI for VS Code/.test(result.error));
+    }
+    assert.equal(written, "");
+    await writeFileTool.execute(ctx, { path: join(own, "SKILL.md"), content: "x" });
+    assert.equal(written, join(own, "SKILL.md"));
+  } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });

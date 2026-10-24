@@ -364,8 +364,9 @@ nova-ai-cli carry. Its folder holds `.nova-bundled.json`:
   the version or the content hash no longer matches (an update, or a local edit).
   The `disabled` setting is kept, so a switched-off skill stays off after updates.
 - An installer never touches a skill folder without its own marker.
-- nova-ai-cli does not mark or protect bundled skills yet: it lists them as
-  ordinary skills.
+- nova-ai-cli's agent reports `bundledBy` in `_nova/skills/list` (`/skills`
+  shows "bundled with …"), and its `write_file` and `edit_file` refuse the
+  skill's files. It does not install bundled skills itself.
 
 ## Agents
 

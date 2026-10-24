@@ -464,7 +464,7 @@ export class TuiController {
         ? [
             ...skills.map(
               (skill) =>
-                `${skill.name} [${skill.source}]${skill.enabled ? "" : " (off)"}\n${skill.description}\n${skill.path}`,
+                `${skill.name} [${skill.bundledBy ? `bundled with ${skill.bundledBy}` : skill.source}]${skill.enabled ? "" : " (off)"}\n${skill.description}\n${skill.path}`,
             ),
             "/skills off <name> switches one off in this project (--global: everywhere); /skills on <name> switches it back on.",
           ].join("\n\n")
