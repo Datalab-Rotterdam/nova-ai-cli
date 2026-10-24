@@ -23,6 +23,7 @@ import {
   QuestionDialog,
   ScrollPanel,
   SelectionDialog,
+  SliderDialog,
   ToolInspector,
 } from "./dialogs/views.js";
 import { formatElapsedTime } from "./format.js";
@@ -202,7 +203,7 @@ export function App({ controller }: { controller: TuiController }) {
       </Box>
       <Box ref={bottomRef} flexDirection="column" flexShrink={0}>
         <Surface controller={controller} view={view} rows={Math.max(6, rows - 4)} columns={columns} />
-        <StatusLine ui={view.ui} model={view.model} mcp={view.mcp} scroll={view.scroll} />
+        <StatusLine ui={view.ui} model={view.model} effort={view.effort} mcp={view.mcp} scroll={view.scroll} />
       </Box>
     </Box>
   );
@@ -281,6 +282,7 @@ function Surface({
   const overlay = view.overlay;
   if (overlay?.kind === "selection")
     return <SelectionDialog title={overlay.title} state={overlay.state} height={rows} />;
+  if (overlay?.kind === "slider") return <SliderDialog title={overlay.title} state={overlay.state} />;
   if (overlay?.kind === "text")
     return (
       <ScrollPanel

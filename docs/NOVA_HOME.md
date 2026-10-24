@@ -17,7 +17,7 @@ there), otherwise `~/.nova-ai`. Directories are created `0700`, files `0600`.
   memory/<name>.md              global memory notes
   skills/<name>/SKILL.md        global skills (see "Skills")
   settings.json                 user settings: permission rules, default mode
-  credentials.json              CLI only: API key + default model
+  credentials.json              CLI only: API key + default model and thinking level
   model-capabilities.json       CLI only: learned native tool-call support
   update-check.json             CLI only: npm's latest versions (asked at most daily), skipped/snoozed update
   background-jobs/              CLI only: background job transcripts

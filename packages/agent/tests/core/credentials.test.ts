@@ -15,6 +15,7 @@ import {
   credentialsPath,
   readCredentials,
   readStoredCredentials,
+  saveDefaultEffort,
   saveDefaultModel,
   writeCredentials,
 } from "../../src/core/credentials.js";
@@ -117,5 +118,11 @@ describe("credentials file", () => {
     assert.equal(saveDefaultModel("model-b"), true);
     const saved = JSON.parse(readFileSync(credentialsPath(), "utf8"));
     assert.deepEqual(saved, { apiKey: "file-key", defaultModel: "model-b" });
+  });
+
+  it("remembers the thinking level next to the model", () => {
+    writeCredentials({ apiKey: "file-key", defaultModel: "model-a" });
+    assert.equal(saveDefaultEffort("high"), true);
+    assert.deepEqual(readCredentials(), { apiKey: "file-key", defaultModel: "model-a", defaultEffort: "high" });
   });
 });

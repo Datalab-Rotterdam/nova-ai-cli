@@ -92,12 +92,13 @@ import {
 import type { AgentRuntime } from "./agent-runtime.js";
 import { runBrowserAuth } from "./auth-server.js";
 import { BackgroundService } from "./background-service.js";
-import { ModelService } from "./model-service.js";
+import { ModelService, THOUGHT_LEVEL_CONFIG_ID } from "./model-service.js";
 import { NesService } from "./nes-service.js";
 import { selectPositionEncoding } from "./nes.js";
 import {
   contentBlocksToNovaContent,
   contentBlocksToText,
+  getPromptEffort,
   getPromptModel,
 } from "./prompt-content.js";
 import { QueueService } from "./queue-service.js";
@@ -391,6 +392,7 @@ export class NovaAgent implements AgentRuntime {
       mode: "agent",
       policy: new PermissionPolicy(params.cwd),
       model: null,
+      effort: null,
       settings,
     });
     return { mcpServers, mcpConnections, mcpFailures, skills };
@@ -594,6 +596,14 @@ export class NovaAgent implements AgentRuntime {
       session.policy.setMode(params.value, false);
       return { configOptions: await this.configOptions(session) };
     }
+    if (params.configId === THOUGHT_LEVEL_CONFIG_ID) {
+      if (typeof params.value !== "string" || !params.value) {
+        throw acp.RequestError.invalidParams(params, "thought_level requires a level id");
+      }
+      // Kept across model switches; a model that lacks the level uses its default.
+      session.effort = params.value;
+      return { configOptions: await this.configOptions(session) };
+    }
     if (params.configId !== "model") {
       throw acp.RequestError.invalidParams(
         params,
@@ -610,7 +620,7 @@ export class NovaAgent implements AgentRuntime {
     return { configOptions: await this.configOptions(session) };
   }
 
-  /** Permission mode (always) and model (when the model list can be fetched). */
+  /** Permission mode (always), model and thinking level (when the model list can be fetched). */
   private async configOptions(
     session: Session,
   ): Promise<acp.SessionConfigOption[]> {
@@ -857,6 +867,10 @@ export class NovaAgent implements AgentRuntime {
     }
     await this.models.assertImageInputSupported(novaClient, model, params.prompt);
     const contextWindow = await this.models.resolveContextWindow(novaClient, model);
+    const reasoningEffort = await this.models.effortFor(
+      model,
+      getPromptEffort(params) ?? session.effort,
+    );
 
     session.environment = await detectToolEnvironment(
       session.cwd,
@@ -1013,6 +1027,7 @@ export class NovaAgent implements AgentRuntime {
             emit,
             novaClient,
             model,
+            reasoningEffort,
           });
         },
       });

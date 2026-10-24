@@ -12,6 +12,8 @@ import { novaHomeRoot } from "./nova-home.js";
 export type StoredCredentials = {
   apiKey: string;
   defaultModel?: string;
+  /** Thinking level chosen with /effort; models without it use their own default. */
+  defaultEffort?: string;
 };
 
 const DIR_MODE = 0o700;
@@ -50,7 +52,7 @@ export function readStoredCredentials(): StoredCredentials | null {
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
     return null;
   }
-  const { apiKey, defaultModel } = parsed as Record<string, unknown>;
+  const { apiKey, defaultModel, defaultEffort } = parsed as Record<string, unknown>;
   if (typeof apiKey !== "string" || !apiKey.trim()) return null;
   return {
     apiKey,
@@ -58,6 +60,7 @@ export function readStoredCredentials(): StoredCredentials | null {
       typeof defaultModel === "string" && defaultModel
         ? defaultModel
         : undefined,
+    ...(typeof defaultEffort === "string" && defaultEffort ? { defaultEffort } : {}),
   };
 }
 
@@ -95,6 +98,14 @@ export function saveDefaultModel(model: string): boolean {
   const stored = readStoredCredentials();
   if (!stored) return false;
   writeCredentials({ ...stored, defaultModel: model });
+  return true;
+}
+
+/** Remembers the chosen thinking level, like saveDefaultModel. */
+export function saveDefaultEffort(effort: string): boolean {
+  const stored = readStoredCredentials();
+  if (!stored) return false;
+  writeCredentials({ ...stored, defaultEffort: effort });
   return true;
 }
 

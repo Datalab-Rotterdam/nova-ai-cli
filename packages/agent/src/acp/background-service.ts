@@ -333,6 +333,7 @@ export class BackgroundService {
       novaClient,
       model,
     );
+    const reasoningEffort = await this.runtime.models.effortFor(model, session.effort);
     const background = this.createBackgroundToolApi(params.sessionId, client);
     const tools = buildSessionTools(session, this.runtime.clientCapabilities, {
       mode: null,
@@ -420,6 +421,7 @@ export class BackgroundService {
             emit,
             novaClient,
             model,
+            reasoningEffort,
           });
         },
       });

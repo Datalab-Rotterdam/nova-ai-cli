@@ -74,6 +74,8 @@ export type RunTurnDeps = {
   emit(event: AgentEvent): void | Promise<void>;
   novaClient: NovaAI;
   model: string;
+  /** Sent as `reasoning_effort`; undefined leaves it out (models without levels). */
+  reasoningEffort?: string;
   /** Primarily injectable for focused tests; production uses the safety cap. */
   maxToolRounds?: number;
   /**
@@ -255,7 +257,11 @@ export async function runTurn(
         for await (const event of novaClient.chat.completions.stream(
           // History may hold native tool exchanges from before this model
           // fell back to the text protocol; render them as text.
-          { model, messages: toLegacyMessages(requestMessages) },
+          {
+            model,
+            messages: toLegacyMessages(requestMessages),
+            ...(deps.reasoningEffort ? { reasoning_effort: deps.reasoningEffort } : {}),
+          },
           { signal },
         )) {
           if (event.type === "done") {

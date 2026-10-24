@@ -41,7 +41,7 @@ the status rows, anchored to the newest output.
   streaming answer only re-renders the live tail. A resize just re-lays out.
 - A background job that finishes after it was printed gets a new line; a plan
   is printed once when the turn ends.
-- Dialogs (sessions, models, permission modes, background jobs, tool
+- Dialogs (sessions, models, thinking effort slider, permission modes, background jobs, tool
   inspector, text panels, permission requests and questions) replace the
   prompt in the live area and are bounded by the terminal height.
 

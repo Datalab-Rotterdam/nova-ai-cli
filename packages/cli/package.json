@@ -76,6 +76,6 @@
     ]
   },
   "devDependencies": {
-    "@datalabrotterdam/nova-sdk": "^1.3.2"
+    "@datalabrotterdam/nova-sdk": "1.4.0-k8s.3"
   }
 }

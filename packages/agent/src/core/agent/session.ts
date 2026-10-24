@@ -38,6 +38,8 @@ export type Session = {
   /** Permission rules, mode and approvals of this session. */
   policy: PermissionPolicy;
   model: string | null;
+  /** `reasoning_effort` the client chose (thought_level); null: the model's default. */
+  effort: string | null;
   /** Client-provided behaviour (tool rounds, compaction, memory, timeouts). */
   settings: SessionSettings;
 };
