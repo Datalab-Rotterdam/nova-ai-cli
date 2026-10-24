@@ -5,6 +5,7 @@ import { test } from "node:test";
 import * as acp from "@agentclientprotocol/sdk";
 import { NovaAgent } from "../../src/acp/agent.js";
 import { expandCommand } from "../../src/core/command-files.js";
+import { listMcpTools, type McpConnection } from "../../src/core/mcp.js";
 import { sse, text, withFakeNova } from "../../../../test-support/fake-nova.js";
 
 test("expandCommand fills $ARGUMENTS and $1…$9, or appends the arguments", () => {
@@ -59,5 +60,60 @@ test("command files are advertised and a /command prompt becomes the file's text
       assert.ok(JSON.stringify(requests[2]!.body.messages).includes("/unknown thing"));
     },
     models,
+  );
+});
+
+test("skills run as /<skill-name> and MCP prompts as /mcp__<server>__<prompt>", async () => {
+  await withFakeNova(
+    () => sse([text("Done.")]),
+    async (requests, home) => {
+      const cwd = join(home, "repo");
+      mkdirSync(join(home, "skills", "deploy"), { recursive: true });
+      mkdirSync(cwd, { recursive: true });
+      writeFileSync(join(home, "skills", "deploy", "SKILL.md"), "---\nname: deploy\ndescription: Deploy safely.\n---\nSteps.");
+      const fake: McpConnection = {
+        serverName: "docs",
+        client: {
+          listTools: async () => ({ tools: [] }),
+          getServerCapabilities: () => ({ prompts: {} }),
+          listPrompts: async () => ({
+            prompts: [{ name: "summarize", description: "Summarize a page", arguments: [{ name: "page", required: true }, { name: "focus" }] }],
+          }),
+          getPrompt: async ({ arguments: values }: { arguments: Record<string, string> }) => ({
+            messages: [
+              { role: "user", content: { type: "text", text: `Summarize ${values.page} focusing on ${values.focus ?? "everything"}.` } },
+              { role: "user", content: { type: "image", data: "aGk=", mimeType: "image/png" } },
+            ],
+          }),
+        } as unknown as McpConnection["client"],
+        close: async () => {},
+      };
+      const updates: acp.SessionUpdate[] = [];
+      const client = {
+        notify: async (_method: string, params: { update: acp.SessionUpdate }) => void updates.push(params.update),
+        request: async () => ({ outcome: { outcome: "cancelled" } }),
+      } as unknown as acp.AgentContext;
+      const agent = new NovaAgent();
+      agent.initialize({ protocolVersion: acp.PROTOCOL_VERSION, clientCapabilities: {} });
+      const { sessionId } = await agent.newSession({ cwd, mcpServers: [] }, client);
+      agent.requireSession(sessionId).mcpPrompts = (await listMcpTools([fake])).prompts;
+
+      await agent.prompt({ sessionId, prompt: [{ type: "text", text: "/deploy to staging" }] }, client);
+      assert.ok(JSON.stringify(requests[0]!.body.messages).includes("Use the deploy skill. to staging"));
+
+      await agent.prompt({ sessionId, prompt: [{ type: "text", text: "/mcp__docs__summarize intro.md the risks" }] }, client);
+      const sent = JSON.stringify(requests[1]!.body.messages);
+      assert.ok(sent.includes("Summarize intro.md focusing on the risks.") && sent.includes("aGk="));
+
+      const reply = await agent.prompt({ sessionId, prompt: [{ type: "text", text: "/mcp__docs__summarize" }] }, client);
+      assert.deepEqual(reply, { stopReason: "end_turn" });
+      assert.equal(requests.length, 2);
+      assert.ok(updates.some((u) => u.sessionUpdate === "agent_message_chunk" && u.content.type === "text" && u.content.text === "/mcp__docs__summarize needs: page."));
+
+      const listed = [...updates].reverse().find((u) => u.sessionUpdate === "available_commands_update");
+      const names = listed?.sessionUpdate === "available_commands_update" ? listed.availableCommands.map((c) => [c.name, c.input && "hint" in c.input ? c.input.hint : undefined]) : [];
+      assert.deepEqual(names, [["compact", undefined], ["deploy", "[request]"], ["mcp__docs__summarize", "<page> [focus]"]]);
+    },
+    [{ id: "fake-model", object: "model", created: 0, owned_by: "x", context_window: 100000, capabilities: ["vision"] }],
   );
 });

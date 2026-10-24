@@ -4,6 +4,7 @@ import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
+import type { Prompt } from "@modelcontextprotocol/sdk/types.js";
 import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
 import { FileOAuthProvider, NeedsAuthError, oauthConfigOf } from "./mcp-oauth.js";
 import { truncateToolOutput } from "./tool-output.js";
@@ -201,11 +202,15 @@ function toToolResult(result: {
   return { output: text };
 }
 
+/** An MCP server's prompt, offered as the slash command `/mcp__<server>__<prompt>`. */
+export type McpPrompt = { name: string; prompt: Prompt; connection: McpConnection };
+
 export async function listMcpTools(
   connections: McpConnection[],
   options: { timeoutMs?: number } = {},
 ): Promise<{
   tools: ToolDefinition[];
+  prompts: McpPrompt[];
   connections: McpConnection[];
   failures: McpConnectionFailure[];
 }> {
@@ -276,5 +281,58 @@ export async function listMcpTools(
     }
   }
 
-  return { tools, connections: readyConnections, failures };
+  const prompts = (
+    await Promise.all(readyConnections.map((connection) => listPrompts(connection, timeoutMs)))
+  ).flat();
+  return { tools, prompts, connections: readyConnections, failures };
+}
+
+/** The server's prompts, when it offers any; a server whose prompts fail to list keeps its tools. */
+async function listPrompts(connection: McpConnection, timeoutMs: number): Promise<McpPrompt[]> {
+  if (!connection.client.getServerCapabilities?.()?.prompts) return [];
+  const prompts: Prompt[] = [];
+  try {
+    let cursor: string | undefined;
+    do {
+      const page = await withTimeout(connection.client.listPrompts(cursor ? { cursor } : undefined), timeoutMs, () => {});
+      prompts.push(...page.prompts);
+      cursor = page.nextCursor;
+    } while (cursor);
+  } catch {
+    return [];
+  }
+  return prompts.map((prompt) => ({ name: `${mcpToolPrefix(connection.serverName)}${sanitize(prompt.name)}`, prompt, connection }));
+}
+
+/**
+ * What `/mcp__<server>__<prompt> [arguments]` sends: the prompt's messages as
+ * text and images. Arguments go by position, the last one takes the rest of
+ * the line; missing required ones are named in `missing` instead.
+ */
+export async function getMcpPrompt(
+  entry: McpPrompt,
+  args: string,
+  signal?: AbortSignal,
+): Promise<{ text: string; images: { data: string; mimeType: string }[] } | { missing: string[] }> {
+  const names = entry.prompt.arguments?.map((arg) => arg.name) ?? [];
+  const words = args.split(/\s+/).filter(Boolean);
+  const values = Object.fromEntries(
+    names
+      .map((name, index) => [name, index === names.length - 1 ? words.slice(index).join(" ") : (words[index] ?? "")])
+      .filter(([, value]) => value),
+  );
+  const missing = entry.prompt.arguments?.filter((arg) => arg.required && !values[arg.name]).map((arg) => arg.name) ?? [];
+  if (missing.length) return { missing };
+  const result = await entry.connection.client.getPrompt({ name: entry.prompt.name, arguments: values }, { signal });
+  const texts: string[] = [];
+  const images: { data: string; mimeType: string }[] = [];
+  for (const message of result.messages) {
+    const content = message.content;
+    if (content.type === "text") texts.push(content.text);
+    else if (content.type === "image") images.push({ data: content.data, mimeType: content.mimeType });
+    else if (content.type === "resource" && "text" in content.resource) {
+      texts.push(`<resource uri="${content.resource.uri}">\n${content.resource.text}\n</resource>`);
+    }
+  }
+  return { text: texts.join("\n\n"), images };
 }
