@@ -1,6 +1,6 @@
 /*
  * Browser integration, set up the way Claude Code does it for its Chrome extension: this CLI
- * ships the Nova AI Browser host (browser-host/, vendored from nova-ai-browser) and registers it
+ * depends on the Nova AI Browser host (@datalabrotterdam/nova-ai-browser-host) and registers it
  * on start-up. The host's installer copies itself to ~/.nova-ai-browser/host/<version>/, writes
  * a wrapper and the browsers' native messaging manifests, and installs the nova-browser skill
  * (which the agent then offers like any other skill). It changes nothing when everything is
@@ -10,8 +10,8 @@
  */
 import { execFile, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
+import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 
 export interface BrowserSetupResult {
   version: string;
@@ -38,15 +38,15 @@ export function browserSetupDisabled(env: NodeJS.ProcessEnv = process.env): bool
   return env.NOVA_AI_BROWSER_AUTO_SETUP === "0" || Boolean(env.CI);
 }
 
-/** The vendored host's installer, found from this module upward (dist/ or src/). */
-export function bundledInstaller(from = dirname(fileURLToPath(import.meta.url))): string | undefined {
-  let dir = from;
-  for (let depth = 0; depth < 5; depth++) {
-    const candidate = join(dir, "browser-host", "dist", "cli.js");
-    if (existsSync(candidate)) return candidate;
-    dir = dirname(dir);
+/** The host package's installer, resolved like an import from this module. */
+export function bundledInstaller(from: string = import.meta.url): string | undefined {
+  try {
+    const manifest = createRequire(from).resolve("@datalabrotterdam/nova-ai-browser-host/package.json");
+    const installer = join(dirname(manifest), "dist", "cli.js");
+    return existsSync(installer) ? installer : undefined;
+  } catch {
+    return undefined;
   }
-  return undefined;
 }
 
 /** The installer prints one JSON line; anything before it (warnings) is ignored. */

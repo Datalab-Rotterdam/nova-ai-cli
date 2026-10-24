@@ -25,7 +25,6 @@
   },
   "files": [
     "dist",
-    "browser-host",
     "LICENSE",
     "README.md",
     "CHANGELOG.md"
@@ -41,6 +40,7 @@
   "dependencies": {
     "@agentclientprotocol/sdk": "^0.29.0",
     "@datalabrotterdam/nova-ai-agent": "^1.0.0-alpha.6",
+    "@datalabrotterdam/nova-ai-browser-host": "^1.0.0",
     "chalk": "^5.3.0",
     "cli-highlight": "^2.1.11",
     "diff": "^9.0.0",
@@ -71,7 +71,7 @@
             "package.json",
             "CHANGELOG.md"
           ],
-          "message": "nova-ai-cli(release): \ud83d\ude80 v${nextRelease.version}\n\n${nextRelease.notes}"
+          "message": "nova-ai-cli(release): 🚀 v${nextRelease.version}\n\n${nextRelease.notes}"
         }
       ]
     ]

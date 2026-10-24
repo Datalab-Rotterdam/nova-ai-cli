@@ -20,9 +20,8 @@ const result = {
   skills: [],
 };
 
-test("finds the vendored host from the package's src/ (and dist/)", () => {
-  // npm runs the tests in packages/cli.
-  assert.match(bundledInstaller(join(process.cwd(), "src")) ?? "", /browser-host[/\\]dist[/\\]cli\.js$/);
+test("finds the installer of the host package", () => {
+  assert.match(bundledInstaller() ?? "", /nova-ai-browser-host[/\\]dist[/\\]cli\.js$/);
 });
 
 test("runs the host installer in auto mode with this Node", async () => {

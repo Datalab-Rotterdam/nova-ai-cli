@@ -157,5 +157,3 @@ ext
 .claude/
 .mcp.json
 
-# The vendored Nova AI Browser host ships its build (packages/cli/browser-setup.ts runs it).
-!packages/cli/browser-host/dist/
