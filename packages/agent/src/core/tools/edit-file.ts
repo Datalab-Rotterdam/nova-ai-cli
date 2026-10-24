@@ -1,4 +1,5 @@
 import type { ToolDefinition } from "./types.js";
+import { bundledSkillError } from "../skills.js";
 import { resolveWorkspaceFile } from "./workspace-paths.js";
 
 const MAX_HINT_FILE_BYTES = 2_000_000;
@@ -35,6 +36,8 @@ export const editFileTool: ToolDefinition = {
     const resolved = await resolveWorkspaceFile(cwd, requestedPath);
     if ("error" in resolved) return resolved;
     const { path } = resolved;
+    const bundled = bundledSkillError(path);
+    if (bundled) return { error: bundled };
 
     let content: string;
     try {

@@ -12,7 +12,42 @@ export type SkillDefinition = {
   path: string;
   root: string;
   source: "user" | "workspace";
+  /** Set for a bundled skill: the Nova app that ships and updates it (docs/NOVA_HOME.md, "Bundled skills"). */
+  bundledBy?: string;
 };
+
+export const BUNDLE_FILE = ".nova-bundled.json";
+
+/** Who bundles the skill in `root`, from its `.nova-bundled.json`; undefined for a normal skill. */
+export function readBundledBy(root: string): string | undefined {
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(join(root, BUNDLE_FILE), "utf8"));
+    const by = parsed && typeof parsed === "object" ? (parsed as { bundledBy?: unknown }).bundledBy : undefined;
+    return typeof by === "string" && by.trim() ? by : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Why `file` may not be changed, when it belongs to a bundled skill: walks up
+ * to the nearest folder with a SKILL.md and checks its marker.
+ */
+export function bundledSkillError(file: string): string | undefined {
+  let dir = dirname(resolve(file));
+  for (let depth = 0; depth < 6; depth++) {
+    if (existsSync(join(dir, "SKILL.md"))) {
+      const by = readBundledBy(dir);
+      return by
+        ? `"${basename(dir)}" is a skill bundled with ${by}, which keeps it up to date; it cannot be edited, moved or deleted, only switched off.`
+        : undefined;
+    }
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return undefined;
+}
 
 /**
  * Skill folders, lowest priority first (docs/NOVA_HOME.md, "Skills"): the
@@ -98,11 +133,13 @@ export function discoverSkills(cwd: string, home = homedir(), novaHome = novaHom
       if (!metadata) continue;
       // Later roots have higher priority, so workspace skills override a user
       // skill with the same name.
+      const bundledBy = readBundledBy(dirname(path));
       skills.set(metadata.name, {
         ...metadata,
         path,
         root: dirname(path),
         source: root.source,
+        ...(bundledBy ? { bundledBy } : {}),
       });
     }
   }
