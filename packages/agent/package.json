@@ -65,7 +65,7 @@
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^0.29.0",
-    "@datalabrotterdam/nova-ai-skills": "^1.0.0",
+    "@datalabrotterdam/nova-ai-skills": "^1.0.1",
     "@datalabrotterdam/nova-sdk": "1.4.0-k8s.3",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@sourceregistry/node-webserver": "^1.8.0"

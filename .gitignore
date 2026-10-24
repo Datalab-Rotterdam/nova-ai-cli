@@ -157,3 +157,4 @@ ext
 .claude/
 .mcp.json
 
+packages-out/
