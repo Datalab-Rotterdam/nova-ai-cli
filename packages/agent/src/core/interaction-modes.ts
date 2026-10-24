@@ -1,4 +1,4 @@
-export const INTERACTION_MODES = ["agent", "ask", "plan"] as const;
+export const INTERACTION_MODES = ["agent", "ask", "plan", "autopilot"] as const;
 
 export type InteractionMode = (typeof INTERACTION_MODES)[number];
 
@@ -24,3 +24,10 @@ export const PLAN_MODE_TOOLS: ReadonlySet<string> = new Set([
   "ask_user",
   "update_plan",
 ]);
+
+/** Tool rounds per turn in autopilot, where the usual limit is lifted (the VS Code extension's value). */
+export const AUTOPILOT_MAX_TOOL_ROUNDS = 1_000;
+
+/** What ask_user answers in autopilot: nobody is there to answer. */
+export const AUTOPILOT_ANSWER =
+  "Autopilot is on and no user is available to answer. Choose the most reasonable option yourself, mention the choice in your summary and continue.";

@@ -7,7 +7,8 @@ import * as acp from "@agentclientprotocol/sdk";
 import { NovaAgent } from "../../src/acp/agent.js";
 import { buildModeSystemPrompt } from "../../src/core/agent/mode-prompt.js";
 import { buildSessionTools } from "../../src/core/agent/session-tools.js";
-import { listAgentFiles } from "../../src/core/agent-files.js";
+import { isAutopilot, listAgentFiles } from "../../src/core/agent-files.js";
+import { AUTOPILOT_ANSWER } from "../../src/core/interaction-modes.js";
 import { novaHomeRoot, projectPaths } from "../../src/core/nova-home.js";
 
 function writeAgent(dir: string, file: string, content: string) {
@@ -36,7 +37,7 @@ test("agent files become session modes with their prompt and narrowed tools", as
     agent.initialize({ protocolVersion: acp.PROTOCOL_VERSION, clientCapabilities: { fs: { readTextFile: true, writeTextFile: true }, terminal: true } });
     const client = { notify: async () => {} } as unknown as acp.AgentContext;
     const { sessionId, modes } = await agent.newSession({ cwd, mcpServers: [] }, client);
-    assert.deepEqual(modes?.availableModes.map((mode) => mode.id), ["agent", "ask", "plan", "reviewer", "scribe"]);
+    assert.deepEqual(modes?.availableModes.map((mode) => mode.id), ["agent", "ask", "plan", "autopilot", "reviewer", "scribe"]);
 
     agent.setSessionMode({ sessionId, modeId: "reviewer" });
     const session = agent.requireSession(sessionId);
@@ -48,6 +49,30 @@ test("agent files become session modes with their prompt and narrowed tools", as
   } finally {
     rmSync(cwd, { recursive: true, force: true });
     rmSync(global, { recursive: true, force: true });
+    rmSync(projectPaths(cwd).dir, { recursive: true, force: true });
+  }
+});
+
+test("autopilot answers ask_user itself, also from an agent file", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "nova-autopilot-"));
+  const project = join(projectPaths(cwd).dir, "agents");
+  try {
+    writeAgent(project, "solo.agent.md", "---\nname: Solo\nautopilot: true\n---\nWork alone.");
+    const agent = new NovaAgent();
+    agent.initialize({ protocolVersion: acp.PROTOCOL_VERSION, clientCapabilities: { fs: { readTextFile: true, writeTextFile: true }, terminal: true, elicitation: { form: {} } } as acp.ClientCapabilities });
+    const { sessionId } = await agent.newSession({ cwd, mcpServers: [] }, { notify: async () => {} } as unknown as acp.AgentContext);
+    const session = agent.requireSession(sessionId);
+    const askUser = (mode: string) => buildSessionTools(session, agent.clientCapabilities, { mode }).find((tool) => tool.name === "ask_user")!;
+    for (const mode of ["autopilot", "solo"]) {
+      assert.ok(isAutopilot(cwd, mode));
+      const answer = await askUser(mode).execute({} as never, { questions: [{ question: "Which?", options: [] }] });
+      assert.deepEqual(answer, { output: AUTOPILOT_ANSWER });
+    }
+    assert.ok(!isAutopilot(cwd, "agent"));
+    assert.ok(!buildSessionTools(session, agent.clientCapabilities, { mode: "autopilot", enterPlanMode: () => {} }).some((tool) => tool.name === "enter_plan_mode"));
+    assert.match(buildModeSystemPrompt("autopilot", cwd) ?? "", /autopilot mode/);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
     rmSync(projectPaths(cwd).dir, { recursive: true, force: true });
   }
 });

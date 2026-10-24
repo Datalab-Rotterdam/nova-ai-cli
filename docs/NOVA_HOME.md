@@ -434,10 +434,12 @@ Tool groups: `read`, `search`, `edit`, `run`, `web`, `memory`, `ask`, `todo`, `s
 and `mcp` for MCP tools; or list tool names such as `read_file`.
 
 nova-ai-cli's agent reads the same files and offers each one as a session mode
-after its built-in `agent`, `ask` and `plan` (Shift+Tab and `/mode <id>` in the
+after its built-in `agent`, `ask`, `plan` and `autopilot` (Shift+Tab and `/mode <id>` in the
 CLI; the id is the file name, `Code Review.agent.md` → `code-review`). A file
 named after a built-in mode is ignored. Differences from the extension:
-- `icon` and `autopilot` are not used.
+- `icon` is not used. `autopilot: true` works as in the extension: up to 1,000
+  tool rounds instead of the `maxToolRounds` setting, and `ask_user` answers
+  itself; tool calls that need approval still wait for the user.
 - The groups map to the agent's own tools (`edit` is `edit_file` and
   `write_file`, `todo` is `update_plan`, `run` includes the background
   commands); the extension's tool names (`list_dir`, `create_file`,

@@ -12,6 +12,14 @@ export function buildModeSystemPrompt(mode: string | null, cwd?: string): string
         "You cannot edit files, run commands or use other tools in this mode; do not pretend to.",
         "End with a concise implementation plan the user can approve; it will be carried out after the user switches back to agent mode.",
       ].join(" ");
+    case "autopilot":
+      return [
+        "You are in autopilot mode. Work autonomously until the task is completely done.",
+        "Do not stop to ask for confirmation or clarification: when something is ambiguous, pick the most reasonable option, say which one you chose and continue (ask_user is answered for you).",
+        "Plan the work with update_plan, then carry it out step by step, running the relevant tests or build as you go.",
+        "You still work within the user's permissions: a tool call the user has to approve waits for their decision; if one is rejected, take another route.",
+        "Finish with a short summary of what changed, the decisions you made on your own, and anything left to do.",
+      ].join(" ");
     case "agent":
     case null:
       return null;

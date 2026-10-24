@@ -21,6 +21,8 @@ export type AgentFile = {
   tools?: string[];
   /** Only tools that change nothing. */
   readOnly: boolean;
+  /** No tool round limit, and ask_user answers itself (like the built-in autopilot mode). */
+  autopilot: boolean;
   source: "global" | "project";
   path: string;
 };
@@ -89,6 +91,11 @@ export function findAgentFile(cwd: string, id: string): AgentFile | undefined {
   return listAgentFiles(cwd).find((agent) => agent.id === id);
 }
 
+/** The built-in autopilot mode, or an agent file with `autopilot: true`. */
+export function isAutopilot(cwd: string, mode: string | null): boolean {
+  return mode === "autopilot" || (!!mode && !!findAgentFile(cwd, mode)?.autopilot);
+}
+
 export function parseAgentFile(
   content: string,
   fileName: string,
@@ -109,6 +116,7 @@ export function parseAgentFile(
     prompt: body,
     ...(tools ? { tools: [...new Set(tools.flatMap((entry) => TOOL_GROUPS[entry] ?? [TOOL_ALIASES[entry] ?? entry]))] } : {}),
     readOnly: scalar(frontmatter, "readOnly") === "true",
+    autopilot: scalar(frontmatter, "autopilot") === "true",
     source,
     path,
   };

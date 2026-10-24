@@ -182,7 +182,7 @@ describe("NovaAgent.newSession", () => {
     assert.equal(a.modes?.currentModeId, "agent");
     assert.deepEqual(
       a.modes?.availableModes.map((mode) => mode.id),
-      ["agent", "ask", "plan"],
+      ["agent", "ask", "plan", "autopilot"],
     );
     assert.equal(
       a.modes?.availableModes.some((mode) => mode.id === "bypassAll"),

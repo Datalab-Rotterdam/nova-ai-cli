@@ -19,6 +19,11 @@ const AVAILABLE_MODES: acp.SessionMode[] = [
     description:
       "Read the workspace, ask questions and track tasks to develop a plan, without changing files or running commands.",
   },
+  {
+    id: "autopilot",
+    name: "Autopilot",
+    description: "Work autonomously until the task is done, within your permissions; questions answer themselves.",
+  },
 ];
 
 /** The built-in modes, then the user's agent files for `cwd` (docs/NOVA_HOME.md, "Agents"). */
