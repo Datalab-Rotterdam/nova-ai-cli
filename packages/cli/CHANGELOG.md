@@ -1,3 +1,10 @@
+# [@datalabrotterdam/nova-ai-cli-v1.2.0-alpha.13](https://github.com/Datalab-Rotterdam/nova-ai-cli/compare/@datalabrotterdam/nova-ai-cli@1.2.0-alpha.12...@datalabrotterdam/nova-ai-cli@1.2.0-alpha.13) (2026-10-24)
+
+
+### Features
+
+* **cli:** Ctrl+S select mode and /copy ([bcb7e02](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/bcb7e02f05739caae7a6155d2c37b7d2e54d01fa))
+
 # [@datalabrotterdam/nova-ai-cli-v1.2.0-alpha.12](https://github.com/Datalab-Rotterdam/nova-ai-cli/compare/@datalabrotterdam/nova-ai-cli@1.2.0-alpha.11...@datalabrotterdam/nova-ai-cli@1.2.0-alpha.12) (2026-10-24)
 
 
