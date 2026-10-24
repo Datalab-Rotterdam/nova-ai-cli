@@ -1,3 +1,4 @@
+import { TranscriptCommitter } from "../../src/tui/ink/transcript/committer.js";
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -727,4 +728,17 @@ test("an MCP sign-in address that is not a web page is never opened", () => {
   const last = store.getState().messages.at(-1);
   assert.equal(last?.role, "error");
   assert.match(last && "text" in last ? last.text : "", /not a web page; not opened/);
+});
+
+test("a finished thinking block is one collapsed block until Ctrl+O expands it", () => {
+  const messages = [
+    { id: "t", role: "assistant", text: "First thought.\n\nSecond thought.", streaming: false, thinking: true },
+    { id: "a", role: "assistant", text: "Answer.", streaming: false },
+  ];
+  const thinkingBlocks = (expanded: boolean) =>
+    new TranscriptCommitter()
+      .sync({ ...state(), messages } as UIState, expanded)
+      .committed.filter((block) => block.kind === "assistant" && block.thinking);
+  assert.deepEqual(thinkingBlocks(false).map((block) => block.kind === "assistant" && [block.text, block.expanded]), [["First thought.\n\nSecond thought.", false]]);
+  assert.deepEqual(thinkingBlocks(true).map((block) => block.kind === "assistant" && block.expanded), [true]);
 });

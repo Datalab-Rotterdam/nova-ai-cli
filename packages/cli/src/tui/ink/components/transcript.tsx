@@ -49,10 +49,15 @@ export function TranscriptBlockView({ block, frame = 0 }: BlockProps): ReactNode
     case "assistant": {
       const text = block.first ? block.text.replace(/^\s+/, "") : block.text;
       if (block.thinking) {
+        const lines = text.split("\n").filter((line) => line.trim()).length;
         return (
           <Prefixed prefix="  " color={palette.faint}>
             <Text color={palette.muted} italic>
-              {block.first ? `thinking: ${text.trimEnd()}` : text.trimEnd()}
+              {block.expanded
+                ? `thinking: ${text.trim()}`
+                : block.streaming
+                  ? "▸ thinking…"
+                  : `▸ thinking (${lines} ${lines === 1 ? "line" : "lines"}) · Ctrl+O to show`}
             </Text>
           </Prefixed>
         );
