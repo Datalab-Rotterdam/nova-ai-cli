@@ -139,6 +139,10 @@ nova-ai -p -c "and now add a changelog entry"
 Exit codes: `0` success, `1` configuration or runtime error, `2` cancelled,
 `3` tool-turn safety limit, `130` interrupted.
 
+In CI: a GitHub Action (`uses: Datalab-Rotterdam/nova-ai-cli@main`) and a GitLab
+template review pull requests and post the answer as a comment; see
+[docs/CI.md](https://github.com/Datalab-Rotterdam/nova-ai-cli/blob/main/docs/CI.md).
+
 ## Editors (ACP)
 
 Configure `nova-ai --acp` as a custom agent. For Zed:
