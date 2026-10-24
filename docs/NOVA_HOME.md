@@ -322,7 +322,8 @@ one counts). An imported chat keeps its totals. The cost is computed from the
 models' `inputCostPer1M`/`outputCostPer1M` in the gateway's model list, with
 cached tokens charged as input; it is left out while no model of the session
 has a price, and uses the last priced model's currency (never converted).
-Background agents and subagents count toward their session.
+Background agents and subagents count toward their session (in the extension,
+a coding agent only while its chat is open).
 
 ## Skills
 
