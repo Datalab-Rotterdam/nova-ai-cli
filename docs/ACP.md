@@ -58,7 +58,7 @@ needs Nova without credentials fails with `authRequired`.
 
 | Method | Notes |
 |---|---|
-| `session/new` | Starts MCP servers (in parallel, 10 s timeout each; failures are reported, not fatal): the client's plus, in a trusted workspace, those it declares in `.mcp.json` and `.nova-ai/settings.json` (the client's win by name; `_meta["nova-ai-cli/workspaceMcp"]: false` leaves the workspace's out). Returns `modes` and `configOptions`. |
+| `session/new` | Starts MCP servers (in parallel, 10 s timeout each; failures are reported, not fatal): the client's, the user's from `~/.nova-ai/mcp.json` and, in a trusted workspace, those it declares in `.nova-ai/settings.json`, `.mcp.json` and `.nova-ai/mcp.json` (a later source wins by name, the client's over all; `_meta["nova-ai-cli/workspaceMcp"]: false` leaves the user's and the workspace's out). Returns `modes` and `configOptions`. |
 | `session/load` | Replays the stored conversation: user and agent text, and tool calls with their final status, diff and (truncated) output. |
 | `session/resume` | Like load, without the replay. |
 | `session/fork` | Copies a stored session under a new id. |
