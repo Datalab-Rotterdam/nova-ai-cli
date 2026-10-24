@@ -1,3 +1,10 @@
+# [@datalabrotterdam/nova-ai-agent-v1.0.0-alpha.6](https://github.com/Datalab-Rotterdam/nova-ai-cli/compare/@datalabrotterdam/nova-ai-agent@1.0.0-alpha.5...@datalabrotterdam/nova-ai-agent@1.0.0-alpha.6) (2026-10-24)
+
+
+### Features
+
+* **agent:** autopilot mode, and autopilot in agent files ([c9d47ee](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/c9d47ee97f9f5e648592159678c24a71bdda4b5c))
+
 # [@datalabrotterdam/nova-ai-agent-v1.0.0-alpha.5](https://github.com/Datalab-Rotterdam/nova-ai-cli/compare/@datalabrotterdam/nova-ai-agent@1.0.0-alpha.4...@datalabrotterdam/nova-ai-agent@1.0.0-alpha.5) (2026-10-24)
 
 
