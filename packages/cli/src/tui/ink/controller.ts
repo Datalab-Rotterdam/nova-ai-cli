@@ -4,6 +4,7 @@ import {
   type SlashCommandContext,
 } from "../commands/index.js";
 import { readClipboardImage } from "../files/clipboard-image.js";
+import { copyText } from "../files/clipboard-text.js";
 import { resolveFdPath } from "../files/find-fd.js";
 import { listWorkspaceFiles } from "../files/list-workspace-files.js";
 import {
@@ -41,6 +42,7 @@ import type { KeyPress } from "./editor/prompt-editor.js";
 import { PromptEditor } from "./editor/prompt-editor.js";
 import { formatContextUsage, formatImageSize, formatUsageTotals } from "./format.js";
 import { bindPromptSubmission } from "./prompt-submission.js";
+import { MOUSE_REPORTING_OFF, MOUSE_REPORTING_ON } from "./terminal-keyboard.js";
 import { ASSISTANT_MARKER, WORKING_FRAMES } from "./theme.js";
 import {
   TranscriptCommitter,
@@ -212,6 +214,9 @@ export class TuiController {
         return true;
       case "o":
         this.toggleToolDetails();
+        return true;
+      case "s":
+        this.toggleSelectMode();
         return true;
       case "t":
         this.openToolInspector();
@@ -522,6 +527,35 @@ export class TuiController {
     this.refresh();
   }
 
+  /**
+   * Select mode: mouse reporting off, so the terminal selects and copies text
+   * natively (the wheel no longer scrolls the transcript; PgUp/PgDn still do).
+   * For terminals where Shift/Option + drag does not get past mouse reporting.
+   */
+  toggleSelectMode(): void {
+    const selectMode = !this.store.getState().selectMode;
+    this.io.write(selectMode ? MOUSE_REPORTING_OFF : MOUSE_REPORTING_ON);
+    this.store.setState({
+      selectMode,
+      statusLine: selectMode
+        ? "Select mode: drag to select text, your terminal copies it. PgUp/PgDn scroll; Ctrl+S turns the mouse wheel back on."
+        : "Mouse wheel scrolls the transcript again. Ctrl+S to select text.",
+    });
+  }
+
+  /** /copy: the last answer (not its thinking) to the clipboard. */
+  async copyLastAnswer(): Promise<string> {
+    const answer = [...this.store.getState().messages]
+      .reverse()
+      .find((message) => message.role === "assistant" && !message.thinking && message.text.trim());
+    if (answer?.role !== "assistant") return "There is no answer to copy yet.";
+    const tool = await copyText(answer.text.trim(), (data) => this.io.write(data));
+    const size = `${answer.text.trim().length} characters`;
+    return tool
+      ? `Copied the last answer (${size}).`
+      : `Sent the last answer (${size}) to the terminal's clipboard; if nothing was copied, use Ctrl+S to select it.`;
+  }
+
   toggleToolDetails(): void {
     this.expandedTools = !this.expandedTools;
     this.store.setState({
@@ -607,6 +641,7 @@ export class TuiController {
     setModel: (model) => this.setModel(model),
     getInteractionMode: () => this.runner.interactionMode,
     getInteractionModes: () => this.runner.modeIds,
+    copyLastAnswer: () => this.copyLastAnswer(),
     agentCommands: () => this.agentCommands(),
     setInteractionMode: (mode) => this.setInteractionMode(mode),
     getPermissionMode: () => this.store.getState().permissionMode,

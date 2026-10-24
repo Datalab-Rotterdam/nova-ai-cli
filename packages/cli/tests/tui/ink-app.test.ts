@@ -157,6 +157,13 @@ test("the Ink TUI runs a prompt, answers a permission, redraws on Ctrl+O and exi
   await waitFor(() => /echo: hello there/.test(show()), show);
   assert.equal(show().match(/echo: hello there/g)?.length, 1, "shown once after the redraw");
 
+  stdin.send("\u0013"); // Ctrl+S: mouse reporting off so the terminal can select text
+  await waitFor(() => /select · Ctrl\+S/.test(show()), show);
+  assert.ok(stdout.raw.lastIndexOf("\u001b[?1000l") > stdout.raw.lastIndexOf("\u001b[?1000h"), "mouse reporting is off");
+  stdin.send("\u0013");
+  await waitFor(() => !/select · Ctrl\+S/.test(show()), show);
+  assert.ok(stdout.raw.lastIndexOf("\u001b[?1000h") > stdout.raw.lastIndexOf("\u001b[?1000l"), "and back on");
+
   stdin.send("\u0003");
   await waitFor(() => /Press Ctrl\+C again within 2s to exit\./.test(show()), show);
   stdin.send("\u0003");
