@@ -526,8 +526,8 @@ export class TuiController {
     this.expandedTools = !this.expandedTools;
     this.store.setState({
       statusLine: this.expandedTools
-        ? "Verbose tool details expanded; read/search stay compact."
-        : "Verbose tool details collapsed.",
+        ? "Thinking and verbose tool details expanded; read/search stay compact."
+        : "Thinking and verbose tool details collapsed.",
     });
   }
 

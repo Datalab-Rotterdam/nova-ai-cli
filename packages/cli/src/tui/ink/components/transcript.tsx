@@ -48,6 +48,20 @@ export function TranscriptBlockView({ block, frame = 0 }: BlockProps): ReactNode
     }
     case "assistant": {
       const text = block.first ? block.text.replace(/^\s+/, "") : block.text;
+      if (block.thinking) {
+        const lines = text.split("\n").filter((line) => line.trim()).length;
+        return (
+          <Prefixed prefix="  " color={palette.faint}>
+            <Text color={palette.muted} italic>
+              {block.expanded
+                ? `thinking: ${text.trim()}`
+                : block.streaming
+                  ? "▸ thinking…"
+                  : `▸ thinking (${lines} ${lines === 1 ? "line" : "lines"}) · Ctrl+O to show`}
+            </Text>
+          </Prefixed>
+        );
+      }
       return (
         <Prefixed prefix={block.first ? `${ASSISTANT_MARKER} ` : "  "} color={palette.accent}>
           <Markdown text={text.trimEnd()} />
@@ -162,6 +176,13 @@ export function ToolCallBlock({
       ) : expanded && !isCompactTool(call) ? (
         <Box paddingLeft={2}>
           <Text color={palette.muted}>{formatToolCallDetails(call)}</Text>
+        </Box>
+      ) : call.status === "completed" && outputLines(call.output).length ? (
+        // Collapsed output says it is there, like collapsed thinking.
+        <Box paddingLeft={2}>
+          <Text color={palette.faint}>
+            {`▸ ${outputLines(call.output).length} ${outputLines(call.output).length === 1 ? "line" : "lines"} of output · ${isCompactTool(call) ? "Ctrl+T to inspect" : "Ctrl+O to show"}`}
+          </Text>
         </Box>
       ) : null}
     </Box>

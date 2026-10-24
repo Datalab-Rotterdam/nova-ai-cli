@@ -410,14 +410,9 @@ export class TuiAcpClient {
           this.appendStreamingText(update.content.text);
         return;
       case "agent_thought_chunk":
-        if (update.content.type === "text" && update.content.text.trim()) {
-          this.resetStreaming();
-          this.appendMessage({
-            id: uid(),
-            role: "assistant",
-            text: update.content.text,
-            streaming: false,
-          });
+        // Chunks join into one block; whitespace-only ones are the spaces between words.
+        if (update.content.type === "text" && update.content.text) {
+          this.appendStreamingText(update.content.text, true);
         }
         return;
       case "usage_update": {
@@ -638,11 +633,16 @@ export class TuiAcpClient {
       this.patchToolCall(record.toolCallId, { output: record.output });
   }
 
-  private appendStreamingText(text: string): void {
+  private appendStreamingText(text: string, thinking = false): void {
+    // Thinking and the answer are separate blocks: switching between them starts a new one.
+    const current = this.streamingMessageId
+      ? this.store.getState().messages.find((message) => message.id === this.streamingMessageId)
+      : undefined;
+    if (current?.role === "assistant" && Boolean(current.thinking) !== thinking) this.resetStreaming();
     if (!this.streamingMessageId) {
       const id = uid();
       this.streamingMessageId = id;
-      this.appendMessage({ id, role: "assistant", text, streaming: true });
+      this.appendMessage({ id, role: "assistant", text, streaming: true, ...(thinking ? { thinking: true } : {}) });
       return;
     }
 

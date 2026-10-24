@@ -113,7 +113,7 @@ added to the transcript once.
 | Escape                           | Cancel active work; otherwise jump back to the newest output                            |
 | PgUp / PgDn, mouse wheel         | Scroll the transcript (Shift+drag selects text)                                         |
 | Ctrl+C twice                     | Cancel, then exit with a resume command                                                 |
-| Ctrl+O                           | Expand or collapse verbose inline tool/background details; activity blocks stay compact |
+| Ctrl+O                           | Expand or collapse the model's thinking and verbose inline tool/background details; activity blocks stay compact |
 | Ctrl+T                           | Open the tool inspector                                                                 |
 | Ctrl+B                           | Inspect background shells and agents                                                    |
 | Ctrl+R                           | Switch session                                                                          |

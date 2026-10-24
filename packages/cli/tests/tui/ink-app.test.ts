@@ -153,7 +153,7 @@ test("the Ink TUI runs a prompt, answers a permission, redraws on Ctrl+O and exi
   assert.deepEqual(answers, [[true, "session"]]);
 
   stdin.send("\u000f"); // Ctrl+O redraws the transcript with verbose tools
-  await waitFor(() => /Verbose tool details expanded/.test(show()), show);
+  await waitFor(() => /Thinking and verbose tool details expanded/.test(show()), show);
   await waitFor(() => /echo: hello there/.test(show()), show);
   assert.equal(show().match(/echo: hello there/g)?.length, 1, "shown once after the redraw");
 

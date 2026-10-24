@@ -18,6 +18,9 @@ export type TranscriptBlock =
       /** The first part of a message carries the assistant marker. */
       first: boolean;
       streaming: boolean;
+      thinking?: boolean;
+      /** For thinking: shown in full (Ctrl+O) instead of one summary line. */
+      expanded?: boolean;
     }
   | { key: string; kind: "error"; text: string }
   | { key: string; kind: "tool"; call: ToolCallView; expanded: boolean }
@@ -144,7 +147,7 @@ export class TranscriptCommitter {
           );
           break;
         case "assistant":
-          this.emitAssistant(message, committing, emit);
+          this.emitAssistant(message, committing, emit, expanded);
           if (message.streaming) committing = false;
           break;
       }
@@ -164,7 +167,16 @@ export class TranscriptCommitter {
     message: Extract<UIMessage, { role: "assistant" }>,
     committing: boolean,
     emit: (block: TranscriptBlock, final: boolean, consumed: string[]) => void,
+    expanded: boolean,
   ): void {
+    if (message.thinking) {
+      // One block, collapsed to a summary line unless expanded: never split into paragraphs.
+      const block = { key: message.id, kind: "assistant", text: message.text, first: true, streaming: message.streaming, thinking: true, expanded } as const;
+      if (message.streaming) emit(block, false, []);
+      else if (message.text.trim()) emit(block, true, [message.id]);
+      else if (committing) this.committedIds.push(message.id);
+      return;
+    }
     let offset = this.partial?.id === message.id ? this.partial.offset : 0;
     const block = (text: string, streaming: boolean) =>
       ({
@@ -173,6 +185,7 @@ export class TranscriptCommitter {
         text,
         first: offset === 0,
         streaming,
+        ...(message.thinking ? { thinking: true } : {}),
       }) as const;
 
     if (!message.streaming) {

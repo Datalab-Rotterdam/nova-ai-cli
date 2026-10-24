@@ -1,3 +1,4 @@
+import { TranscriptCommitter } from "../../src/tui/ink/transcript/committer.js";
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -644,8 +645,27 @@ test("automatic context compaction feedback appears in the transcript", async ()
   assert.equal(message?.role, "assistant");
   if (message?.role !== "assistant")
     throw new Error("Expected compaction feedback.");
-  assert.equal(message.streaming, false);
+  assert.equal(message.thinking, true);
   assert.match(message.text, /Context compacted automatically/);
+});
+
+test("thought chunks join into one thinking block, and the answer is its own message", async () => {
+  const store = createStore(state());
+  const client = new TuiAcpClient(store, process.cwd());
+  const send = (sessionUpdate: "agent_thought_chunk" | "agent_message_chunk", text: string) =>
+    client.sessionUpdate({ sessionId: "test-session", update: { sessionUpdate, content: { type: "text", text } } });
+  for (const chunk of ["The", " ", "user is", " saying", ' "testing1', '23"']) await send("agent_thought_chunk", chunk);
+  await send("agent_message_chunk", "Alive");
+  await send("agent_message_chunk", " and well!");
+
+  const messages = store.getState().messages.filter((message) => message.role === "assistant");
+  assert.deepEqual(
+    messages.map((message) => message.role === "assistant" && [message.text, Boolean(message.thinking), message.streaming]),
+    [
+      ['The user is saying "testing123"', true, false],
+      ["Alive and well!", false, true],
+    ],
+  );
 });
 
 function pendingToolOutput(current: UIState): string {
@@ -708,4 +728,17 @@ test("an MCP sign-in address that is not a web page is never opened", () => {
   const last = store.getState().messages.at(-1);
   assert.equal(last?.role, "error");
   assert.match(last && "text" in last ? last.text : "", /not a web page; not opened/);
+});
+
+test("a finished thinking block is one collapsed block until Ctrl+O expands it", () => {
+  const messages = [
+    { id: "t", role: "assistant", text: "First thought.\n\nSecond thought.", streaming: false, thinking: true },
+    { id: "a", role: "assistant", text: "Answer.", streaming: false },
+  ];
+  const thinkingBlocks = (expanded: boolean) =>
+    new TranscriptCommitter()
+      .sync({ ...state(), messages } as UIState, expanded)
+      .committed.filter((block) => block.kind === "assistant" && block.thinking);
+  assert.deepEqual(thinkingBlocks(false).map((block) => block.kind === "assistant" && [block.text, block.expanded]), [["First thought.\n\nSecond thought.", false]]);
+  assert.deepEqual(thinkingBlocks(true).map((block) => block.kind === "assistant" && block.expanded), [true]);
 });
