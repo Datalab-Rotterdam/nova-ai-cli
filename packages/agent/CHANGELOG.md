@@ -1,3 +1,10 @@
+# [@datalabrotterdam/nova-ai-agent-v1.0.0-alpha.9](https://github.com/Datalab-Rotterdam/nova-ai-cli/compare/@datalabrotterdam/nova-ai-agent@1.0.0-alpha.8...@datalabrotterdam/nova-ai-agent@1.0.0-alpha.9) (2026-10-24)
+
+
+### Features
+
+* token and cost totals per session ([8e9aef8](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/8e9aef81b6345832f38d8a2639c35d4cb6fb3b47))
+
 # [@datalabrotterdam/nova-ai-agent-v1.0.0-alpha.8](https://github.com/Datalab-Rotterdam/nova-ai-cli/compare/@datalabrotterdam/nova-ai-agent@1.0.0-alpha.7...@datalabrotterdam/nova-ai-agent@1.0.0-alpha.8) (2026-10-24)
 
 
