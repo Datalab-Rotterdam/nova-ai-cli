@@ -16,9 +16,7 @@ import {
   type ContextCompactionResult,
 } from "../core/context-compaction.js";
 import { readCredentials } from "../core/credentials.js";
-import {
-  isInteractionMode,
-} from "../core/interaction-modes.js";
+import { AUTOPILOT_MAX_TOOL_ROUNDS, isInteractionMode } from "../core/interaction-modes.js";
 import {
   closeMcpConnections,
   connectMcpServers,
@@ -30,7 +28,7 @@ import {
 import { FileOAuthProvider, oauthConfigOf } from "../core/mcp-oauth.js";
 import { buildMemorySystemPrompt, sessionMemory } from "../core/memory.js";
 import { installSkills } from "@datalabrotterdam/nova-ai-skills";
-import { findAgentFile } from "../core/agent-files.js";
+import { findAgentFile, isAutopilot } from "../core/agent-files.js";
 import { expandCommand, listCommandFiles } from "../core/command-files.js";
 import { isWorkspaceTrusted, novaHomeRoot, setWorkspaceTrusted } from "../core/nova-home.js";
 import { readWorkspaceMcpConfiguration, workspaceNeedsTrust } from "../core/workspace-mcp.js";
@@ -1150,7 +1148,7 @@ export class NovaAgent implements AgentRuntime {
             requestPermission,
             authorize,
             hooks: toolHooks,
-            maxToolRounds: session.settings.maxToolRounds ?? undefined,
+            maxToolRounds: isAutopilot(session.cwd, session.mode) ? AUTOPILOT_MAX_TOOL_ROUNDS : session.settings.maxToolRounds ?? undefined,
             compactThreshold: session.settings.compactThreshold ?? undefined,
             compactContext: !session.settings.autoCompact ? undefined : async (currentMessages, error) => {
               const compaction = await compactConversation(

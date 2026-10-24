@@ -1,7 +1,8 @@
 import type * as acp from "@agentclientprotocol/sdk";
 import type { InteractionMode } from "../interaction-modes.js";
 import { PLAN_MODE_TOOLS } from "../interaction-modes.js";
-import { findAgentFile } from "../agent-files.js";
+import { findAgentFile, isAutopilot } from "../agent-files.js";
+import { AUTOPILOT_ANSWER } from "../interaction-modes.js";
 import {
   createMemoryReadTool,
   createMemoryWriteTool,
@@ -46,6 +47,19 @@ export function buildSessionTools(
   caps: acp.ClientCapabilities | undefined,
   options: SessionToolOptions,
 ): ToolDefinition[] {
+  const tools = modeTools(session, caps, options);
+  if (!isAutopilot(session.cwd, options.mode)) return tools;
+  // Nobody answers in autopilot: ask_user tells the model to pick the best default.
+  return tools.map((tool) =>
+    tool.name === "ask_user" ? { ...tool, execute: async () => ({ output: AUTOPILOT_ANSWER }) } : tool,
+  );
+}
+
+function modeTools(
+  session: Session,
+  caps: acp.ClientCapabilities | undefined,
+  options: SessionToolOptions,
+): ToolDefinition[] {
   const baseTools = [
     ...(options.updatePlan ? [createUpdatePlanTool(options.updatePlan)] : []),
     ...availableTools(caps, session.environment, { background: true }),
@@ -61,6 +75,7 @@ export function buildSessionTools(
       (tool) => PLAN_MODE_TOOLS.has(tool.name) && !session.mcpTools.includes(tool),
     );
   }
+  if (options.mode === "autopilot") return baseTools;
   if (options.mode !== "agent") {
     const agent = options.mode === "ask" ? undefined : findAgentFile(session.cwd, options.mode);
     if (!agent) return [];

@@ -78,7 +78,9 @@ while you read an answer the prompt that asked for it stays pinned on the top
 row. To select text, hold Shift (Option in some macOS terminals) while dragging.
 
 - **Modes** (Shift+Tab): `agent` does the work; `plan` reads the code, asks
-  questions and builds a task list but changes nothing; `ask` only answers.
+  questions and builds a task list but changes nothing; `ask` only answers;
+  `autopilot` works on until the task is done, picking defaults instead of
+  asking (approvals still ask you).
   Your own agents (`~/.nova-ai/agents/<name>.agent.md`, the format the VS Code
   extension uses) are extra modes after these; `/mode` lists them.
 - **Permissions**: before an edit or command you choose once, for this
@@ -97,7 +99,7 @@ row. To select text, hold Shift (Option in some macOS terminals) while dragging.
 | Enter / Shift+Enter | Send / new line (Shift+Enter where the terminal supports the kitty keyboard protocol: VS Code, kitty, WezTerm, Ghostty, foot, Alacritty, recent iTerm2; Alt+Enter, Ctrl+J or a trailing `\` work everywhere) |
 | Esc | Cancel the running turn |
 | Ctrl+C twice | Exit; prints `nova-ai --resume <id>` |
-| Shift+Tab | Cycle agent / ask / plan and your own agents |
+| Shift+Tab | Cycle agent / ask / plan / autopilot and your own agents |
 | Ctrl+R / Ctrl+P / Ctrl+K | Sessions / models / permission mode |
 | Ctrl+O / Ctrl+T / Ctrl+B | Verbose tool output / tool inspector / background jobs |
 | Alt+V | Paste a clipboard image |

@@ -116,6 +116,7 @@ numbers are clamped to the range shown, other types are ignored.
 | `agent` | All tools, plus `enter_plan_mode` |
 | `plan` | Read-only: `read_file`, `list_directory`, `find_files`, `search_text`, `memory_read`, `load_skill`, plus `ask_user` and `update_plan` |
 | `ask` | None |
+| `autopilot` | All tools; up to 1,000 tool rounds, and `ask_user` answers "choose the most reasonable option" itself. Permission requests still go to the client |
 | an agent file's id | What its `tools` and `readOnly` allow (all tools when it lists none); its body is added to the system prompt |
 
 `modes.availableModes` lists the built-in modes, then the user's agent files
