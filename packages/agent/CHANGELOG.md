@@ -1,3 +1,18 @@
+# [@datalabrotterdam/nova-ai-agent-v1.0.0-alpha.4](https://github.com/Datalab-Rotterdam/nova-ai-cli/compare/@datalabrotterdam/nova-ai-agent@1.0.0-alpha.3...@datalabrotterdam/nova-ai-agent@1.0.0-alpha.4) (2026-10-24)
+
+
+### Features
+
+* **agent:** Claude Code compatible hooks ([227fe8b](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/227fe8b273ec2e211e9d57674e76af5c42a473bd))
+* **agent:** install the shared Nova skills ([64139dd](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/64139dd612933343f04f165de1a9ab78832d6864))
+* **agent:** mark and protect bundled skills ([6ef52eb](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/6ef52eb6d048f8a3b4e75686244aabcfd0f62d6e))
+* **agent:** thinking effort for reasoning models ([8551fea](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/8551feacff3e1675f369030e20fb2b5071f0db7f))
+* **agent:** web_search tool ([12985eb](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/12985eb9ca06d6c814d4e0162465c651889d9370))
+* **cli:** /effort slider for thinking models ([8ca67f2](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/8ca67f2f5dcc8f6bff8c36409a2baba5d43c4a02))
+* **cli:** remember the thinking level ([883196c](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/883196c9fdb089f4f26ac82b557cc87dfc0b1c0b))
+* OAuth sign-in for MCP servers ([ba57c79](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/ba57c79642f902ab2bc20f59e4627fb2b774bb4a))
+* the user's agent files as session modes ([3386de8](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/3386de88d07b0351bd1e44960fcacfef26e3d45b))
+
 # [@datalabrotterdam/nova-ai-agent-v1.0.0-alpha.3](https://github.com/Datalab-Rotterdam/nova-ai-cli/compare/@datalabrotterdam/nova-ai-agent@1.0.0-alpha.2...@datalabrotterdam/nova-ai-agent@1.0.0-alpha.3) (2026-10-23)
 
 
