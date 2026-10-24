@@ -24,9 +24,11 @@ import {
   closeMcpConnections,
   connectMcpServers,
   listMcpTools,
+  mcpToolPrefix,
   type McpConnection,
   type McpConnectionFailure,
 } from "../core/mcp.js";
+import { FileOAuthProvider, oauthConfigOf } from "../core/mcp-oauth.js";
 import { buildMemorySystemPrompt, sessionMemory } from "../core/memory.js";
 import { isWorkspaceTrusted, setWorkspaceTrusted } from "../core/nova-home.js";
 import { readWorkspaceMcpConfiguration, workspaceNeedsTrust } from "../core/workspace-mcp.js";
@@ -383,6 +385,7 @@ export class NovaAgent implements AgentRuntime {
       history,
       pendingBackgroundHandoffs: [],
       title,
+      mcpServers,
       mcpConnections,
       mcpTools,
       mcpFailures,
@@ -628,6 +631,76 @@ export class NovaAgent implements AgentRuntime {
       permissionModeOption(session.policy.mode),
       ...(await this.models.buildConfigOptions(session)),
     ];
+  }
+
+  /**
+   * `_nova/mcp/login`: signs in to an HTTP/SSE server with OAuth. The page to
+   * open arrives as `_nova/mcp/auth_url`; the request ends when the browser
+   * comes back (or after 5 minutes), and the server is then reconnected.
+   * Returns the session's MCP and skill status, as on session/new.
+   */
+  async mcpLogin(
+    params: { sessionId: string; serverName: string },
+    client: acp.AgentContext,
+    signal?: AbortSignal,
+  ): Promise<Record<string, unknown>> {
+    const session = this.requireSession(params.sessionId);
+    const server = this.httpMcpServer(session, params.serverName);
+    const provider = new FileOAuthProvider(server.name, server.url, oauthConfigOf(server));
+    await provider.authorize(
+      server.url,
+      async (url) => {
+        await client.notify(NOVA_NOTIFICATIONS.mcpAuthUrl, {
+          sessionId: params.sessionId,
+          serverName: server.name,
+          url: url.toString(),
+        });
+      },
+      signal,
+    );
+    return this.reconnectMcpServer(params.sessionId, session, server);
+  }
+
+  /** `_nova/mcp/logout`: forgets the server's tokens and reconnects it (now signed out). */
+  async mcpLogout(params: { sessionId: string; serverName: string }): Promise<Record<string, unknown>> {
+    const session = this.requireSession(params.sessionId);
+    const server = this.httpMcpServer(session, params.serverName);
+    new FileOAuthProvider(server.name, server.url, oauthConfigOf(server)).forget();
+    return this.reconnectMcpServer(params.sessionId, session, server);
+  }
+
+  private httpMcpServer(session: Session, name: string): Extract<acp.McpServer, { url: string }> {
+    const server = session.mcpServers.find((candidate) => candidate.name === name);
+    if (!server || !("url" in server)) {
+      throw acp.RequestError.invalidParams({ serverName: name }, `No HTTP or SSE MCP server named "${name}" in this session.`);
+    }
+    return server;
+  }
+
+  /** Replaces one server's connection, tools and failures in the session. */
+  private async reconnectMcpServer(
+    sessionId: string,
+    session: Session,
+    server: acp.McpServer,
+  ): Promise<Record<string, unknown>> {
+    const ours = (name: string) => name === server.name;
+    await closeMcpConnections(session.mcpConnections.filter((c) => ours(c.serverName)));
+    const connected = await connectMcpServers([server]);
+    const loaded = await listMcpTools(connected.connections);
+    if (this.sessions.get(sessionId) !== session) {
+      // Closed meanwhile: nothing would close these.
+      await closeMcpConnections(loaded.connections);
+      throw sessionNotFound(sessionId);
+    }
+    const prefix = mcpToolPrefix(server.name);
+    session.mcpConnections = [...session.mcpConnections.filter((c) => !ours(c.serverName)), ...loaded.connections];
+    session.mcpTools = [...session.mcpTools.filter((tool) => !tool.name.startsWith(prefix)), ...loaded.tools];
+    session.mcpFailures = [
+      ...session.mcpFailures.filter((failure) => !ours(failure.serverName)),
+      ...connected.failures,
+      ...loaded.failures,
+    ];
+    return sessionStatusMeta(session.mcpServers, session.mcpConnections, session.mcpFailures, session.skills);
   }
 
   /**

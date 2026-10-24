@@ -126,7 +126,7 @@ export type McpSessionStatus = {
     env?: string[];
   }>;
   connected: string[];
-  failures: Array<{ serverName: string; message: string }>;
+  failures: Array<{ serverName: string; message: string; needsAuth?: boolean }>;
 };
 
 export type SkillSessionStatus = {
@@ -411,6 +411,15 @@ export class SessionRunner {
 
   skillSessionStatus(): SkillSessionStatus[] {
     return this.skills.map((skill) => ({ ...skill }));
+  }
+
+  /** Signs in to (or out of) an HTTP MCP server; the agent reconnects it and reports the new status. */
+  async mcpSignIn(serverName: string, signIn: boolean): Promise<McpSessionStatus> {
+    await this.ensureSession();
+    const params = { sessionId: this.sessionId, serverName };
+    const meta = signIn ? await this.nova.mcpLogin(params) : await this.nova.mcpLogout(params);
+    this.applyMcpStatus(meta);
+    return this.mcpSessionStatus();
   }
 
   async trustWorkspace(): Promise<void> {
@@ -1018,7 +1027,13 @@ export class SessionRunner {
           const item = entry as Record<string, unknown>;
           return typeof item.serverName === "string" &&
             typeof item.message === "string"
-            ? [{ serverName: item.serverName, message: item.message }]
+            ? [
+                {
+                  serverName: item.serverName,
+                  message: item.message,
+                  ...(item.needsAuth === true ? { needsAuth: true } : {}),
+                },
+              ]
             : [];
         })
       : [];

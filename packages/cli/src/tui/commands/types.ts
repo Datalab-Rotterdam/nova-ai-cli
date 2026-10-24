@@ -39,6 +39,8 @@ export type SlashCommandContext = {
   trustWorkspace(): string | Promise<string>;
   openToolInspector(): void;
   openMcpInspector(): void | Promise<void>;
+  /** /mcp login|logout <server>: returns a message when done. */
+  mcpSignIn(serverName: string, signIn: boolean): Promise<string>;
   openSkillInspector(): void | Promise<void>;
   /** Switches a skill on or off (this project, or everywhere); returns a message. */
   switchSkill(name: string, enabled: boolean, global: boolean): string | Promise<string>;

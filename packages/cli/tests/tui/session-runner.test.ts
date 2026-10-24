@@ -700,3 +700,12 @@ test("the TUI client refuses file access outside its workspace", async () => {
     rmSync(base, { recursive: true, force: true });
   }
 });
+
+test("an MCP sign-in address that is not a web page is never opened", () => {
+  const store = createStore(state());
+  const client = new TuiAcpClient(store, process.cwd());
+  client.mcpAuthUrl({ serverName: "evil", url: "file:///etc/passwd" });
+  const last = store.getState().messages.at(-1);
+  assert.equal(last?.role, "error");
+  assert.match(last && "text" in last ? last.text : "", /not a web page; not opened/);
+});

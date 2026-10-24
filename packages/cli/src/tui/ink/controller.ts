@@ -610,6 +610,19 @@ export class TuiController {
     getPermissionMode: () => this.store.getState().permissionMode,
     setPermissionMode: (mode) => this.setPermissionMode(mode),
     openPermissionPicker: this.openPermissionModes,
+    mcpSignIn: async (serverName, signIn) => {
+      try {
+        const status = await this.runner.mcpSignIn(serverName, signIn);
+        this.refresh();
+        const failure = status.failures.find((item) => item.serverName === serverName);
+        if (!signIn) return `Signed out of "${serverName}".`;
+        return failure
+          ? `Signed in, but "${serverName}" did not connect: ${failure.message}`
+          : `Signed in to "${serverName}"; its tools are available from the next message.`;
+      } catch (error) {
+        return errorMessage(error, signIn ? "Sign-in failed." : "Sign-out failed.");
+      }
+    },
     trustWorkspace: async () => {
       try {
         await this.runner.trustWorkspace();
@@ -821,7 +834,9 @@ function formatMcpServer(
   }
   const failure = status.failures.find((item) => item.serverName === server.name);
   lines.push(
-    failure
+    failure?.needsAuth
+      ? `status: needs sign-in - /mcp login ${server.name}`
+      : failure
       ? `status: failed - ${failure.message}`
       : status.connected.includes(server.name)
         ? "status: connected"

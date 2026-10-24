@@ -95,6 +95,12 @@ export class NovaAgentClient {
   }) {
     return this.ext<ContextUsage>(NOVA_METHODS.sessionContextUsage, params);
   }
+  mcpLogin(params: { sessionId: string; serverName: string }) {
+    return this.ext<Record<string, unknown>>(NOVA_METHODS.mcpLogin, params);
+  }
+  mcpLogout(params: { sessionId: string; serverName: string }) {
+    return this.ext<Record<string, unknown>>(NOVA_METHODS.mcpLogout, params);
+  }
   workspaceTrust(params: { cwd: string; trusted?: boolean }) {
     return this.ext<{ trusted: boolean; needsTrust: boolean }>(NOVA_METHODS.workspaceTrust, params);
   }

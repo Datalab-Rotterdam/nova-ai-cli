@@ -14,6 +14,7 @@ import {
 import { describeResourceUri } from "../../src/acp/prompt-content.js";
 import { setWorkspaceTrusted } from "../../src/core/nova-home.js";
 import { sse, text, withFakeNova } from "../../../../test-support/fake-nova.js";
+import { startOAuthMcpServer } from "../../../../test-support/fake-oauth-mcp.js";
 import {
   appendSessionTurn,
   deleteStoredSession,
@@ -1044,6 +1045,46 @@ describe("NovaAgent workspace trust", () => {
       assert.deepEqual(agent.workspaceTrust({ cwd, trusted: true }), { trusted: true, needsTrust: false });
     } finally {
       rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("NovaAgent MCP OAuth", () => {
+  it("reports a server that needs sign-in, signs in through the browser page and stays signed in", async () => {
+    const oauthServer = await startOAuthMcpServer();
+    const mcpServers = [{ type: "http" as const, name: "remote", url: oauthServer.url, headers: [] }];
+    const statusOf = (meta: Record<string, unknown> | null | undefined) =>
+      meta?.["nova-ai-cli/mcp"] as { connected: string[]; failures: Array<{ serverName: string; needsAuth?: boolean }> };
+    try {
+      const agent = new NovaAgent();
+      const first = await agent.newSession({ cwd: "/repo", mcpServers });
+      assert.deepEqual(statusOf(first._meta).failures.map(({ serverName, needsAuth }) => ({ serverName, needsAuth })), [
+        { serverName: "remote", needsAuth: true },
+      ]);
+
+      // The "browser": follows the authorization page, which redirects to the loopback callback.
+      const opened: string[] = [];
+      const browser = {
+        notify: async (method: string, params: { url: string }) => {
+          if (method !== "_nova/mcp/auth_url") return;
+          opened.push(params.url);
+          await fetch(params.url);
+        },
+        request: async () => ({}),
+      } as unknown as acp.AgentContext;
+      const signedIn = await agent.mcpLogin({ sessionId: first.sessionId, serverName: "remote" }, browser);
+      assert.equal(opened.length, 1);
+      assert.deepEqual(statusOf(signedIn).connected, ["remote"]);
+      assert.deepEqual(statusOf(signedIn).failures, []);
+
+      const second = await agent.newSession({ cwd: "/repo", mcpServers });
+      assert.deepEqual(statusOf(second._meta).connected, ["remote"], "the stored tokens are reused");
+
+      const signedOut = await agent.mcpLogout({ sessionId: second.sessionId, serverName: "remote" });
+      assert.equal(statusOf(signedOut).failures[0]?.needsAuth, true);
+      await agent.shutdown();
+    } finally {
+      await oauthServer.close();
     }
   });
 });
