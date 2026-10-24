@@ -20,16 +20,18 @@ import { AUTOPILOT_MAX_TOOL_ROUNDS, isInteractionMode } from "../core/interactio
 import {
   closeMcpConnections,
   connectMcpServers,
+  getMcpPrompt,
   listMcpTools,
   mcpToolPrefix,
   type McpConnection,
+  type McpPrompt,
   type McpConnectionFailure,
 } from "../core/mcp.js";
 import { FileOAuthProvider, oauthConfigOf } from "../core/mcp-oauth.js";
 import { buildMemorySystemPrompt, sessionMemory } from "../core/memory.js";
 import { installSkills } from "@datalabrotterdam/nova-ai-skills";
 import { findAgentFile, isAutopilot } from "../core/agent-files.js";
-import { expandCommand, listCommandFiles } from "../core/command-files.js";
+import { expandCommand, listCommandFiles, type CommandFile } from "../core/command-files.js";
 import { isWorkspaceTrusted, novaHomeRoot, setWorkspaceTrusted } from "../core/nova-home.js";
 import { readWorkspaceMcpConfiguration, workspaceNeedsTrust } from "../core/workspace-mcp.js";
 import { MAX_STOP_HOOK_ROUNDS, runHooks } from "../core/hooks.js";
@@ -190,42 +192,103 @@ function replayedToolCall(
   };
 }
 
-/** The command name when the prompt is exactly one advertised slash command. */
-/** The agent's own commands, then the user's command files (a built-in wins a name clash). */
-function availableCommands(cwd: string): acp.AvailableCommand[] {
-  const builtIn = new Set(AVAILABLE_COMMANDS.map((command) => command.name));
+type SlashCommand =
+  | { source: "file"; command: CommandFile }
+  | { source: "skill"; skill: SkillDefinition }
+  | { source: "mcp"; prompt: McpPrompt };
+
+/**
+ * The commands a prompt may start with besides the agent's own: the user's
+ * command files, then skills (`/<skill-name>`), then MCP prompts
+ * (`/mcp__<server>__<prompt>`). An earlier one wins a name clash, a built-in
+ * wins over all of them (as in the VS Code extension).
+ */
+function customCommands(session: Session): Map<string, SlashCommand & { name: string; description: string; hint?: string }> {
+  const commands = new Map<string, SlashCommand & { name: string; description: string; hint?: string }>();
+  const add = (entry: SlashCommand & { name: string; description: string; hint?: string }) => {
+    if (!AVAILABLE_COMMANDS.some((builtIn) => builtIn.name === entry.name) && !commands.has(entry.name)) {
+      commands.set(entry.name, entry);
+    }
+  };
+  for (const command of listCommandFiles(session.cwd)) {
+    add({ source: "file", command, name: command.name, description: command.description, ...(command.argumentHint ? { hint: command.argumentHint } : {}) });
+  }
+  for (const skill of session.skills) {
+    if (/^[a-z0-9][\w:-]*$/i.test(skill.name)) {
+      add({ source: "skill", skill, name: skill.name, description: skill.description, hint: "[request]" });
+    }
+  }
+  for (const prompt of session.mcpPrompts ?? []) {
+    const args = prompt.prompt.arguments?.map((arg) => (arg.required ? `<${arg.name}>` : `[${arg.name}]`)).join(" ");
+    add({
+      source: "mcp",
+      prompt,
+      name: prompt.name,
+      description: prompt.prompt.description ?? prompt.prompt.title ?? `Prompt ${prompt.prompt.name} of ${prompt.connection.serverName}`,
+      ...(args ? { hint: args } : {}),
+    });
+  }
+  return commands;
+}
+
+/** The agent's own commands, then the user's command files, skills and MCP prompts. */
+function availableCommands(session: Session): acp.AvailableCommand[] {
   return [
     ...AVAILABLE_COMMANDS,
-    ...listCommandFiles(cwd)
-      .filter((command) => !builtIn.has(command.name))
-      .map(({ name, description, argumentHint }) => ({
-        name,
-        description,
-        ...(argumentHint ? { input: { hint: argumentHint } } : {}),
-      })),
+    ...[...customCommands(session).values()].map(({ name, description, hint }) => ({
+      name,
+      description,
+      ...(hint ? { input: { hint } } : {}),
+    })),
   ];
 }
 
 /**
- * A prompt that starts with `/<name> [arguments]` for one of the user's
- * command files becomes the file's expanded text (other content blocks are
- * kept), with the file's `model` for this answer only.
+ * A prompt that starts with `/<name> [arguments]` for a command file, a skill
+ * or an MCP prompt becomes what that command sends (other content blocks are
+ * kept): the file's expanded text with its `model` for this answer only,
+ * "Use the <skill> skill. <request>", or the MCP prompt's messages. An MCP
+ * prompt missing a required argument answers with what it needs instead.
  */
-function expandCommandFile(cwd: string, params: acp.PromptRequest): acp.PromptRequest {
+async function expandSlashCommand(
+  session: Session,
+  params: acp.PromptRequest,
+  signal: AbortSignal,
+): Promise<acp.PromptRequest | { reply: string }> {
   const [first, ...rest] = params.prompt;
   if (first?.type !== "text") return params;
-  const match = /^\/([a-z0-9][\w:-]*)(?:\s+([\s\S]*))?$/.exec(first.text.trim());
-  const command = match && !AVAILABLE_COMMANDS.some((builtIn) => builtIn.name === match[1])
-    ? listCommandFiles(cwd).find((file) => file.name === match[1])
-    : undefined;
-  if (!command) return params;
-  return {
+  const match = /^\/([A-Za-z0-9][\w:-]*)(?:\s+([\s\S]*))?$/.exec(first.text.trim());
+  const entry = match ? customCommands(session).get(match[1]!) : undefined;
+  if (!entry) return params;
+  const args = match![2]?.trim() ?? "";
+  const withText = (text: string, extra: acp.ContentBlock[] = []): acp.PromptRequest => ({
     ...params,
-    prompt: [{ type: "text", text: expandCommand(command, match![2]?.trim() ?? "") }, ...rest],
-    ...(command.model ? { _meta: { ...params._meta, "nova-ai-cli/model": command.model } } : {}),
-  };
+    prompt: [{ type: "text", text }, ...extra, ...rest],
+  });
+  switch (entry.source) {
+    case "file": {
+      const expanded = withText(expandCommand(entry.command, args));
+      return entry.command.model ? { ...expanded, _meta: { ...params._meta, "nova-ai-cli/model": entry.command.model } } : expanded;
+    }
+    case "skill":
+      return withText(`Use the ${entry.skill.name} skill.${args ? ` ${args}` : ""}`);
+    case "mcp": {
+      let result;
+      try {
+        result = await getMcpPrompt(entry.prompt, args, signal);
+      } catch (error) {
+        return { reply: `/${entry.name} failed: ${error instanceof Error ? error.message : String(error)}` };
+      }
+      if ("missing" in result) return { reply: `/${entry.name} needs: ${result.missing.join(", ")}.` };
+      return withText(
+        result.text || `/${entry.name}`,
+        result.images.map(({ data, mimeType }) => ({ type: "image" as const, data, mimeType })),
+      );
+    }
+  }
 }
 
+/** The command name when the prompt is exactly one advertised slash command. */
 function slashCommandName(prompt: acp.PromptRequest["prompt"]): string | null {
   if (prompt.length !== 1 || prompt[0]!.type !== "text") return null;
   const match = /^\/([a-z][a-z0-9-]*)\s*$/.exec(prompt[0]!.text.trim());
@@ -431,6 +494,7 @@ export class NovaAgent implements AgentRuntime {
       mcpServers,
       mcpConnections,
       mcpTools,
+      mcpPrompts: loadedMcp.prompts,
       mcpFailures,
       environment,
       skills,
@@ -738,6 +802,7 @@ export class NovaAgent implements AgentRuntime {
     const prefix = mcpToolPrefix(server.name);
     session.mcpConnections = [...session.mcpConnections.filter((c) => !ours(c.serverName)), ...loaded.connections];
     session.mcpTools = [...session.mcpTools.filter((tool) => !tool.name.startsWith(prefix)), ...loaded.tools];
+    session.mcpPrompts = [...(session.mcpPrompts ?? []).filter((entry) => !ours(entry.connection.serverName)), ...loaded.prompts];
     session.mcpFailures = [
       ...session.mcpFailures.filter((failure) => !ours(failure.serverName)),
       ...connected.failures,
@@ -964,7 +1029,17 @@ export class NovaAgent implements AgentRuntime {
     if (slashCommandName(params.prompt) === "compact") {
       return this.runCompactCommand(session, params.sessionId, client);
     }
-    params = expandCommandFile(session.cwd, params);
+    const expanded = await expandSlashCommand(session, params, abortController.signal);
+    if ("reply" in expanded) {
+      await client
+        .notify("session/update", {
+          sessionId: params.sessionId,
+          update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: expanded.reply } },
+        })
+        .catch(() => {});
+      return { stopReason: "end_turn" };
+    }
+    params = expanded;
     // Hooks may block the message or add context; SessionStart only before a chat's first message.
     const hookOptions = { cwd: session.cwd, sessionId: params.sessionId, signal: abortController.signal };
     const notice = (text: string) =>
@@ -1270,7 +1345,7 @@ export class NovaAgent implements AgentRuntime {
     await client
       .notify("session/update", {
         sessionId,
-        update: { sessionUpdate: "available_commands_update", availableCommands: availableCommands(session.cwd) },
+        update: { sessionUpdate: "available_commands_update", availableCommands: availableCommands(session) },
       })
       .catch(() => {});
   }

@@ -66,7 +66,7 @@ needs Nova without credentials fails with `authRequired`.
 | `session/close` / `session/delete` | Close cancels a running turn and stops the session's MCP servers; delete also removes the stored file. Background jobs keep running until killed or the agent exits. |
 | `session/prompt` | One turn. Prompts for the same session are queued and run one after another. |
 | `session/cancel` | Aborts the model request and running tools, answers pending permission requests as cancelled, marks open tool calls failed ("Cancelled"), then returns `stopReason: "cancelled"`. |
-| `session/prompt` with `/<name> [arguments]` | For one of the user's command files (NOVA_HOME.md, "Commands"): the file's text with the arguments filled in is sent instead, with the file's `model` for that answer only. `/compact` is the agent's own. Other `/…` text is an ordinary prompt. |
+| `session/prompt` with `/<name> [arguments]` | For one of the user's command files (NOVA_HOME.md, "Commands"): the file's text with the arguments filled in is sent instead, with the file's `model` for that answer only. For a skill: "Use the <skill> skill. <arguments>". For an MCP prompt (`/mcp__<server>__<prompt>`): the prompt's messages (text, images, text resources); a missing required argument is answered with `end_turn` and the names it needs. `/compact` is the agent's own. Other `/…` text is an ordinary prompt. |
 | `session/set_mode` | `agent`, `ask`, `plan` or one of the user's agent files (see Modes). Permission modes are rejected here. |
 | `session/set_config_option` | `permission_mode` and `model` (see below). |
 
@@ -144,7 +144,7 @@ Besides text (`agent_message_chunk`), reasoning (`agent_thought_chunk`),
 - `usage_update` after each turn (token usage from the gateway);
 - `session_info_update` with the title derived from the conversation;
 - `available_commands_update`: `/compact` (summarize older messages), then
-  the user's command files with their `argument-hint` as `input.hint`; sent
+  the user's command files, skills and MCP prompts with an `input.hint`; sent
   again after every turn;
 - `current_mode_update` and `config_option_update` when they change.
 

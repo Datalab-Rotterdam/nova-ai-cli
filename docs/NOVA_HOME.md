@@ -403,8 +403,11 @@ Write unit tests for $ARGUMENTS in the style of the existing tests.
 - `$ARGUMENTS` is everything after the name, `$1`…`$9` single words; a file
   without placeholders gets the arguments appended after a blank line.
 - `allowed-tools` is read by Claude Code; Nova ignores it for now.
-- Built-in commands win a name clash. The extension also offers enabled skills as
-  `/<skill-name>` and MCP prompts as `/mcp__<server>__<prompt>`.
+- Built-in commands win a name clash. Enabled skills are offered as
+  `/<skill-name> [request]` ("Use the <skill> skill." plus the request) and MCP
+  prompts as `/mcp__<server>__<prompt>` (arguments by position, the last one
+  takes the rest of the line); a command file wins over a skill of the same
+  name, both over an MCP prompt.
 - nova-ai-cli's agent reads the same files for every ACP client: it lists them
   in `available_commands_update` (read again after each turn) and expands a
   prompt that starts with `/<name>`. It always reads the `.claude/commands`

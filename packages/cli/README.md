@@ -110,7 +110,9 @@ Slash commands: `/help`, `/model`, `/effort` (thinking models), `/mode`, `/permi
 and `/exit`. Your own commands are markdown files in `~/.nova-ai/commands/` or
 the repository's `.nova-ai/commands/` (Claude Code's format, so
 `.claude/commands` works too): the file is the prompt, `$ARGUMENTS` what you
-type after the command, and they show up in the `/` menu. Details:
+type after the command, and they show up in the `/` menu, together with your
+skills (`/<skill-name> <request>`) and your MCP servers' prompts
+(`/mcp__<server>__<prompt>`). Details:
 [`src/tui/README.md`](https://github.com/Datalab-Rotterdam/nova-ai-cli/blob/main/packages/cli/src/tui/README.md).
 
 ## Headless

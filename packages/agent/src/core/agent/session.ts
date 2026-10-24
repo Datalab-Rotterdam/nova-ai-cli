@@ -3,7 +3,7 @@ import type { SessionSettings } from "./session-settings.js";
 import type { ChatMessage } from "@datalabrotterdam/nova-sdk";
 import type { InteractionMode } from "../interaction-modes.js";
 import type { PermissionPolicy } from "../policy/policy.js";
-import type { McpConnection, McpConnectionFailure } from "../mcp.js";
+import type { McpConnection, McpConnectionFailure, McpPrompt } from "../mcp.js";
 import type { MemorySnapshot } from "../memory.js";
 import type { PromptQueue } from "../prompt-queue.js";
 import type { SkillDefinition } from "../skills.js";
@@ -39,6 +39,8 @@ export type Session = {
   memory: MemorySnapshot;
   /** A built-in InteractionMode, or the id of one of the user's agent files. */
   mode: InteractionMode | string;
+  /** MCP servers' prompts, offered as `/mcp__<server>__<prompt>` commands. */
+  mcpPrompts?: McpPrompt[];
   /** Permission rules, mode and approvals of this session. */
   policy: PermissionPolicy;
   model: string | null;
