@@ -1,9 +1,9 @@
 ﻿import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { after, describe, it } from "node:test";
+import { after, describe, it, test } from "node:test";
 import * as acp from "@agentclientprotocol/sdk";
 import {
   contentBlocksToNovaContent,
@@ -12,7 +12,8 @@ import {
   NovaAgent,
 } from "../../src/acp/agent.js";
 import { describeResourceUri } from "../../src/acp/prompt-content.js";
-import { setWorkspaceTrusted } from "../../src/core/nova-home.js";
+import { novaHomeRoot, setWorkspaceTrusted } from "../../src/core/nova-home.js";
+import { discoverSkills } from "../../src/core/skills.js";
 import { sse, text, withFakeNova } from "../../../../test-support/fake-nova.js";
 import { startOAuthMcpServer } from "../../../../test-support/fake-oauth-mcp.js";
 import {
@@ -1018,7 +1019,8 @@ describe("NovaAgent skills", () => {
       mkdirSync(join(cwd, ".nova-ai", "skills", "deploy"), { recursive: true });
       writeFileSync(join(cwd, ".nova-ai", "skills", "deploy", "SKILL.md"), "---\nname: deploy\ndescription: Deploy safely.\n---\nbody");
       const agent = new NovaAgent();
-      const state = () => agent.listSkills({ cwd }).skills.map(({ name, enabled }) => ({ name, enabled }));
+      // Only this workspace's: other tests' initialize installs the shared skills in the home.
+      const state = () => agent.listSkills({ cwd }).skills.filter((skill) => skill.source === "workspace").map(({ name, enabled }) => ({ name, enabled }));
       assert.deepEqual(state(), [{ name: "deploy", enabled: true }]);
       agent.setSkillEnabled({ cwd, name: "deploy", enabled: false, scope: "project" });
       assert.deepEqual(state(), [{ name: "deploy", enabled: false }]);
@@ -1087,4 +1089,12 @@ describe("NovaAgent MCP OAuth", () => {
       await oauthServer.close();
     }
   });
+});
+
+test("initialize installs the shared Nova skills into the Nova home", async () => {
+  new NovaAgent().initialize({ protocolVersion: acp.PROTOCOL_VERSION, clientCapabilities: {} });
+  const bundled = () => discoverSkills(process.cwd()).filter((skill) => skill.bundledBy === "Nova AI Skills").map((skill) => skill.name);
+  for (let i = 0; i < 100 && bundled().length < 4; i++) await new Promise((done) => setTimeout(done, 50));
+  assert.deepEqual(bundled(), ["nova-docx", "nova-pdf", "nova-pptx", "nova-xlsx"]);
+  assert.ok(existsSync(join(novaHomeRoot(), "skills", "nova-pdf", "LICENSE.txt")));
 });

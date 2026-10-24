@@ -195,6 +195,10 @@ VS Code extension: settings, per-project trust, sessions and memory.
   skills folders are read too). `/skills` lists them; `/skills off <name>`
   switches one off in this project (`--global`: everywhere). Only names and
   short descriptions go into the prompt; Nova loads a skill when it fits.
+  Nova installs its own skills for Word, Excel, PowerPoint and PDF files
+  (`nova-docx`, `nova-xlsx`, `nova-pptx`, `nova-pdf`, from
+  [nova-ai-skills](https://github.com/Datalab-Rotterdam/nova-ai-skills)) in
+  `~/.nova-ai/skills` and keeps them up to date; they need Python 3.
 - **Hooks**: Claude Code's `hooks` format in the same settings files (a
   repository's own only once you trust the workspace): `PreToolUse`,
   `PostToolUse`, `UserPromptSubmit`, `SessionStart` and `Stop`, with Claude
