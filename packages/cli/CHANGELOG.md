@@ -1,3 +1,18 @@
+# [@datalabrotterdam/nova-ai-cli-v1.2.0-alpha.10](https://github.com/Datalab-Rotterdam/nova-ai-cli/compare/@datalabrotterdam/nova-ai-cli@1.2.0-alpha.9...@datalabrotterdam/nova-ai-cli@1.2.0-alpha.10) (2026-10-24)
+
+
+### Bug Fixes
+
+* **cli:** commit the vendored browser host build ([f54c98f](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/f54c98f2ef6319c243ab048842603490cab2e7ed))
+* **cli:** update the vendored browser host ([0a9800a](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/0a9800a2e207c42873f0de18138d55f522a10624))
+
+
+### Features
+
+* **agent:** bundled skills are read-only and can only be switched off ([16f480c](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/16f480cb9d8f0da03f718d0c102dfb6485e5f47d))
+* **cli:** depend on @datalabrotterdam/nova-ai-browser-host ([6214053](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/62140534c2f40d1f33d4d20ca81edae604a5d550))
+* **cli:** set up the Nova AI browser integration at start-up ([4c9c049](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/4c9c049ecf8a9019b8d5de3082f841d173e1610e))
+
 # [@datalabrotterdam/nova-ai-cli-v1.2.0-alpha.9](https://github.com/Datalab-Rotterdam/nova-ai-cli/compare/@datalabrotterdam/nova-ai-cli@1.2.0-alpha.8...@datalabrotterdam/nova-ai-cli@1.2.0-alpha.9) (2026-10-24)
 
 
