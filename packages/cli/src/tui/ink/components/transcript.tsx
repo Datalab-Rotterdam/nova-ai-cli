@@ -177,6 +177,13 @@ export function ToolCallBlock({
         <Box paddingLeft={2}>
           <Text color={palette.muted}>{formatToolCallDetails(call)}</Text>
         </Box>
+      ) : call.status === "completed" && outputLines(call.output).length ? (
+        // Collapsed output says it is there, like collapsed thinking.
+        <Box paddingLeft={2}>
+          <Text color={palette.faint}>
+            {`▸ ${outputLines(call.output).length} ${outputLines(call.output).length === 1 ? "line" : "lines"} of output · ${isCompactTool(call) ? "Ctrl+T to inspect" : "Ctrl+O to show"}`}
+          </Text>
+        </Box>
       ) : null}
     </Box>
   );
