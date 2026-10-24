@@ -1,3 +1,17 @@
+# [@datalabrotterdam/nova-ai-cli-v1.2.0-alpha.12](https://github.com/Datalab-Rotterdam/nova-ai-cli/compare/@datalabrotterdam/nova-ai-cli@1.2.0-alpha.11...@datalabrotterdam/nova-ai-cli@1.2.0-alpha.12) (2026-10-24)
+
+
+### Bug Fixes
+
+* **cli:** show the model's thinking as one block ([4479cac](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/4479cac70bf1f9973401bdfd420c401e00c11099))
+
+
+### Features
+
+* **cli:** collapse the model's thinking by default ([28f04c1](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/28f04c1c5141aac2468c0aa8ba86dc38d885bb4e))
+* **cli:** say when a collapsed tool row has output ([51274a5](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/51274a597700cf3208d48d54c2a32262e8947a96))
+* token and cost totals per session ([8e9aef8](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/8e9aef81b6345832f38d8a2639c35d4cb6fb3b47))
+
 # [@datalabrotterdam/nova-ai-cli-v1.2.0-alpha.11](https://github.com/Datalab-Rotterdam/nova-ai-cli/compare/@datalabrotterdam/nova-ai-cli@1.2.0-alpha.10...@datalabrotterdam/nova-ai-cli@1.2.0-alpha.11) (2026-10-24)
 
 
