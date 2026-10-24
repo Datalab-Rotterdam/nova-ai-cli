@@ -30,7 +30,8 @@ import {
 } from "../core/mcp.js";
 import { FileOAuthProvider, oauthConfigOf } from "../core/mcp-oauth.js";
 import { buildMemorySystemPrompt, sessionMemory } from "../core/memory.js";
-import { isWorkspaceTrusted, setWorkspaceTrusted } from "../core/nova-home.js";
+import { installSkills } from "@datalabrotterdam/nova-ai-skills";
+import { isWorkspaceTrusted, novaHomeRoot, setWorkspaceTrusted } from "../core/nova-home.js";
 import { readWorkspaceMcpConfiguration, workspaceNeedsTrust } from "../core/workspace-mcp.js";
 import { MAX_STOP_HOOK_ROUNDS, runHooks } from "../core/hooks.js";
 import type { ToolHooks } from "../core/tool-batch.js";
@@ -135,6 +136,8 @@ export type SkillState = Pick<SkillDefinition, "name" | "description" | "source"
   enabled: boolean;
 };
 
+let skillsInstall: Promise<string[]> | undefined;
+
 const AUTH_METHOD_ID = "nova-api-key";
 const ENV_AUTH_METHOD_ID = "nova-api-key-env";
 const TERMINAL_AUTH_METHOD_ID = "nova-login-terminal";
@@ -234,6 +237,10 @@ export class NovaAgent implements AgentRuntime {
    * asked for; per the spec the client then decides whether it can continue.
    */
   initialize(params: acp.InitializeRequest): acp.InitializeResponse {
+    // The skills every Nova app ships (Word, Excel, PowerPoint, PDF), in the
+    // background: a current copy is left alone, so later starts only compare.
+    // ponytail: two apps updating at the same moment can race on a folder; the next start repairs it.
+    skillsInstall ??= installSkills(novaHomeRoot()).catch(() => []);
     this.clientCapabilities = params.clientCapabilities;
     this.clientInfo = params.clientInfo ?? null;
     this.positionEncoding = selectPositionEncoding(
