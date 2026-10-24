@@ -1,6 +1,7 @@
 import type * as acp from "@agentclientprotocol/sdk";
 import type { InteractionMode } from "../interaction-modes.js";
 import { PLAN_MODE_TOOLS } from "../interaction-modes.js";
+import { findAgentFile } from "../agent-files.js";
 import {
   createMemoryReadTool,
   createMemoryWriteTool,
@@ -27,9 +28,10 @@ export type SessionToolOptions = {
   /**
    * Interaction mode gating the tools: ask gets none, plan gets the
    * read-only PLAN_MODE_TOOLS, agent mode gets everything plus
-   * enter_plan_mode. null skips gating entirely (background agents).
+   * enter_plan_mode, an agent file what its `tools` and `readOnly` allow.
+   * null skips gating entirely (background agents).
    */
-  mode: InteractionMode | null;
+  mode: InteractionMode | string | null;
   updatePlan?: (entries: acp.PlanEntry[]) => void | Promise<void>;
   enterPlanMode?: () => void | Promise<void>;
 };
@@ -59,7 +61,16 @@ export function buildSessionTools(
       (tool) => PLAN_MODE_TOOLS.has(tool.name) && !session.mcpTools.includes(tool),
     );
   }
-  if (options.mode !== "agent") return [];
+  if (options.mode !== "agent") {
+    const agent = options.mode === "ask" ? undefined : findAgentFile(session.cwd, options.mode);
+    if (!agent) return [];
+    return baseTools.filter((tool) => {
+      if (agent.readOnly && tool.mutating) return false;
+      if (!agent.tools) return true;
+      // update_plan only shows the task list, so a narrowed agent keeps it.
+      return session.mcpTools.includes(tool) ? agent.tools.includes("mcp") : agent.tools.includes(tool.name) || tool.name === "update_plan";
+    });
+  }
   return [
     ...(options.enterPlanMode
       ? [createEnterPlanModeTool(options.enterPlanMode)]

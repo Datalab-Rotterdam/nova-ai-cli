@@ -341,7 +341,7 @@ export class BackgroundService {
     });
     const systemPromptFor = (protocol: ToolProtocol) =>
       [
-        buildModeSystemPrompt(getPromptMode(params)),
+        buildModeSystemPrompt(getPromptMode(params), session.cwd),
         buildSkillsSystemPrompt(session.skills, contentBlocksToText(params.prompt)),
         buildMemorySystemPrompt(session.memory, session.settings.memory),
         protocol === "native"

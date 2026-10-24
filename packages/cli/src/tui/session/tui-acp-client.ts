@@ -30,16 +30,14 @@ import type { UserInputResponse } from "@datalabrotterdam/nova-ai-agent/core/use
 import { resolveWorkspaceFile } from "@datalabrotterdam/nova-ai-agent/core/tools/workspace-paths.js";
 import type { PromptQueueEntryView } from "@datalabrotterdam/nova-ai-agent/core/prompt-queue.js";
 import {
-  isInteractionMode,
-  type InteractionMode,
-} from "@datalabrotterdam/nova-ai-agent/core/interaction-modes.js";
-import {
   fromElicitationRequest,
   toElicitationResponse,
 } from "@datalabrotterdam/nova-ai-agent/acp/user-questions.js";
+import { INTERACTION_MODES } from "@datalabrotterdam/nova-ai-agent/core/interaction-modes.js";
 import type { Store } from "../state/store.js";
 import type {
   BackgroundJobView,
+  InteractionMode,
   PermissionScope,
   PlanEntryView,
   ToolCallView,
@@ -69,6 +67,9 @@ type TerminalRecord = {
 };
 
 export class TuiAcpClient {
+  /** The modes the agent offers (built-in, then the user's agent files); set by the runner. */
+  modeIds: string[] = [...INTERACTION_MODES];
+
   readonly capabilities = {
     fs: { readTextFile: true, writeTextFile: true },
     terminal: true,
@@ -417,7 +418,8 @@ export class TuiAcpClient {
         }
         return;
       case "current_mode_update":
-        if (isInteractionMode(update.currentModeId)) {
+        // Only a mode the agent listed: an id such as "bypassAll" is never taken.
+        if (this.modeIds.includes(update.currentModeId)) {
           this.onInteractionModeChange?.(update.currentModeId);
         }
         return;

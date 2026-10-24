@@ -66,7 +66,7 @@ needs Nova without credentials fails with `authRequired`.
 | `session/close` / `session/delete` | Close cancels a running turn and stops the session's MCP servers; delete also removes the stored file. Background jobs keep running until killed or the agent exits. |
 | `session/prompt` | One turn. Prompts for the same session are queued and run one after another. |
 | `session/cancel` | Aborts the model request and running tools, answers pending permission requests as cancelled, marks open tool calls failed ("Cancelled"), then returns `stopReason: "cancelled"`. |
-| `session/set_mode` | `agent`, `ask` or `plan` (see Modes). Permission modes are rejected here. |
+| `session/set_mode` | `agent`, `ask`, `plan` or one of the user's agent files (see Modes). Permission modes are rejected here. |
 | `session/set_config_option` | `permission_mode` and `model` (see below). |
 
 Session ids are UUIDs; anything else is rejected with `invalidParams`.
@@ -115,6 +115,12 @@ numbers are clamped to the range shown, other types are ignored.
 | `agent` | All tools, plus `enter_plan_mode` |
 | `plan` | Read-only: `read_file`, `list_directory`, `find_files`, `search_text`, `memory_read`, `load_skill`, plus `ask_user` and `update_plan` |
 | `ask` | None |
+| an agent file's id | What its `tools` and `readOnly` allow (all tools when it lists none); its body is added to the system prompt |
+
+`modes.availableModes` lists the built-in modes, then the user's agent files
+(`~/.nova-ai/agents/*.agent.md` and the project's; NOVA_HOME.md, "Agents"),
+read when the session starts. Files are read again on every prompt, so an
+edited one applies from the next message.
 
 The model can move itself from `agent` to `plan` with `enter_plan_mode`
 (reported as `current_mode_update`); it can never move to a less restricted

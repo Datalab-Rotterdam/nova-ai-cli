@@ -1,5 +1,7 @@
-/** Extra system prompt for the ask/plan interaction modes; null for agent mode. */
-export function buildModeSystemPrompt(mode: string | null): string | null {
+import { findAgentFile } from "../agent-files.js";
+
+/** Extra system prompt for the ask/plan modes and agent files (their body, read from `cwd`); null for agent mode. */
+export function buildModeSystemPrompt(mode: string | null, cwd?: string): string | null {
   switch (mode) {
     case "ask":
       return "You are in ask mode. Answer the user's question directly. Do not call tools, edit files, or run commands.";
@@ -10,7 +12,10 @@ export function buildModeSystemPrompt(mode: string | null): string | null {
         "You cannot edit files, run commands or use other tools in this mode; do not pretend to.",
         "End with a concise implementation plan the user can approve; it will be carried out after the user switches back to agent mode.",
       ].join(" ");
-    default:
+    case "agent":
+    case null:
       return null;
+    default:
+      return (cwd && findAgentFile(cwd, mode)?.prompt) || null;
   }
 }

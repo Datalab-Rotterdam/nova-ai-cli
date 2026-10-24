@@ -9,7 +9,6 @@ import type {
   StartTerminalParams,
 } from "../core/background.js";
 import type { ContextUsage } from "../core/context-usage.js";
-import type { InteractionMode } from "../core/interaction-modes.js";
 import type {
   EnqueuePromptParams,
   PromptQueueEntry,
@@ -91,7 +90,7 @@ export class NovaAgentClient {
     sessionId: string;
     contextWindow?: number | null;
     model?: string;
-    mode?: InteractionMode;
+    mode?: string;
   }) {
     return this.ext<ContextUsage>(NOVA_METHODS.sessionContextUsage, params);
   }

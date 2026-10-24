@@ -37,7 +37,8 @@ export type Session = {
   environment: ToolEnvironment;
   skills: SkillDefinition[];
   memory: MemorySnapshot;
-  mode: InteractionMode;
+  /** A built-in InteractionMode, or the id of one of the user's agent files. */
+  mode: InteractionMode | string;
   /** Permission rules, mode and approvals of this session. */
   policy: PermissionPolicy;
   model: string | null;

@@ -3,7 +3,6 @@ import type {
   BackgroundJobKind,
   BackgroundJobSummary,
 } from "@datalabrotterdam/nova-ai-agent/core/background.js";
-import { isInteractionMode } from "@datalabrotterdam/nova-ai-agent/core/interaction-modes.js";
 
 const permissionModes = ["ask", "acceptEdits", "bypassAll"] as const;
 
@@ -102,15 +101,15 @@ export const builtinCommands: SlashCommand[] = [
   },
   {
     name: "mode",
-    description: "Switch interaction mode (/mode agent|ask|plan)",
+    description: "Switch interaction mode (/mode agent|ask|plan|<agent file>)",
     run(ctx, args) {
       const mode = args.trim();
       if (!mode) {
-        ctx.print(`Current mode: ${ctx.getInteractionMode()}`);
+        ctx.print(`Current mode: ${ctx.getInteractionMode()} (available: ${ctx.getInteractionModes().join(", ")})`);
         return;
       }
-      if (!isInteractionMode(mode)) {
-        ctx.print("Usage: /mode agent|ask|plan");
+      if (!ctx.getInteractionModes().includes(mode)) {
+        ctx.print(`Usage: /mode ${ctx.getInteractionModes().join("|")}`);
         return;
       }
       ctx.setInteractionMode(mode);

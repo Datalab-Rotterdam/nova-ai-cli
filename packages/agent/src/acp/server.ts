@@ -8,7 +8,6 @@ import {
   parseStartPromptParams,
   parseStartTerminalParams,
 } from "../core/background.js";
-import { isInteractionMode, type InteractionMode } from "../core/interaction-modes.js";
 import {
   parseEnqueuePromptParams,
   parseQueueEntryParams,
@@ -143,17 +142,18 @@ function parseContextUsageParams(params: unknown): {
   sessionId: string;
   contextWindow?: number | null;
   model?: string;
-  mode?: InteractionMode;
+  mode?: string;
 } {
   const value = requireSessionParams(params);
-  if (value.mode !== undefined && !isInteractionMode(value.mode)) {
+  // A built-in mode or an agent file's id; an unknown one gets no tools, like ask.
+  if (value.mode !== undefined && typeof value.mode !== "string") {
     throw acp.RequestError.invalidParams({ mode: value.mode }, "Unknown interaction mode.");
   }
   return {
     sessionId: value.sessionId,
     contextWindow: typeof value.contextWindow === "number" ? value.contextWindow : null,
     ...(typeof value.model === "string" && value.model ? { model: value.model } : {}),
-    ...(value.mode !== undefined ? { mode: value.mode as InteractionMode } : {}),
+    ...(value.mode !== undefined ? { mode: value.mode } : {}),
   };
 }
 

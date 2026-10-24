@@ -152,6 +152,10 @@ export class SessionRunner {
   title: string | null = null;
   model: string;
   interactionMode: InteractionMode = "agent";
+  /** The modes the agent offers: the built-in ones, then the user's agent files. */
+  get modeIds(): string[] {
+    return this.acpClient.modeIds;
+  }
 
   /** The agent, served in-process over a real ACP connection (tests may stub it). */
   private readonly agent = new NovaAgent();
@@ -253,6 +257,7 @@ export class SessionRunner {
         }
       })
       .then((response) => {
+        this.applyModes(response.modes);
         this.applyMcpStatus(response._meta);
         this.applySkillStatus(response._meta);
         this.agentSessionLoaded = true;
@@ -965,11 +970,12 @@ export class SessionRunner {
 
   private async createSession(): Promise<void> {
     await this.initialized;
-    const { sessionId, _meta } = await this.nova.newSession({
+    const { sessionId, _meta, modes } = await this.nova.newSession({
       cwd: this.cwd,
       mcpServers: [],
     });
     this.sessionId = sessionId;
+    this.applyModes(modes);
     this.applyMcpStatus(_meta);
     this.applySkillStatus(_meta);
     this.agentSessionLoaded = true;
@@ -1090,6 +1096,12 @@ export class SessionRunner {
       if (this.agentSessionLoaded) return;
       if (this.sessionReady === ready) this.sessionReady = this.createSession();
     }
+  }
+
+  private applyModes(modes: { availableModes: { id: string }[] } | null | undefined): void {
+    if (modes?.availableModes.length) this.acpClient.modeIds = modes.availableModes.map((mode) => mode.id);
+    // A saved agent file that is gone falls back to agent mode.
+    if (!this.modeIds.includes(this.interactionMode)) this.applyInteractionMode("agent", "Mode: agent");
   }
 
   private applyInteractionMode(
