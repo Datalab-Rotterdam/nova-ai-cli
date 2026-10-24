@@ -315,6 +315,16 @@ sessions of a workspace it imports the panel's chats it has not seen yet
 kept in `cli-sessions/extension-import.json`, and the panel's files are not
 changed.
 
+Both keep a session's tokens and estimated cost as `usageTotals`
+(`{ promptTokens, completionTokens, cachedTokens, cost?, currency? }`): the
+panel in `<id>.json`, the CLI in each header line of `<id>.jsonl` (the last
+one counts). An imported chat keeps its totals. The cost is computed from the
+models' `inputCostPer1M`/`outputCostPer1M` in the gateway's model list, with
+cached tokens charged as input; it is left out while no model of the session
+has a price, and uses the last priced model's currency (never converted).
+Background agents and subagents count toward their session (in the extension,
+a coding agent only while its chat is open).
+
 ## Skills
 
 A skill is a folder with a `SKILL.md` and any files it refers to:

@@ -173,6 +173,13 @@ describe("importExtensionSessions", () => {
     assert.equal(importExtensionSessions(cwd), 0, "already imported by the listing");
   });
 
+  it("keeps the panel chat's token and cost totals", () => {
+    const usageTotals = { promptTokens: 1200, completionTokens: 30, cachedTokens: 100, cost: 0.0042, currency: "EUR" };
+    writePanelChats({ ...panelChat(), usageTotals });
+    importExtensionSessions(cwd);
+    assert.deepEqual(loadStoredSession(ID)!.usageTotals, usageTotals);
+  });
+
   it("picks up chats the panel saved after the first import", () => {
     writePanelChats(panelChat());
     importExtensionSessions(cwd);

@@ -1,7 +1,7 @@
 import { Box, Text } from "ink";
 import type { UIState } from "../../state/types.js";
 import type { McpCounts } from "../controller.js";
-import { formatTokenCount } from "../format.js";
+import { formatCost, formatTokenCount } from "../format.js";
 import { palette } from "../theme.js";
 
 export function StatusLine({
@@ -46,6 +46,12 @@ export function StatusLine({
           <>
             {separator}
             {usage}
+          </>
+        ) : null}
+        {ui.usageTotals?.cost !== undefined ? (
+          <>
+            {separator}
+            {`≈ ${formatCost(ui.usageTotals.cost, ui.usageTotals.currency)}`}
           </>
         ) : null}
         {ui.queuedCount ? (

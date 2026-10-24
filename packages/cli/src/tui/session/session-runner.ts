@@ -530,7 +530,7 @@ export class SessionRunner {
     this.title = null;
     this.promptActive = false;
     this.agentSessionLoaded = false;
-    this.store.setState({ contextUsage: null, plan: [] });
+    this.store.setState({ contextUsage: null, usageTotals: null, plan: [] });
     if (previousSessionId)
       await this.nova.closeSession({ sessionId: previousSessionId });
     this.sessionReady = this.createSession();

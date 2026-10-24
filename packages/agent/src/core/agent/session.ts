@@ -8,6 +8,7 @@ import type { MemorySnapshot } from "../memory.js";
 import type { PromptQueue } from "../prompt-queue.js";
 import type { SkillDefinition } from "../skills.js";
 import type { ToolEnvironment } from "../tools/environment.js";
+import type { UsageTotals } from "../usage.js";
 import type { ToolDefinition } from "../tools/types.js";
 
 /** In-memory state of one agent session, shared by every front end. */
@@ -41,6 +42,8 @@ export type Session = {
   mode: InteractionMode | string;
   /** MCP servers' prompts, offered as `/mcp__<server>__<prompt>` commands. */
   mcpPrompts?: McpPrompt[];
+  /** Tokens and estimated cost so far, saved with the session (core/usage.ts). */
+  usageTotals?: UsageTotals;
   /** Permission rules, mode and approvals of this session. */
   policy: PermissionPolicy;
   model: string | null;

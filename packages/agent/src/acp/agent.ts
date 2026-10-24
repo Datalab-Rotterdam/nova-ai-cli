@@ -1,3 +1,4 @@
+import { addUsage, type UsageTotals } from "../core/usage.js";
 import * as acp from "@agentclientprotocol/sdk";
 import { NOVA_NOTIFICATIONS, novaExtensionsMeta } from "./extensions.js";
 import { NovaAI, type ChatMessage } from "@datalabrotterdam/nova-sdk";
@@ -296,13 +297,22 @@ function slashCommandName(prompt: acp.PromptRequest["prompt"]): string | null {
   return name && AVAILABLE_COMMANDS.some((command) => command.name === name) ? name : null;
 }
 
+/**
+ * Context use, plus the session's cumulative `cost` when its models have a
+ * price and its token totals in `_meta["nova-ai-cli/usageTotals"]`.
+ */
 async function notifyUsage(
   client: acp.AgentContext,
   sessionId: string,
   used: number,
   size: number,
+  totals: UsageTotals | undefined,
   estimated = false,
 ): Promise<void> {
+  const meta = {
+    ...(estimated ? { "nova-ai-cli/estimated": true } : {}),
+    ...(totals ? { "nova-ai-cli/usageTotals": totals } : {}),
+  };
   await client
     .notify("session/update", {
       sessionId,
@@ -310,7 +320,8 @@ async function notifyUsage(
         sessionUpdate: "usage_update",
         used,
         size,
-        ...(estimated ? { _meta: { "nova-ai-cli/estimated": true } } : {}),
+        ...(totals?.cost !== undefined && totals.currency ? { cost: { amount: totals.cost, currency: totals.currency } } : {}),
+        ...(Object.keys(meta).length ? { _meta: meta } : {}),
       },
     })
     .catch(() => {});
@@ -452,6 +463,7 @@ export class NovaAgent implements AgentRuntime {
     params: { cwd: string; mcpServers?: acp.McpServer[]; _meta?: Record<string, unknown> | null },
     history: ChatMessage[],
     title: string | null,
+    usageTotals?: UsageTotals,
   ): Promise<{
     mcpServers: acp.McpServer[];
     mcpConnections: McpConnection[];
@@ -495,6 +507,7 @@ export class NovaAgent implements AgentRuntime {
       mcpConnections,
       mcpTools,
       mcpPrompts: loadedMcp.prompts,
+      ...(usageTotals ? { usageTotals } : {}),
       mcpFailures,
       environment,
       skills,
@@ -522,6 +535,7 @@ export class NovaAgent implements AgentRuntime {
       params,
       stored.messages,
       stored.title,
+      stored.usageTotals,
     );
 
     // Replay what the user saw: text and tool calls with their final status,
@@ -655,6 +669,7 @@ export class NovaAgent implements AgentRuntime {
       params,
       forked.messages,
       forked.title,
+      forked.usageTotals,
     );
     this.announceSession(newSessionId, client);
     return {
@@ -680,6 +695,7 @@ export class NovaAgent implements AgentRuntime {
       params,
       stored.messages,
       stored.title,
+      stored.usageTotals,
     );
     this.announceSession(params.sessionId, client);
     return {
@@ -983,7 +999,7 @@ export class NovaAgent implements AgentRuntime {
       session.title ??= deriveTitle(session.history);
       appendSessionCompaction(
         params.sessionId,
-        { cwd: session.cwd, title: session.title },
+        { cwd: session.cwd, title: session.title, usageTotals: session.usageTotals },
         session.history,
       );
     }
@@ -1163,11 +1179,13 @@ export class NovaAgent implements AgentRuntime {
     const emit = async (event: AgentEvent) => {
       if (event.type === "usage") {
         reportedUsage = true;
+        session.usageTotals = addUsage(session.usageTotals, event, await this.models.pricingFor(model));
         await notifyUsage(
           client,
           params.sessionId,
           event.promptTokens + event.completionTokens,
           contextWindow,
+          session.usageTotals,
         );
         return;
       }
@@ -1293,7 +1311,7 @@ export class NovaAgent implements AgentRuntime {
         session.title ??= deriveTitle(session.history);
         appendSessionCompaction(
           params.sessionId,
-          { cwd: session.cwd, title: session.title },
+          { cwd: session.cwd, title: session.title, usageTotals: session.usageTotals },
           session.history,
         );
       } else {
@@ -1301,7 +1319,7 @@ export class NovaAgent implements AgentRuntime {
         session.title ??= deriveTitle(session.history);
         appendSessionTurn(
           params.sessionId,
-          { cwd: session.cwd, title: session.title },
+          { cwd: session.cwd, title: session.title, usageTotals: session.usageTotals },
           [...backgroundHandoffs, userMessage, ...hookMessages, ...turnMessages],
         );
       }
@@ -1373,7 +1391,7 @@ export class NovaAgent implements AgentRuntime {
     if (!options.reportedUsage) {
       try {
         const usage = this.contextUsage({ sessionId, contextWindow: options.contextWindow });
-        await notifyUsage(client, sessionId, usage.totalTokens, options.contextWindow, true);
+        await notifyUsage(client, sessionId, usage.totalTokens, options.contextWindow, session.usageTotals, true);
       } catch {
         // Informational only; never fails the turn.
       }

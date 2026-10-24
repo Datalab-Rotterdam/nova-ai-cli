@@ -105,7 +105,7 @@ row. To select text, hold Shift (Option in some macOS terminals) while dragging.
 | Alt+V | Paste a clipboard image |
 
 Slash commands: `/help`, `/model`, `/effort` (thinking models), `/mode`, `/permission`, `/session`,
-`/resume`, `/clear`, `/compact`, `/rewind [n]`, `/queue`, `/steer`, `/usage`,
+`/resume`, `/clear`, `/compact`, `/rewind [n]`, `/queue`, `/steer`, `/usage` (context, and the session's tokens and estimated cost; the status line shows `≈ €0.0123` once a priced model answered),
 `/tools`, `/mcp`, `/skills`, `/shell` and `/agent` (background jobs), `/trust`
 and `/exit`. Your own commands are markdown files in `~/.nova-ai/commands/` or
 the repository's `.nova-ai/commands/` (Claude Code's format, so

@@ -4,6 +4,7 @@ import { TuiAcpClient } from "../../src/tui/session/tui-acp-client.js";
 import { SessionRunner } from "../../src/tui/session/session-runner.js";
 import { createStore } from "../../src/tui/state/store.js";
 import type { UIState } from "../../src/tui/state/types.js";
+import { formatCost, formatUsageTotals } from "../../src/tui/ink/format.js";
 
 function state(): UIState {
   return {
@@ -106,4 +107,18 @@ test("the agent's slash commands are kept with their input hint", async () => {
     { name: "review", description: "Review a file", hint: "<file>" },
     { name: "git:pr", description: "Open a pull request." },
   ]);
+});
+
+test("the session's usage totals are kept from the agent's usage updates", async () => {
+  const store = createStore(state());
+  const client = new TuiAcpClient(store, process.cwd());
+  const totals = { promptTokens: 12_300, completionTokens: 450, cachedTokens: 1_000, cost: 0.01234, currency: "EUR" };
+  await client.sessionUpdate({
+    sessionId: "session-1",
+    update: { sessionUpdate: "usage_update", used: 12_750, size: 100_000, cost: { amount: 0.01234, currency: "EUR" }, _meta: { "nova-ai-cli/usageTotals": totals } },
+  });
+  assert.deepEqual(store.getState().usageTotals, totals);
+  assert.equal(formatCost(0.01234), "€0.0123");
+  assert.equal(formatCost(12.5, "USD"), "$12.50");
+  assert.match(formatUsageTotals(totals), /^This session: 12k in \(1k cached\) · 450 out · ≈ €0\.0123/);
 });

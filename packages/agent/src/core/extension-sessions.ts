@@ -1,3 +1,4 @@
+import { parseUsageTotals } from "./usage.js";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ChatMessage } from "@datalabrotterdam/nova-sdk";
@@ -40,6 +41,8 @@ export type ExtensionStoredSession = {
   createdAt: number;
   updatedAt: number;
   messages: Array<{ role: "user" | "assistant"; parts: ExtensionStoredPart[] }>;
+  /** Tokens and estimated cost of the chat; same shape as the agent's, so the totals continue here. */
+  usageTotals?: unknown;
 };
 
 type NativeToolCall = {
@@ -82,7 +85,8 @@ export function importExtensionSessions(cwd: string): number {
         typeof stored.title === "string" && stored.title.trim() && stored.title !== "New chat"
           ? stored.title
           : deriveTitle(messages);
-      if (writeImportedSession(id, { cwd, title }, turns)) imported++;
+      const usageTotals = parseUsageTotals(stored.usageTotals);
+      if (writeImportedSession(id, { cwd, title, ...(usageTotals ? { usageTotals } : {}) }, turns)) imported++;
     }
     mkdirSync(paths.cliSessions, { recursive: true, mode: 0o700 });
     writeFileSync(recordPath, `${JSON.stringify({ imported: [...done] }, null, 2)}\n`, { mode: 0o600 });

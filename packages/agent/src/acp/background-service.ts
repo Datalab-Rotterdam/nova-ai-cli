@@ -1,3 +1,4 @@
+import { addUsage } from "../core/usage.js";
 import * as acp from "@agentclientprotocol/sdk";
 import { NovaAI, type ChatMessage } from "@datalabrotterdam/nova-sdk";
 import { createNovaClient } from "../core/nova-client.js";
@@ -396,6 +397,10 @@ export class BackgroundService {
       args: Record<string, unknown>,
     ) => (await authorize(toolCallId, tool, args)).allowed;
     const emit = async (event: AgentEvent) => {
+      // A background agent's tokens count toward its session's totals.
+      if (event.type === "usage") {
+        session.usageTotals = addUsage(session.usageTotals, event, await this.runtime.models.pricingFor(model));
+      }
       this.backgroundJobs.recordPromptEvent(jobId, event);
     };
 

@@ -1,3 +1,4 @@
+import { modelPricing, type ModelPricing } from "../core/usage.js";
 import * as acp from "@agentclientprotocol/sdk";
 import { NovaAI, type ModelResponse } from "@datalabrotterdam/nova-sdk";
 import { createNovaClient } from "../core/nova-client.js";
@@ -142,6 +143,17 @@ export class ModelService {
     try {
       const catalog = await this.modelCatalog(credentials.apiKey);
       return resolveEffort(findModelMetadata(catalog, model), chosen);
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** The model's price per 1M tokens from the catalog; undefined when it lists none or the catalog can't be read. */
+  async pricingFor(model: string): Promise<ModelPricing | undefined> {
+    const credentials = readCredentials();
+    if (!credentials) return undefined;
+    try {
+      return modelPricing(findModelMetadata(await this.modelCatalog(credentials.apiKey), model));
     } catch {
       return undefined;
     }
