@@ -9,6 +9,8 @@ export type AgentEvent =
   | { type: "usage"; promptTokens: number; completionTokens: number }
   | { type: "context_compacted"; removedMessages: number; keptMessages: number }
   | { type: "context_compaction_failed"; reason: string }
+  /** Something the user should see that is not part of the answer (hook warnings, hook decisions). */
+  | { type: "notice"; text: string }
   | {
       type: "tool_pending";
       toolCallId: string;

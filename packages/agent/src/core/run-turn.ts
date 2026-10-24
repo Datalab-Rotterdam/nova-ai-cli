@@ -56,6 +56,8 @@ export type RunTurnDeps = {
   ): Promise<boolean>;
   /** See ToolBatchContext.authorize; the agent passes its permission policy here. */
   authorize?: ToolBatchContext["authorize"];
+  /** PreToolUse / PostToolUse hooks for every tool call. */
+  hooks?: ToolBatchContext["hooks"];
   compactContext?(
     messages: ChatMessage[],
     /** null when compaction is proactive rather than error-driven. */
@@ -527,6 +529,7 @@ export async function runTurn(
         findTool,
         requestPermission,
         authorize: deps.authorize,
+        hooks: deps.hooks,
         emit,
         disableTools: () => {
           toolsEnabled = false;

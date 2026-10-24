@@ -301,6 +301,7 @@ export async function runNativeTurn(
           findTool,
           requestPermission: deps.requestPermission,
           authorize: deps.authorize,
+          hooks: deps.hooks,
           emit,
           disableTools: () => {
             toolsEnabled = false;
