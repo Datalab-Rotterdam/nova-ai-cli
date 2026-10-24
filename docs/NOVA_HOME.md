@@ -349,9 +349,12 @@ file, only files inside the skill's folder).
 
 ### Bundled skills
 
-A Nova app may ship a skill and keep it up to date: a *bundled* skill. Example:
-`nova-browser`, installed by the Nova AI Browser host that Nova AI for VS Code and
-nova-ai-cli carry. Its folder holds `.nova-bundled.json`:
+A Nova app may ship a skill and keep it up to date: a *bundled* skill. Examples:
+`nova-docx`, `nova-xlsx`, `nova-pptx` and `nova-pdf` from
+[nova-ai-skills](https://github.com/Datalab-Rotterdam/nova-ai-skills)
+(`"bundledBy": "Nova AI Skills"`), which both Nova AI for VS Code and
+nova-ai-cli's agent install at start-up, and `nova-browser`, installed by the
+Nova AI Browser host they carry. Its folder holds `.nova-bundled.json`:
 
 ```json
 { "bundledBy": "Nova AI Browser", "version": "0.1.0", "hash": "<sha256 over the files>" }
@@ -364,9 +367,12 @@ nova-ai-cli carry. Its folder holds `.nova-bundled.json`:
   the version or the content hash no longer matches (an update, or a local edit).
   The `disabled` setting is kept, so a switched-off skill stays off after updates.
 - An installer never touches a skill folder without its own marker.
+- Several apps carry nova-ai-skills, so its installer only replaces a copy from
+  an older version (or an edited one) and leaves a newer one to the app that
+  carries the newer package.
 - nova-ai-cli's agent reports `bundledBy` in `_nova/skills/list` (`/skills`
   shows "bundled with …"), and its `write_file` and `edit_file` refuse the
-  skill's files. It does not install bundled skills itself.
+  skill's files. It installs nova-ai-skills when a client connects.
 
 ## Agents
 
