@@ -1,3 +1,10 @@
+# [@datalabrotterdam/nova-ai-agent-v1.0.0-alpha.7](https://github.com/Datalab-Rotterdam/nova-ai-cli/compare/@datalabrotterdam/nova-ai-agent@1.0.0-alpha.6...@datalabrotterdam/nova-ai-agent@1.0.0-alpha.7) (2026-10-24)
+
+
+### Features
+
+* **agent:** bundled skills are read-only and can only be switched off ([16f480c](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/16f480cb9d8f0da03f718d0c102dfb6485e5f47d))
+
 # [@datalabrotterdam/nova-ai-agent-v1.0.0-alpha.6](https://github.com/Datalab-Rotterdam/nova-ai-cli/compare/@datalabrotterdam/nova-ai-agent@1.0.0-alpha.5...@datalabrotterdam/nova-ai-agent@1.0.0-alpha.6) (2026-10-24)
 
 
