@@ -1,3 +1,10 @@
+# [@datalabrotterdam/nova-ai-agent-v1.0.0-alpha.10](https://github.com/Datalab-Rotterdam/nova-ai-cli/compare/@datalabrotterdam/nova-ai-agent@1.0.0-alpha.9...@datalabrotterdam/nova-ai-agent@1.0.0-alpha.10) (2026-10-24)
+
+
+### Features
+
+* **agent:** read ~/.nova-ai/mcp.json and .nova-ai/mcp.json ([cb79481](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/cb794812076a08e99fef0de48e3c8721a88f7f86))
+
 # [@datalabrotterdam/nova-ai-agent-v1.0.0-alpha.9](https://github.com/Datalab-Rotterdam/nova-ai-cli/compare/@datalabrotterdam/nova-ai-agent@1.0.0-alpha.8...@datalabrotterdam/nova-ai-agent@1.0.0-alpha.9) (2026-10-24)
 
 
