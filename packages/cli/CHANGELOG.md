@@ -1,3 +1,10 @@
+# [@datalabrotterdam/nova-ai-cli-v1.2.0-alpha.8](https://github.com/Datalab-Rotterdam/nova-ai-cli/compare/@datalabrotterdam/nova-ai-cli@1.2.0-alpha.7...@datalabrotterdam/nova-ai-cli@1.2.0-alpha.8) (2026-10-24)
+
+
+### Features
+
+* slash commands from markdown files ([305f111](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/305f1112c6f8312ab8a0683954c4e5bc88d7b952))
+
 # [@datalabrotterdam/nova-ai-cli-v1.2.0-alpha.7](https://github.com/Datalab-Rotterdam/nova-ai-cli/compare/@datalabrotterdam/nova-ai-cli@1.2.0-alpha.6...@datalabrotterdam/nova-ai-cli@1.2.0-alpha.7) (2026-10-24)
 
 
