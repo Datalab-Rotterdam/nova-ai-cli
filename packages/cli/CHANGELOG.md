@@ -1,3 +1,10 @@
+# [@datalabrotterdam/nova-ai-cli-v1.2.0-alpha.14](https://github.com/Datalab-Rotterdam/nova-ai-cli/compare/@datalabrotterdam/nova-ai-cli@1.2.0-alpha.13...@datalabrotterdam/nova-ai-cli@1.2.0-alpha.14) (2026-10-24)
+
+
+### Features
+
+* GitHub Action and GitLab template for nova-ai in CI ([2352e97](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/2352e97327ae3e3c65be238bb2d3134db13abeb3))
+
 # [@datalabrotterdam/nova-ai-cli-v1.2.0-alpha.13](https://github.com/Datalab-Rotterdam/nova-ai-cli/compare/@datalabrotterdam/nova-ai-cli@1.2.0-alpha.12...@datalabrotterdam/nova-ai-cli@1.2.0-alpha.13) (2026-10-24)
 
 
