@@ -89,3 +89,21 @@ test("a mode from one of the user's agent files is taken once the agent listed i
   await client.sessionUpdate(update);
   assert.equal(store.getState().interactionMode, "reviewer");
 });
+
+test("the agent's slash commands are kept with their input hint", async () => {
+  const client = new TuiAcpClient(createStore(state()), process.cwd());
+  await client.sessionUpdate({
+    sessionId: "session-1",
+    update: {
+      sessionUpdate: "available_commands_update",
+      availableCommands: [
+        { name: "review", description: "Review a file", input: { hint: "<file>" } },
+        { name: "git:pr", description: "Open a pull request." },
+      ],
+    },
+  });
+  assert.deepEqual(client.agentCommands, [
+    { name: "review", description: "Review a file", hint: "<file>" },
+    { name: "git:pr", description: "Open a pull request." },
+  ]);
+});

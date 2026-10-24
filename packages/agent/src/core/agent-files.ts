@@ -95,8 +95,7 @@ export function parseAgentFile(
   source: AgentFile["source"],
   path: string,
 ): AgentFile | undefined {
-  const match = /^---\s*\r?\n([\s\S]*?)\r?\n---\s*\r?\n?([\s\S]*)$/.exec(content);
-  const frontmatter = match?.[1] ?? "";
+  const { frontmatter, body } = splitFrontmatter(content);
   const id = agentIdOf(fileName);
   // A built-in mode cannot be replaced; helpers (`user-invocable: false`) are not modes.
   if (!id || (INTERACTION_MODES as readonly string[]).includes(id) || scalar(frontmatter, "user-invocable") === "false") {
@@ -107,7 +106,7 @@ export function parseAgentFile(
     id,
     name: scalar(frontmatter, "name") || id,
     description: scalar(frontmatter, "description") || "No description provided.",
-    prompt: (match ? match[2]! : content).trim(),
+    prompt: body,
     ...(tools ? { tools: [...new Set(tools.flatMap((entry) => TOOL_GROUPS[entry] ?? [TOOL_ALIASES[entry] ?? entry]))] } : {}),
     readOnly: scalar(frontmatter, "readOnly") === "true",
     source,
@@ -115,7 +114,14 @@ export function parseAgentFile(
   };
 }
 
-function scalar(frontmatter: string, key: string): string {
+/** A markdown file's `---` frontmatter and the text after it (agent and command files). */
+export function splitFrontmatter(content: string): { frontmatter: string; body: string } {
+  const match = /^---\s*\r?\n([\s\S]*?)\r?\n---\s*\r?\n?([\s\S]*)$/.exec(content);
+  return { frontmatter: match?.[1] ?? "", body: (match ? match[2]! : content).trim() };
+}
+
+/** One `key: value` of a frontmatter, without quotes. */
+export function scalar(frontmatter: string, key: string): string {
   const raw = new RegExp(`^${key}:[ \\t]*(.*)$`, "m").exec(frontmatter)?.[1]?.trim() ?? "";
   if ((raw.startsWith('"') && raw.endsWith('"')) || (raw.startsWith("'") && raw.endsWith("'"))) {
     return raw.slice(1, -1).replace(/\\"/g, '"');

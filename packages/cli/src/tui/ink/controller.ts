@@ -606,6 +606,7 @@ export class TuiController {
     setModel: (model) => this.setModel(model),
     getInteractionMode: () => this.runner.interactionMode,
     getInteractionModes: () => this.runner.modeIds,
+    agentCommands: () => this.agentCommands(),
     setInteractionMode: (mode) => this.setInteractionMode(mode),
     getPermissionMode: () => this.store.getState().permissionMode,
     setPermissionMode: (mode) => this.setPermissionMode(mode),
@@ -650,6 +651,13 @@ export class TuiController {
     releaseBackgroundJob: (jobId) => this.runner.releaseBackgroundJob(jobId),
   };
 
+  /** The agent's commands the CLI doesn't have itself; a hint is shown after the description. */
+  private agentCommands(): { name: string; description: string }[] {
+    return this.runner.agentCommands
+      .filter((command) => !findCommand(command.name))
+      .map(({ name, description, hint }) => ({ name, description: hint ? `${description} ${hint}` : description }));
+  }
+
   // ------------------------------------------------------------ prompt
 
   submit = async (
@@ -674,6 +682,11 @@ export class TuiController {
     const name = match?.[1] ?? "";
     const command = findCommand(name);
     if (!command) {
+      // The agent's own commands (the user's command files) are prompts it expands.
+      if (this.agentCommands().some((agentCommand) => agentCommand.name === name)) {
+        await this.runner.submit(value, images, pastes);
+        return;
+      }
       this.appendError(`Unknown command: /${name}`);
       return;
     }
@@ -738,7 +751,7 @@ export class TuiController {
     editor.setAutocompleteProvider(
       new WorkspaceAutocompleteProvider(
         () =>
-          allCommands(this.commandContext).map((command) => ({
+          [...allCommands(this.commandContext), ...this.agentCommands()].map((command) => ({
             name: command.name,
             description: command.description,
           })),

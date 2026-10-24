@@ -11,8 +11,7 @@ export const builtinCommands: SlashCommand[] = [
     name: "help",
     description: "Show available commands",
     run(ctx) {
-      const lines = builtinCommands
-        .filter((c) => c.available?.(ctx) ?? true)
+      const lines = [...builtinCommands.filter((c) => c.available?.(ctx) ?? true), ...ctx.agentCommands()]
         .map((c) => `/${c.name} — ${c.description}`);
       ctx.print(lines.join("\n"));
     },

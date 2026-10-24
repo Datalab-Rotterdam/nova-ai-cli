@@ -31,6 +31,7 @@ import { FileOAuthProvider, oauthConfigOf } from "../core/mcp-oauth.js";
 import { buildMemorySystemPrompt, sessionMemory } from "../core/memory.js";
 import { installSkills } from "@datalabrotterdam/nova-ai-skills";
 import { findAgentFile } from "../core/agent-files.js";
+import { expandCommand, listCommandFiles } from "../core/command-files.js";
 import { isWorkspaceTrusted, novaHomeRoot, setWorkspaceTrusted } from "../core/nova-home.js";
 import { readWorkspaceMcpConfiguration, workspaceNeedsTrust } from "../core/workspace-mcp.js";
 import { MAX_STOP_HOOK_ROUNDS, runHooks } from "../core/hooks.js";
@@ -192,6 +193,41 @@ function replayedToolCall(
 }
 
 /** The command name when the prompt is exactly one advertised slash command. */
+/** The agent's own commands, then the user's command files (a built-in wins a name clash). */
+function availableCommands(cwd: string): acp.AvailableCommand[] {
+  const builtIn = new Set(AVAILABLE_COMMANDS.map((command) => command.name));
+  return [
+    ...AVAILABLE_COMMANDS,
+    ...listCommandFiles(cwd)
+      .filter((command) => !builtIn.has(command.name))
+      .map(({ name, description, argumentHint }) => ({
+        name,
+        description,
+        ...(argumentHint ? { input: { hint: argumentHint } } : {}),
+      })),
+  ];
+}
+
+/**
+ * A prompt that starts with `/<name> [arguments]` for one of the user's
+ * command files becomes the file's expanded text (other content blocks are
+ * kept), with the file's `model` for this answer only.
+ */
+function expandCommandFile(cwd: string, params: acp.PromptRequest): acp.PromptRequest {
+  const [first, ...rest] = params.prompt;
+  if (first?.type !== "text") return params;
+  const match = /^\/([a-z0-9][\w:-]*)(?:\s+([\s\S]*))?$/.exec(first.text.trim());
+  const command = match && !AVAILABLE_COMMANDS.some((builtIn) => builtIn.name === match[1])
+    ? listCommandFiles(cwd).find((file) => file.name === match[1])
+    : undefined;
+  if (!command) return params;
+  return {
+    ...params,
+    prompt: [{ type: "text", text: expandCommand(command, match![2]?.trim() ?? "") }, ...rest],
+    ...(command.model ? { _meta: { ...params._meta, "nova-ai-cli/model": command.model } } : {}),
+  };
+}
+
 function slashCommandName(prompt: acp.PromptRequest["prompt"]): string | null {
   if (prompt.length !== 1 || prompt[0]!.type !== "text") return null;
   const match = /^\/([a-z][a-z0-9-]*)\s*$/.exec(prompt[0]!.text.trim());
@@ -930,6 +966,7 @@ export class NovaAgent implements AgentRuntime {
     if (slashCommandName(params.prompt) === "compact") {
       return this.runCompactCommand(session, params.sessionId, client);
     }
+    params = expandCommandFile(session.cwd, params);
     // Hooks may block the message or add context; SessionStart only before a chat's first message.
     const hookOptions = { cwd: session.cwd, sessionId: params.sessionId, signal: abortController.signal };
     const notice = (text: string) =>
@@ -1230,6 +1267,16 @@ export class NovaAgent implements AgentRuntime {
     return { stopReason: "end_turn" };
   }
 
+  /** The slash commands this session understands (read again after every turn, so new files show up). */
+  private async announceCommands(sessionId: string, session: Session, client: acp.AgentContext): Promise<void> {
+    await client
+      .notify("session/update", {
+        sessionId,
+        update: { sessionUpdate: "available_commands_update", availableCommands: availableCommands(session.cwd) },
+      })
+      .catch(() => {});
+  }
+
   /** Title, last activity and (when the server reported none) estimated context use. */
   private async announceTurnEnd(
     sessionId: string,
@@ -1238,6 +1285,8 @@ export class NovaAgent implements AgentRuntime {
     options: { contextWindow: number; reportedUsage: boolean },
   ): Promise<void> {
     if (!this.sessions.has(sessionId)) return;
+    // ponytail: sent after every turn, not only when a file changed; diff it if clients mind.
+    await this.announceCommands(sessionId, session, client);
     await client
       .notify("session/update", {
         sessionId,
@@ -1267,17 +1316,9 @@ export class NovaAgent implements AgentRuntime {
     if (!client) return;
     setTimeout(() => {
       void (async () => {
-        await client
-          .notify("session/update", {
-            sessionId,
-            update: {
-              sessionUpdate: "available_commands_update",
-              availableCommands: AVAILABLE_COMMANDS,
-            },
-          })
-          .catch(() => {});
         const session = this.sessions.get(sessionId);
         if (!session) return;
+        await this.announceCommands(sessionId, session, client);
         const options = await this.configOptions(session).catch(() => []);
         if (options.length > 1 && this.sessions.has(sessionId)) {
           await client

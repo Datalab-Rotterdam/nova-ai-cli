@@ -157,6 +157,11 @@ export class SessionRunner {
     return this.acpClient.modeIds;
   }
 
+  /** The agent's slash commands (the user's command files); sent as a prompt. */
+  get agentCommands(): { name: string; description: string; hint?: string }[] {
+    return this.acpClient.agentCommands;
+  }
+
   /** The agent, served in-process over a real ACP connection (tests may stub it). */
   private readonly agent = new NovaAgent();
   private readonly acpClient: TuiAcpClient;

@@ -69,6 +69,8 @@ type TerminalRecord = {
 export class TuiAcpClient {
   /** The modes the agent offers (built-in, then the user's agent files); set by the runner. */
   modeIds: string[] = [...INTERACTION_MODES];
+  /** Slash commands the agent understands, such as the user's command files. */
+  agentCommands: { name: string; description: string; hint?: string }[] = [];
 
   readonly capabilities = {
     fs: { readTextFile: true, writeTextFile: true },
@@ -416,6 +418,13 @@ export class TuiAcpClient {
             streaming: false,
           });
         }
+        return;
+      case "available_commands_update":
+        this.agentCommands = update.availableCommands.map(({ name, description, input }) => ({
+          name,
+          description,
+          ...(input && "hint" in input && input.hint ? { hint: input.hint } : {}),
+        }));
         return;
       case "current_mode_update":
         // Only a mode the agent listed: an id such as "bypassAll" is never taken.
