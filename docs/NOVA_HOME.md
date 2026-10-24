@@ -16,7 +16,8 @@ there), otherwise `~/.nova-ai`. Directories are created `0700`, files `0600`.
   MEMORY.md                     global memory index (always in the prompt)
   memory/<name>.md              global memory notes
   skills/<name>/SKILL.md        global skills (see "Skills")
-  agents/<name>.agent.md        extension: global agents (see "Agents")
+  agents/<name>.agent.md        global agents (see "Agents")
+  commands/<name>.md            extension: global slash commands (see "Commands"; subfolders: ns:name)
   settings.json                 user settings: permission rules, default mode
   mcp.json                      extension: user MCP servers (see "MCP servers")
   credentials.json              CLI only: API key + default model and thinking level
@@ -35,9 +36,11 @@ there), otherwise `~/.nova-ai`. Directories are created `0700`, files `0600`.
     cli-sessions/extension-import.json  CLI: panel chats already imported (see "Sessions")
     scratch/                    extension: scratch files (pruned after 7 days)
     worktrees/<id6>/            extension: git worktrees of coding agents (branch nova/<name>-<id6>)
+    index/                      extension: semantic search index (chunks.json + vectors.f32, rebuilt when the embedding model changes)
 <workspace>/.nova-ai/settings.json        team settings, committed
 <workspace>/.nova-ai/settings.local.json  personal settings, git-ignored
 <workspace>/.nova-ai/skills/<name>/SKILL.md  project skills, committed
+<workspace>/.nova-ai/commands/<name>.md       extension: project slash commands, committed
 <workspace>/NOVA.md             team instructions, committed, read-only for Nova
 <workspace>/AGENTS.md           team instructions, committed, read-only for Nova
 ```
@@ -376,6 +379,33 @@ Nova AI Browser host they carry. Its folder holds `.nova-bundled.json`:
 - nova-ai-cli's agent reports `bundledBy` in `_nova/skills/list` (`/skills`
   shows "bundled with …"), and its `write_file` and `edit_file` refuse the
   skill's files. It installs nova-ai-skills when a client connects.
+
+## Commands
+
+Slash commands as markdown files, in Claude Code's format: the file's text is the
+prompt, sent as the user's message when they run `/<name> [arguments]`.
+Extension only: nova-ai-cli does not read command files yet.
+
+```markdown
+---
+description: Write tests for a file      # shown in the slash menu
+argument-hint: <file>                    # shown after the name
+model: <model id>                        # optional: that model for this answer only
+---
+Write unit tests for $ARGUMENTS in the style of the existing tests.
+```
+
+- Folders, a later one replacing a command of the same name:
+  `~/.claude/commands` (only with the extension's `nova.skills.includeClaudeCodex`),
+  `~/.nova-ai/commands`, then per workspace `.claude/commands` (same setting) and
+  `.nova-ai/commands`.
+- The name is the file name without `.md`, lower-cased; a file in a subfolder is
+  `<folder>:<name>`. Names start with a letter or digit and use `[a-z0-9_:-]`.
+- `$ARGUMENTS` is everything after the name, `$1`…`$9` single words; a file
+  without placeholders gets the arguments appended after a blank line.
+- `allowed-tools` is read by Claude Code; Nova ignores it for now.
+- Built-in commands win a name clash. The extension also offers enabled skills as
+  `/<skill-name>` and MCP prompts as `/mcp__<server>__<prompt>`.
 
 ## Agents
 
