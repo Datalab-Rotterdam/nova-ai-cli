@@ -451,3 +451,10 @@ test("elapsed time and token counts format compactly", () => {
   assert.equal(formatTokenCount(12_345), "12k");
   assert.equal(formatTokenCount(2_000_000), "2m");
 });
+
+test("a rule streamed into a block of its own still spans the row", () => {
+  const rendered = plain(
+    renderBlocks([{ key: "a:9", kind: "assistant", text: "---\n\n", first: false, streaming: false }], 40),
+  );
+  assert.match(rendered, /^ {3}─{37}$/m);
+});

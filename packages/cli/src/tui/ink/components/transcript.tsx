@@ -116,8 +116,9 @@ function Prefixed({
   color: string;
   children: ReactNode;
 }) {
+  // Full width, so a Markdown rule spans the row even in a block of its own.
   return (
-    <Box paddingLeft={1}>
+    <Box paddingLeft={1} flexGrow={1}>
       <Box flexShrink={0}>
         <Text color={color}>{prefix}</Text>
       </Box>
