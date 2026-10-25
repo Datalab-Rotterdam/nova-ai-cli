@@ -87,7 +87,7 @@ async function waitFor(check: () => boolean, describe: () => string, timeoutMs =
   throw new Error(`Timed out. Screen:\n${describe()}`);
 }
 
-test("the Ink TUI runs a prompt, answers a permission, redraws on Ctrl+O and exits on Ctrl+C twice", async () => {
+test("the Ink TUI runs a prompt, answers a permission, redraws on Ctrl+O, selects with a drag and exits on Ctrl+C twice", async () => {
   const terminal = new Terminal({ cols: 80, rows: 24, allowProposedApi: true, scrollback: 1_000, convertEol: true });
   const stdout = new FakeTerminalOutput(terminal);
   const stdin = new FakeTerminalInput();
@@ -157,12 +157,19 @@ test("the Ink TUI runs a prompt, answers a permission, redraws on Ctrl+O and exi
   await waitFor(() => /echo: hello there/.test(show()), show);
   assert.equal(show().match(/echo: hello there/g)?.length, 1, "shown once after the redraw");
 
-  stdin.send("\u0013"); // Ctrl+S: mouse reporting off so the terminal can select text
-  await waitFor(() => /select · Ctrl\+S/.test(show()), show);
-  assert.ok(stdout.raw.lastIndexOf("\u001b[?1000l") > stdout.raw.lastIndexOf("\u001b[?1000h"), "mouse reporting is off");
-  stdin.send("\u0013");
-  await waitFor(() => !/select · Ctrl\+S/.test(show()), show);
-  assert.ok(stdout.raw.lastIndexOf("\u001b[?1000h") > stdout.raw.lastIndexOf("\u001b[?1000l"), "and back on");
+  // Drag over the answer: selected in the app, painted in inverse.
+  const answerRow = show().split("\n").findIndex((line) => line.includes("echo: hello there"));
+  const answerCol = show().split("\n")[answerRow]!.indexOf("echo");
+  stdin.send(`\u001b[<0;${answerCol + 1};${answerRow + 1}M`);
+  stdin.send(`\u001b[<32;${answerCol + 4};${answerRow + 1}M`);
+  await waitFor(() => /Selecting: click/.test(show()), show);
+  const inverse = (col: number) => terminal.buffer.active.getLine(terminal.buffer.active.baseY + answerRow)!.getCell(col)!.isInverse();
+  await waitFor(() => Boolean(inverse(answerCol) && inverse(answerCol + 3) && !inverse(answerCol + 4)), show);
+  stdin.send("\u001b[1;2C"); // Shift+Right grows it by one cell
+  await waitFor(() => Boolean(inverse(answerCol + 4)), show);
+  stdin.send("\u001b");
+  await waitFor(() => !inverse(answerCol) && !/Selecting: click/.test(show()), show);
+  assert.match(show(), /echo: hello there/, "the text under the selection is restored");
 
   stdin.send("\u0003");
   await waitFor(() => /Press Ctrl\+C again within 2s to exit\./.test(show()), show);
@@ -171,7 +178,7 @@ test("the Ink TUI runs a prompt, answers a permission, redraws on Ctrl+O and exi
   assert.match(stdout.raw, /Resume this session with: nova-ai --resume /);
   assert.match(stdout.raw, /\u001b\[\?1049h/, "runs on the alternate screen");
   assert.match(stdout.raw, /\u001b\[\?1049l/, "gives the terminal its screen back on exit");
-  assert.match(stdout.raw, /\u001b\[\?1000l\u001b\[\?1006l/, "mouse reporting is off again");
+  assert.match(stdout.raw, /\u001b\[\?1000l\u001b\[\?1002l\u001b\[\?1006l/, "mouse reporting is off again");
   assert.doesNotMatch(screen(terminal), /test-model \| ask/, "the prompt and status are removed on exit");
   terminal.dispose();
 });

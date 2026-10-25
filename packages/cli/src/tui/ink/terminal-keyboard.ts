@@ -75,13 +75,30 @@ export function isLateTerminalReply(input: string): boolean {
   return /^\u001b?\[\?[\d;]*[uc]$/.test(input);
 }
 
-/** Mouse button reports in SGR form; Ink hands them to `useInput` without the ESC. */
-export const MOUSE_REPORTING_ON = "\u001b[?1000h\u001b[?1006h";
-export const MOUSE_REPORTING_OFF = "\u001b[?1000l\u001b[?1006l";
-const MOUSE_INPUT = /^\u001b?\[<(\d+);\d+;\d+[Mm]$/;
+/**
+ * Mouse button reports, plus motion while a button is held (drag to select),
+ * in SGR form; Ink hands them to `useInput` without the ESC.
+ */
+export const MOUSE_REPORTING_ON = "\u001b[?1000h\u001b[?1002h\u001b[?1006h";
+export const MOUSE_REPORTING_OFF = "\u001b[?1000l\u001b[?1002l\u001b[?1006l";
+const MOUSE_INPUT = /^\u001b?\[<(\d+);(\d+);(\d+)([Mm])$/;
 
 export function isMouseInput(input: string): boolean {
   return MOUSE_INPUT.test(input);
+}
+
+/** A mouse report: button code (32 added while dragging), 0-based cell, and press or release. */
+export function parseMouse(
+  input: string,
+): { button: number; row: number; col: number; release: boolean } | null {
+  const match = MOUSE_INPUT.exec(input);
+  if (!match) return null;
+  return {
+    button: Number(match[1]),
+    col: Number(match[2]) - 1,
+    row: Number(match[3]) - 1,
+    release: match[4] === "m",
+  };
 }
 
 /** Rows to scroll for a wheel report (+ older, - newer); 0 for other mouse input. */

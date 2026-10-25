@@ -174,6 +174,24 @@ test("prompt editor collapses a large paste into a readable marker", () => {
   assert.equal(submitted, marker);
 });
 
+test("paste and image markers delete as one unit", () => {
+  const buffer = new TextBuffer();
+  buffer.insert("see [Pasted from clipboard #1: 12 lines] and [#Image1]!");
+  buffer.left();
+  buffer.backspace();
+  assert.equal(buffer.text, "see [Pasted from clipboard #1: 12 lines] and !");
+  buffer.setState([buffer.text], 0, 10); // inside the paste marker
+  buffer.backspace();
+  assert.deepEqual([buffer.text, buffer.cursor.col], ["see  and !", 4]);
+  buffer.backspace();
+  assert.equal(buffer.text, "see and !", "ordinary text still goes one character at a time");
+
+  buffer.setText("[#Image2] x");
+  buffer.setState([buffer.text], 0, 0);
+  buffer.deleteForward();
+  assert.equal(buffer.text, " x");
+});
+
 test("prompt editor keeps ordinary pastes inline and counts characters of long single lines", () => {
   const editor = new PromptEditor();
   editor.paste("first\r\nsecond");

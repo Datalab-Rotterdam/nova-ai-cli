@@ -18,6 +18,19 @@ function previousBoundary(text: string, offset: number): number {
   return previous;
 }
 
+// Large-paste and image markers stand for content kept outside the buffer
+// (prompt-pastes.ts, prompt-images.ts); they delete as one unit.
+const MARKER = /\[Pasted from clipboard #\d+: \d+ (?:lines|characters)\]|\[#Image\d+\]/g;
+
+/** Start and end of the marker covering the character at `offset`, if any. */
+function markerAt(text: string, offset: number): [number, number] | null {
+  for (const match of text.matchAll(MARKER)) {
+    const end = match.index + match[0].length;
+    if (match.index <= offset && offset < end) return [match.index, end];
+  }
+  return null;
+}
+
 function nextBoundary(text: string, offset: number): number {
   for (const boundary of boundaries(text)) {
     if (boundary > offset) return boundary;
@@ -96,8 +109,8 @@ export class TextBuffer {
   backspace(): boolean {
     if (this.col > 0) {
       const line = this.lines[this.row]!;
-      const start = previousBoundary(line, this.col);
-      this.lines[this.row] = line.slice(0, start) + line.slice(this.col);
+      const [start, end] = markerAt(line, this.col - 1) ?? [previousBoundary(line, this.col), this.col];
+      this.lines[this.row] = line.slice(0, start) + line.slice(end);
       this.col = start;
     } else if (this.row > 0) {
       const previous = this.lines[this.row - 1]!;
@@ -114,8 +127,9 @@ export class TextBuffer {
   deleteForward(): boolean {
     const line = this.lines[this.row]!;
     if (this.col < line.length) {
-      const end = nextBoundary(line, this.col);
-      this.lines[this.row] = line.slice(0, this.col) + line.slice(end);
+      const [start, end] = markerAt(line, this.col) ?? [this.col, nextBoundary(line, this.col)];
+      this.lines[this.row] = line.slice(0, start) + line.slice(end);
+      this.col = start;
     } else if (this.row < this.lines.length - 1) {
       this.lines.splice(this.row, 2, line + this.lines[this.row + 1]!);
     } else {

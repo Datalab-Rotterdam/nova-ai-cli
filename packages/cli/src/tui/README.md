@@ -34,6 +34,10 @@ the status rows, anchored to the newest output.
   `TuiController.setViewport`; while scrolled up, new output grows the offset
   so the rows being read stay put. Submitting a prompt or a new transcript
   epoch (another session, `/clear`, `/rewind`, Ctrl+O) returns to the newest.
+- Text selection (`ScreenSelection`): mouse drag reporting (`?1002`) is on
+  too, so a drag selects in the app itself. Ink's stdout is wrapped to keep
+  the last frame it wrote; the selection is painted over it in inverse and
+  copied from that frame's text (`copyText`, OSC 52 + system tool).
 - Sticky prompt: user blocks report their row (`useBoxMetrics`); the last one
   that starts above the viewport is drawn over its first row, one line, so the
   question behind the answer on screen stays visible.
@@ -66,7 +70,8 @@ it delivers keys typed during the probe twice. `NOVA_KITTY_KEYBOARD=1` or `0`
 skips the probe.
 
 Large clipboard pastes (more than 10 lines or 1,000 characters) stay outside
-the editor and appear as a compact `[Pasted from clipboard #N: ...]` marker.
+the editor and appear as a compact `[Pasted from clipboard #N: ...]` marker;
+Backspace or Delete removes a marker (and `[#ImageN]`) as one unit.
 The transcript keeps that marker while the complete pasted text is sent to the
 model. Smaller pastes remain inline.
 
@@ -111,8 +116,8 @@ added to the transcript once.
 | -------------------------------- | --------------------------------------------------------------------------------------- |
 | Shift+Tab                        | Cycle agent / ask / plan mode                                                           |
 | Escape                           | Cancel active work; otherwise jump back to the newest output                            |
-| PgUp / PgDn, mouse wheel         | Scroll the transcript (Shift+drag selects text)                                         |
-| Ctrl+S                           | Select mode: mouse reporting off, so the terminal selects text; Ctrl+S again restores the wheel |
+| PgUp / PgDn, mouse wheel         | Scroll the transcript                                                                   |
+| Mouse drag                       | Select text; click, Enter or Ctrl+C copies it, Shift+arrows extend, Esc cancels (Shift+drag still selects natively) |
 | Ctrl+C twice                     | Cancel, then exit with a resume command                                                 |
 | Ctrl+O                           | Expand or collapse the model's thinking and verbose inline tool/background details; activity blocks stay compact |
 | Ctrl+T                           | Open the tool inspector                                                                 |

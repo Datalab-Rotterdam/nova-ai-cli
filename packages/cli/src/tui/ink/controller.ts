@@ -42,7 +42,8 @@ import type { KeyPress } from "./editor/prompt-editor.js";
 import { PromptEditor } from "./editor/prompt-editor.js";
 import { formatContextUsage, formatImageSize, formatUsageTotals } from "./format.js";
 import { bindPromptSubmission } from "./prompt-submission.js";
-import { MOUSE_REPORTING_OFF, MOUSE_REPORTING_ON } from "./terminal-keyboard.js";
+import type { Cell, ScreenSelection } from "./screen-selection.js";
+import { parseMouse, wheelRows } from "./terminal-keyboard.js";
 import { ASSISTANT_MARKER, WORKING_FRAMES } from "./theme.js";
 import {
   TranscriptCommitter,
@@ -81,6 +82,8 @@ export type ViewState = {
 export type ControllerIo = {
   /** Raw terminal output that bypasses Ink (title, clearing the screen). */
   write(data: string): void;
+  /** Text selected with the mouse, painted over Ink's frame. */
+  selection: ScreenSelection;
 };
 
 const EXIT_CONFIRM_MS = 2_000;
@@ -110,6 +113,8 @@ export class TuiController {
   private windowTitleBusy = false;
   private windowTitleFrame = 0;
   private imagePasteActive = false;
+  private pressedAt: Cell | null = null;
+  private dragging = false;
   private stopped = false;
   private readonly unsubscribeStore: () => void;
   private resolveExit: () => void = () => {};
@@ -169,6 +174,7 @@ export class TuiController {
 
   /** Shortcuts that work while the prompt has focus; false lets the editor have the key. */
   handlePromptKey(input: string, key: KeyPress): boolean {
+    if (this.io.selection.active && this.handleSelectionKey(input, key)) return true;
     if (key.ctrl && input === "c") {
       this.pressCtrlC();
       return true;
@@ -214,9 +220,6 @@ export class TuiController {
         return true;
       case "o":
         this.toggleToolDetails();
-        return true;
-      case "s":
-        this.toggleSelectMode();
         return true;
       case "t":
         this.openToolInspector();
@@ -527,19 +530,65 @@ export class TuiController {
     this.refresh();
   }
 
-  /**
-   * Select mode: mouse reporting off, so the terminal selects and copies text
-   * natively (the wheel no longer scrolls the transcript; PgUp/PgDn still do).
-   * For terminals where Shift/Option + drag does not get past mouse reporting.
-   */
-  toggleSelectMode(): void {
-    const selectMode = !this.store.getState().selectMode;
-    this.io.write(selectMode ? MOUSE_REPORTING_OFF : MOUSE_REPORTING_ON);
+  /** Wheel scrolls; press + drag selects text; a click while text is selected copies it. */
+  handleMouse(input: string): void {
+    const mouse = parseMouse(input);
+    if (!mouse) return;
+    const rows = wheelRows(input);
+    if (rows) {
+      this.dropSelection();
+      this.scrollBy(rows);
+      return;
+    }
+    const button = mouse.button & ~28; // without Shift/Meta/Ctrl
+    const cell = { row: mouse.row, col: mouse.col };
+    if (button === 0 && !mouse.release) {
+      this.pressedAt = cell;
+      this.dragging = false;
+    } else if (button === 32 && this.pressedAt) {
+      if (!this.dragging)
+        this.store.setState({
+          statusLine: "Selecting: click, Enter or Ctrl+C copies · Shift+arrows extend · Esc cancels",
+        });
+      this.dragging = true;
+      this.io.selection.set(this.pressedAt, cell);
+    } else if (button === 0 && mouse.release) {
+      if (!this.dragging && this.io.selection.active) void this.copySelection();
+      this.pressedAt = null;
+    }
+  }
+
+  /** Keys while text is selected: Shift+arrows extend, Enter/Ctrl+C copy, Esc cancels; any other key drops it. */
+  private handleSelectionKey(input: string, key: KeyPress): boolean {
+    if (key.shift && (key.leftArrow || key.rightArrow || key.upArrow || key.downArrow)) {
+      this.io.selection.extend(
+        key.upArrow ? -1 : key.downArrow ? 1 : 0,
+        key.leftArrow ? -1 : key.rightArrow ? 1 : 0,
+      );
+      return true;
+    }
+    if (key.return || (key.ctrl && input === "c")) {
+      void this.copySelection();
+      return true;
+    }
+    this.dropSelection();
+    return Boolean(key.escape);
+  }
+
+  private dropSelection(): void {
+    this.io.selection.clear();
+    if (this.store.getState().statusLine?.startsWith("Selecting:")) this.store.setState({ statusLine: null });
+  }
+
+  private async copySelection(): Promise<void> {
+    const text = this.io.selection.text();
+    this.dropSelection();
+    if (!text) return;
+    const tool = await copyText(text, (data) => this.io.write(data));
     this.store.setState({
-      selectMode,
-      statusLine: selectMode
-        ? "Select mode: drag to select text, your terminal copies it. PgUp/PgDn scroll; Ctrl+S turns the mouse wheel back on."
-        : "Mouse wheel scrolls the transcript again. Ctrl+S to select text.",
+      statusLine: tool
+        ? `Copied ${text.length} characters.`
+        : `Sent ${text.length} characters to the terminal's clipboard.`,
     });
   }
 
@@ -553,7 +602,7 @@ export class TuiController {
     const size = `${answer.text.trim().length} characters`;
     return tool
       ? `Copied the last answer (${size}).`
-      : `Sent the last answer (${size}) to the terminal's clipboard; if nothing was copied, use Ctrl+S to select it.`;
+      : `Sent the last answer (${size}) to the terminal's clipboard; if nothing was copied, drag over it with the mouse and click to copy.`;
   }
 
   toggleToolDetails(): void {
