@@ -235,6 +235,33 @@ test("permission dialog answers with a, s, w, d and Esc", async () => {
   ]);
 });
 
+test("permission dialog summarizes the arguments and shows them in full on v", async () => {
+  const request = {
+    toolCallId: "t2",
+    toolName: "write_file",
+    title: "Write todo/index.html",
+    kind: "edit",
+    args: { path: "/work/todo/index.html", content: "<!DOCTYPE html>\n<html>\n<p>full body</p>\n</html>" },
+    resolve: () => {},
+  };
+  const view = render(createElement(PermissionDialog, { request, onClose: () => {}, cwd: "/work", height: 12, width: 60 }));
+  await tick();
+  const summary = plain(view.lastFrame());
+  assert.match(summary, /path {5}todo\/index\.html/);
+  assert.match(summary, /content {2}4 lines/);
+  assert.doesNotMatch(summary, /full body/);
+  assert.match(summary, /\[v\] view details/);
+
+  view.stdin.write("v");
+  await tick();
+  assert.match(plain(view.lastFrame()), /<p>full body<\/p>/);
+  view.stdin.write("\u001b");
+  await tick();
+  await tick();
+  assert.match(plain(view.lastFrame()), /content {2}4 lines/);
+  view.unmount();
+});
+
 test("the effort slider moves with the arrows, stops at the ends and applies on Enter", () => {
   const applied: string[] = [];
   let cancelled = 0;

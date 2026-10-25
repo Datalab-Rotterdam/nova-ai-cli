@@ -11,7 +11,7 @@ import {
   permissionKey,
   type DialogResult,
   type QuestionState,
-  type ScrollState,
+  ScrollState,
   type SelectionState,
   type SliderState,
   type ToolInspectorState,
@@ -359,40 +359,88 @@ export function QuestionDialog({
   );
 }
 
+/**
+ * What the tool wants to do, one line per argument; [v] shows the arguments
+ * in full (scrollable) and Esc comes back to the question.
+ */
 export function PermissionDialog({
   request,
   onClose,
+  cwd,
+  height = 24,
+  width = 80,
   isActive = true,
-}: { request: PermissionRequestView; onClose: () => void } & Keyed) {
+}: {
+  request: PermissionRequestView;
+  onClose: () => void;
+  cwd?: string;
+  height?: number;
+  width?: number;
+} & Keyed) {
+  const [details, setDetails] = useState<ScrollState | null>(null);
   useInput(
     (input, key) => {
-      if (!isMouseInput(input) && permissionKey(request, input, key) === "closed") onClose();
+      if (isMouseInput(input)) return;
+      if (input === "v") setDetails(new ScrollState(() => setDetails(null)));
+      else if (permissionKey(request, input, key) === "closed") onClose();
     },
-    { isActive },
+    { isActive: isActive && !details },
   );
-  const args = JSON.stringify(request.args, null, 2).split("\n");
-  const shown = args.slice(0, 12);
+  const title = request.title ?? `Permission requested: ${request.toolName}`;
+  if (details)
+    return (
+      <ScrollPanel
+        title={title}
+        content={argumentsText(request.args)}
+        state={details}
+        height={height}
+        width={width}
+        isActive={isActive}
+      />
+    );
+  const entries = Object.entries(request.args);
+  const nameWidth = Math.max(0, ...entries.map(([name]) => name.length));
   return (
     <Box flexDirection="column" borderStyle="round" borderColor={palette.warning} paddingX={1}>
-      <Text color={palette.warning} bold>
-        {request.title ?? `Permission requested: ${request.toolName}`}
+      <Text color={palette.warning} bold wrap="truncate-end">
+        {title}
       </Text>
       <Text color={palette.muted}>{`${request.toolName} · ${request.kind} tool`}</Text>
-      <Box marginTop={1} paddingLeft={1} flexDirection="column">
-        <Text>{shown.join("\n")}</Text>
-        {args.length > shown.length ? (
-          <Text color={palette.faint}>{`… ${args.length - shown.length} more lines`}</Text>
-        ) : null}
-      </Box>
+      {entries.length ? (
+        <Box marginTop={1} paddingLeft={1} flexDirection="column">
+          {entries.map(([name, value]) => (
+            <Text key={name} wrap="truncate-end">
+              <Text color={palette.muted}>{name.padEnd(nameWidth)}</Text>
+              {`  ${summarizeArgument(value, cwd)}`}
+            </Text>
+          ))}
+        </Box>
+      ) : null}
       <Box marginTop={1}>
         <Text>
           <Text color={palette.primary}>[a]</Text> once  <Text color={palette.primary}>[s]</Text> this session
           {"  "}
           <Text color={palette.primary}>[w]</Text> always  <Text color={palette.danger}>[d]</Text> deny
+          {"  "}
+          <Text color={palette.primary}>[v]</Text> view details
         </Text>
       </Box>
     </Box>
   );
+}
+
+/** One line for an argument: workspace paths relative, multi-line text as its size. */
+export function summarizeArgument(value: unknown, cwd?: string): string {
+  if (typeof value !== "string") return JSON.stringify(value) ?? String(value);
+  if (cwd && value.startsWith(`${cwd}/`)) return value.slice(cwd.length + 1);
+  const lines = value.split("\n").length;
+  return lines > 1 ? `${lines} lines` : value;
+}
+
+function argumentsText(args: Record<string, unknown>): string {
+  return Object.entries(args)
+    .map(([name, value]) => `${name}:\n${typeof value === "string" ? value : JSON.stringify(value, null, 2)}`)
+    .join("\n\n");
 }
 
 /** Wraps plain text (no ANSI) into rows of at most `width` columns. */

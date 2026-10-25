@@ -278,7 +278,16 @@ function Surface({
   if (view.question) return <QuestionDialog key={view.question.pending.id} state={view.question} />;
   const permission = view.ui.pendingPermission;
   if (permission)
-    return <PermissionDialog key={permission.toolCallId} request={permission} onClose={() => {}} />;
+    return (
+      <PermissionDialog
+        key={permission.toolCallId}
+        request={permission}
+        onClose={() => {}}
+        cwd={view.ui.cwd}
+        height={rows}
+        width={columns}
+      />
+    );
   const overlay = view.overlay;
   if (overlay?.kind === "selection")
     return <SelectionDialog title={overlay.title} state={overlay.state} height={rows} />;
