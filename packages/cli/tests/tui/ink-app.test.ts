@@ -407,3 +407,59 @@ test("/update without an installable update explains and keeps running", async (
   assert.equal(result.updateRequested, false);
   terminal.dispose();
 });
+
+test("Ctrl+C clears the prompt; Esc interrupts and asks about running background tasks", async () => {
+  const terminal = new Terminal({ cols: 80, rows: 24, allowProposedApi: true, scrollback: 1_000, convertEol: true });
+  const stdout = new FakeTerminalOutput(terminal);
+  const stdin = new FakeTerminalInput();
+  let store!: Store<UIState>;
+  let cancels = 0;
+  const killed: string[] = [];
+  const job = { jobId: "job-1", sessionId: "s", kind: "terminal", title: "npm run dev", status: "running", createdAt: "", updatedAt: "" } as const;
+  const run = runInkTui({ apiKey: "test", defaultModel: "test-model" }, process.cwd(), [], {
+    stdin: stdin as unknown as NodeJS.ReadStream,
+    stdout: stdout as unknown as NodeJS.WriteStream,
+    checkForUpdate: async () => null,
+    kittyKeyboard: false,
+    createRunner(created) {
+      store = created;
+      const runner = new SessionRunner(created, { apiKey: "test", defaultModel: "test-model" }, process.cwd());
+      installFakeAgentQueue(runner);
+      runner.cancel = () => void cancels++;
+      runner.listBackgroundJobs = async () => [
+        { ...job },
+        { ...job, jobId: "job-2", title: "tsc --watch" },
+        { ...job, jobId: "job-3", title: "old build", status: "completed" },
+      ];
+      runner.killBackgroundJob = async (jobId) => {
+        killed.push(jobId);
+        return { ...job, status: "killed" };
+      };
+      return runner;
+    },
+  });
+  const show = () => screen(terminal);
+  await waitFor(() => /test-model \| agent/.test(show()), show);
+
+  stdin.send("half a thought");
+  await waitFor(() => /│> half a thought/.test(show()), show);
+  stdin.send("\u0003");
+  await waitFor(() => !/half a thought/.test(show()), show);
+  assert.doesNotMatch(show(), /Press Ctrl\+C again/, "clearing does not arm exit");
+
+  store.setState({ busy: true });
+  stdin.send("\u001b");
+  await waitFor(() => /Interrupted\. 2 background tasks are still running\./.test(show()), show);
+  assert.equal(cancels, 1, "the turn is cancelled right away");
+  assert.match(show(), /Keep running +npm run dev, tsc --watch/);
+  stdin.send("\u001b[B"); // Down to "Stop them"
+  stdin.send("\r");
+  await waitFor(() => /Stopped 2 of 2 background tasks\./.test(show()), show);
+  assert.deepEqual(killed, ["job-1", "job-2"], "the finished job is left alone");
+
+  store.setState({ busy: false });
+  stdin.send("\u0003");
+  stdin.send("\u0003");
+  await run;
+  terminal.dispose();
+});
