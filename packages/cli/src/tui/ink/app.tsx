@@ -11,8 +11,8 @@ import {
   kittyKeyboardOverride,
   MOUSE_REPORTING_OFF,
   MOUSE_REPORTING_ON,
-  wheelRows,
 } from "./terminal-keyboard.js";
+import { ScreenSelection } from "./screen-selection.js";
 import { PromptInput } from "./components/prompt-input.js";
 import { StatusLine } from "./components/status-line.js";
 import { TranscriptBlockView } from "./components/transcript.js";
@@ -86,13 +86,15 @@ export async function runInkTui(
   // "auto" probe delivers keys typed during the probe twice.
   const kittyKeyboard =
     options.kittyKeyboard ?? kittyKeyboardOverride() ?? (await detectKittyKeyboard(stdin, stdout));
+  const selection = new ScreenSelection(stdout);
   const controller = new TuiController(store, runner, {
     write: (data) => {
       stdout.write(data);
     },
+    selection,
   });
   const instance = render(<App controller={controller} />, {
-    stdout,
+    stdout: selection.wrap(stdout),
     stdin,
     exitOnCtrlC: false,
     patchConsole: true,
@@ -105,8 +107,9 @@ export async function runInkTui(
     kittyKeyboard: { mode: kittyKeyboard ? "enabled" : "disabled" },
   });
   controller.start();
-  // The wheel scrolls the transcript; Shift (Option in some macOS terminals)
-  // + drag still selects text natively.
+  // The wheel scrolls the transcript and a drag selects text (see
+  // ScreenSelection); Shift (Option in some macOS terminals) + drag still
+  // selects natively.
   if (stdout.isTTY) stdout.write(MOUSE_REPORTING_ON);
 
   const onSignal = () => controller.requestExit();
@@ -139,10 +142,7 @@ export function App({ controller }: { controller: TuiController }) {
   const content = useBoxMetrics(contentRef);
   const working = useWorking(view);
   const [userTops, setUserTops] = useState<ReadonlyMap<string, number>>(new Map());
-  useInput((input) => {
-    const rows = wheelRows(input);
-    if (rows) controller.scrollBy(rows);
-  });
+  useInput((input) => controller.handleMouse(input));
 
   // One row short of the terminal: Ink clears the whole screen for every
   // frame that is exactly as tall (always on Windows), which flickers.

@@ -42,12 +42,6 @@ export function StatusLine({
         {ui.permissionMode}
         {separator}
         {ui.busy ? <Text color={palette.warning}>working</Text> : <Text color={palette.success}>ready</Text>}
-        {ui.selectMode ? (
-          <>
-            {separator}
-            <Text color={palette.warning}>select · Ctrl+S</Text>
-          </>
-        ) : null}
         {usage ? (
           <>
             {separator}

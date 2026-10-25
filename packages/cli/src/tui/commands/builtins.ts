@@ -208,7 +208,7 @@ export const builtinCommands: SlashCommand[] = [
   },
   {
     name: "copy",
-    description: "Copy the last answer to the clipboard (Ctrl+S selects text with the mouse)",
+    description: "Copy the last answer to the clipboard (or drag over text with the mouse, then click)",
     async run(ctx) {
       ctx.print(await ctx.copyLastAnswer());
     },

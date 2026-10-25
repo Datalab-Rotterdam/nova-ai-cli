@@ -119,7 +119,5 @@ export type UIState = {
   contextUsage: ContextUsage | null;
   /** The session's tokens and estimated cost, from the agent's usage updates. */
   usageTotals?: UsageTotals | null;
-  /** Mouse reporting is off so the terminal can select text (Ctrl+S). */
-  selectMode?: boolean;
   updateAvailable: UpdateAvailable | null;
 };
