@@ -1,3 +1,16 @@
+# [@datalabrotterdam/nova-ai-cli-v1.2.0-alpha.15](https://github.com/Datalab-Rotterdam/nova-ai-cli/compare/@datalabrotterdam/nova-ai-cli@1.2.0-alpha.14...@datalabrotterdam/nova-ai-cli@1.2.0-alpha.15) (2026-10-25)
+
+
+### Bug Fixes
+
+* **cli:** Markdown rules span the row in a streamed block of their own ([7ab846c](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/7ab846c86ff83ce07046f8c366dbab8d019b17b8))
+
+
+### Features
+
+* **cli:** compact permission dialog with a details view ([63e0d97](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/63e0d9740152b8e2874ecde62b2ba2dd88899423))
+* **cli:** drag to select text, click to copy; paste markers delete as one unit ([160238e](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/160238eb8b02cfcb209bc92ee81a7c508932e4ba)), closes [#ImageN](https://github.com/Datalab-Rotterdam/nova-ai-cli/issues/ImageN)
+
 # [@datalabrotterdam/nova-ai-cli-v1.2.0-alpha.14](https://github.com/Datalab-Rotterdam/nova-ai-cli/compare/@datalabrotterdam/nova-ai-cli@1.2.0-alpha.13...@datalabrotterdam/nova-ai-cli@1.2.0-alpha.14) (2026-10-24)
 
 
