@@ -1,3 +1,10 @@
+# [@datalabrotterdam/nova-ai-cli-v1.2.0-alpha.17](https://github.com/Datalab-Rotterdam/nova-ai-cli/compare/@datalabrotterdam/nova-ai-cli@1.2.0-alpha.16...@datalabrotterdam/nova-ai-cli@1.2.0-alpha.17) (2026-10-25)
+
+
+### Features
+
+* **cli:** /tasks to monitor and stop background tasks; drop Ctrl+B ([aaa3cb9](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/aaa3cb9dc058ab9a726964414a959084c9237669))
+
 # [@datalabrotterdam/nova-ai-cli-v1.2.0-alpha.16](https://github.com/Datalab-Rotterdam/nova-ai-cli/compare/@datalabrotterdam/nova-ai-cli@1.2.0-alpha.15...@datalabrotterdam/nova-ai-cli@1.2.0-alpha.16) (2026-10-25)
 
 
