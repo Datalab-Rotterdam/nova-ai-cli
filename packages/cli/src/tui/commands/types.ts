@@ -44,6 +44,8 @@ export type SlashCommandContext = {
   /** Trusts the workspace (its MCP servers and allow rules); returns a message. */
   trustWorkspace(): string | Promise<string>;
   openToolInspector(): void;
+  /** Background shells and agents: view output or stop one. */
+  openTasks(): void | Promise<void>;
   openMcpInspector(): void | Promise<void>;
   /** /mcp login|logout <server>: returns a message when done. */
   mcpSignIn(serverName: string, signIn: boolean): Promise<string>;

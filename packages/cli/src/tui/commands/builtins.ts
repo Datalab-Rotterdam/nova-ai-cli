@@ -171,6 +171,13 @@ export const builtinCommands: SlashCommand[] = [
     },
   },
   {
+    name: "tasks",
+    description: "Monitor background shells and agents, and stop one",
+    run(ctx) {
+      return ctx.openTasks();
+    },
+  },
+  {
     name: "mcp",
     description: "Inspect MCP servers, or sign in to one: /mcp login|logout <server>",
     async run(ctx, args) {

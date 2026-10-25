@@ -408,7 +408,7 @@ test("/update without an installable update explains and keeps running", async (
   terminal.dispose();
 });
 
-test("Ctrl+C clears the prompt; Esc interrupts and asks about running background tasks", async () => {
+test("Ctrl+C clears the prompt; Esc interrupts and asks about running background tasks; /tasks stops one", async () => {
   const terminal = new Terminal({ cols: 80, rows: 24, allowProposedApi: true, scrollback: 1_000, convertEol: true });
   const stdout = new FakeTerminalOutput(terminal);
   const stdin = new FakeTerminalInput();
@@ -458,6 +458,22 @@ test("Ctrl+C clears the prompt; Esc interrupts and asks about running background
   assert.deepEqual(killed, ["job-1", "job-2"], "the finished job is left alone");
 
   store.setState({ busy: false });
+  // /tasks: every job with its status; a running one can be stopped on its own.
+  stdin.send("/tasks");
+  await waitFor(() => /│> \/tasks/.test(show()), show);
+  stdin.send("\r");
+  await waitFor(() => /Background tasks/.test(show()) && /agent: old build|shell: old build/.test(show()), show);
+  assert.match(show(), /shell: tsc --watch +running/);
+  stdin.send("\u001b[B"); // tsc --watch
+  stdin.send("\r");
+  await waitFor(() => /View output/.test(show()) && /Kill this task/.test(show()), show);
+  stdin.send("\u001b[B"); // Stop
+  stdin.send("\r");
+  await waitFor(() => /Stopped shell: tsc --watch\./.test(show()) && /Background tasks/.test(show()), show);
+  assert.deepEqual(killed, ["job-1", "job-2", "job-2"]);
+  stdin.send("\u001b");
+  await waitFor(() => !/Background tasks/.test(show()), show);
+
   stdin.send("\u0003");
   stdin.send("\u0003");
   await run;
