@@ -1,3 +1,10 @@
+# [@datalabrotterdam/nova-ai-cli-v1.2.0-alpha.16](https://github.com/Datalab-Rotterdam/nova-ai-cli/compare/@datalabrotterdam/nova-ai-cli@1.2.0-alpha.15...@datalabrotterdam/nova-ai-cli@1.2.0-alpha.16) (2026-10-25)
+
+
+### Features
+
+* **cli:** Ctrl+C clears the prompt; Esc asks about running background tasks ([a7cb854](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/a7cb854f4494d88851b672af913d7a1dee666684))
+
 # [@datalabrotterdam/nova-ai-cli-v1.2.0-alpha.15](https://github.com/Datalab-Rotterdam/nova-ai-cli/compare/@datalabrotterdam/nova-ai-cli@1.2.0-alpha.14...@datalabrotterdam/nova-ai-cli@1.2.0-alpha.15) (2026-10-25)
 
 
