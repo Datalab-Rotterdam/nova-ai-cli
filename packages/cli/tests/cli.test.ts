@@ -96,20 +96,24 @@ describe("nova-ai -p process", () => {
     const home = mkdtempSync(join(tmpdir(), "nova-print-exit-"));
     try {
       const entry = fileURLToPath(new URL("../src/index.js", import.meta.url));
-      const started = Date.now();
       const child = spawn(process.execPath, [entry, "-p", "hi", "--output-format", "json", "--cwd", home], {
         env: { ...process.env, NOVA_AI_HOME: home, NOVA_API_KEY: "k", NOVA_MODEL: "fake-model", NOVA_BASE_URL: nova.url },
         stdio: ["ignore", "pipe", "pipe"],
       });
       let out = "";
-      child.stdout!.on("data", (chunk) => (out += chunk));
+      let answeredAt = 0;
+      child.stdout!.on("data", (chunk) => {
+        out += chunk;
+        answeredAt ||= Date.now();
+      });
       const code = await new Promise<number | null>((resolve) => child.on("exit", resolve));
-      const elapsed = Date.now() - started;
+      const elapsed = Date.now() - answeredAt;
       assert.equal(code, 0);
       assert.equal(JSON.parse(out.trim()).text, "Done.");
-      // Below the agent's 2s shutdown grace: a timer left running on the
-      // shutdown path (as happened once) makes this fail.
-      assert.ok(elapsed < 1_900, `took ${elapsed}ms`);
+      // From the answer to exit, below the agent's 2s shutdown grace: a timer
+      // left running on the shutdown path (as happened once) makes this fail.
+      // Process start-up is not counted; it is slow on loaded CI runners.
+      assert.ok(elapsed < 1_500, `exited ${elapsed}ms after answering`);
     } finally {
       await nova.close();
     }
