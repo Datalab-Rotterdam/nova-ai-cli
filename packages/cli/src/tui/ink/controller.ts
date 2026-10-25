@@ -182,7 +182,7 @@ export class TuiController {
     if (key.escape) {
       if (this.editor.autocomplete) return false;
       if (this.store.getState().busy) {
-        this.runner.cancel();
+        void this.interrupt();
         return true;
       }
       if (this.scroll > 0) {
@@ -229,7 +229,12 @@ export class TuiController {
     }
   }
 
+  /** Ctrl+C clears a typed prompt first; on an empty one it arms exit. */
   private pressCtrlC(): void {
+    if (this.editor.getText()) {
+      this.editor.setText("");
+      return;
+    }
     if (this.exitArmed) {
       this.requestExit();
       return;
@@ -390,6 +395,33 @@ export class TuiController {
       this.setPermissionMode(value as PermissionMode),
     );
   };
+
+  /** Esc during a turn: stop it, then ask whether background tasks it started keep running. */
+  private async interrupt(): Promise<void> {
+    this.runner.cancel();
+    const running = (await this.runner.listBackgroundJobs().catch(() => [])).filter(
+      (job) => job.status === "running",
+    );
+    if (running.length === 0) return;
+    const titles = running.map((job) => job.title).join(", ");
+    this.showSelection(
+      `Interrupted. ${running.length === 1 ? "1 background task is" : `${running.length} background tasks are`} still running.`,
+      [
+        { value: "keep", label: "Keep running", description: titles },
+        { value: "stop", label: running.length === 1 ? "Stop it" : "Stop them", description: titles },
+      ],
+      "background-tasks",
+      (value) => {
+        if (value !== "stop") return;
+        void Promise.allSettled(running.map((job) => this.runner.killBackgroundJob(job.jobId))).then(
+          (results) => {
+            const stopped = results.filter((result) => result.status === "fulfilled").length;
+            this.store.setState({ statusLine: `Stopped ${stopped} of ${running.length} background tasks.` });
+          },
+        );
+      },
+    );
+  }
 
   openBackgroundTasks = async (): Promise<void> => {
     try {

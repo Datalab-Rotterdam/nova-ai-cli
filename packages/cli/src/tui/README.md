@@ -115,10 +115,10 @@ added to the transcript once.
 | Key                              | Action                                                                                  |
 | -------------------------------- | --------------------------------------------------------------------------------------- |
 | Shift+Tab                        | Cycle agent / ask / plan mode                                                           |
-| Escape                           | Cancel active work; otherwise jump back to the newest output                            |
+| Escape                           | Interrupt the turn (asks whether running background tasks keep going); otherwise jump back to the newest output |
 | PgUp / PgDn, mouse wheel         | Scroll the transcript                                                                   |
 | Mouse drag                       | Select text; click, Enter or Ctrl+C copies it, Shift+arrows extend, Esc cancels (Shift+drag still selects natively) |
-| Ctrl+C twice                     | Cancel, then exit with a resume command                                                 |
+| Ctrl+C                           | Clear the prompt; on an empty prompt, press twice to cancel and exit with a resume command |
 | Ctrl+O                           | Expand or collapse the model's thinking and verbose inline tool/background details; activity blocks stay compact |
 | Ctrl+T                           | Open the tool inspector                                                                 |
 | Ctrl+B                           | Inspect background shells and agents                                                    |
