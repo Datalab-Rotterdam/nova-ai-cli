@@ -121,7 +121,6 @@ added to the transcript once.
 | Ctrl+C                           | Clear the prompt; on an empty prompt, press twice to cancel and exit with a resume command |
 | Ctrl+O                           | Expand or collapse the model's thinking and verbose inline tool/background details; activity blocks stay compact |
 | Ctrl+T                           | Open the tool inspector                                                                 |
-| Ctrl+B                           | Inspect background shells and agents                                                    |
 | Ctrl+R                           | Switch session                                                                          |
 | Ctrl+P                           | Switch model                                                                            |
 | Ctrl+K                           | Switch permission mode                                                                  |
@@ -153,7 +152,7 @@ The agent cannot change the permission mode. Only the user-facing Ctrl+K and
 `bypassAll` is never accepted as an ACP interaction mode or read from a
 settings file.
 
-The same views are discoverable through `/tools`, `/agent`, `/shell`, `/mcp`,
+The same views are discoverable through `/tools`, `/tasks`, `/agent`, `/shell`, `/mcp`,
 `/session` (`/sessions` is an alias), `/model`, and `/permission`; queue control
 uses `/queue` and `/steer`. `/rewind [count]` removes completed turns from both
 the visible transcript and model history, and clears queued work so prompts

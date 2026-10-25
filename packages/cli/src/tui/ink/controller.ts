@@ -37,6 +37,7 @@ import {
   ToolInspectorState,
   type SelectionItem,
 } from "./dialogs/state.js";
+import type { BackgroundJobSummary } from "@datalabrotterdam/nova-ai-agent/core/background.js";
 import { effortLabel } from "@datalabrotterdam/nova-ai-agent/core/model-capabilities.js";
 import type { KeyPress } from "./editor/prompt-editor.js";
 import { PromptEditor } from "./editor/prompt-editor.js";
@@ -214,9 +215,6 @@ export class TuiController {
         return true;
       case "k":
         this.openPermissionModes();
-        return true;
-      case "b":
-        void this.openBackgroundTasks();
         return true;
       case "o":
         this.toggleToolDetails();
@@ -423,35 +421,64 @@ export class TuiController {
     );
   }
 
-  openBackgroundTasks = async (): Promise<void> => {
+  /** /tasks: background shells and agents; pick one to read its output or stop it. */
+  openTasks = async (): Promise<void> => {
+    let jobs: BackgroundJobSummary[];
     try {
-      const jobs = await this.runner.listBackgroundJobs();
-      this.showSelection(
-        "Background shells and agents",
-        jobs.map((job) => ({
-          value: job.jobId,
-          label: `${job.kind}: ${job.title}`,
-          description: job.status,
-        })),
-        "background-tasks",
-        (jobId) => {
-          void this.runner
-            .backgroundOutput(jobId)
-            .then((result) =>
-              this.showText(
-                `${result.job.kind}: ${result.job.title}`,
-                `jobId: ${jobId}\nstatus: ${result.job.status}\noutputPath: ${result.outputPath ?? result.job.outputPath ?? ""}\n\n${result.output}${result.truncated ? "\n\n[output truncated]" : ""}`,
-              ),
-            )
-            .catch((error) =>
-              this.showText("Background job", errorMessage(error, "Failed to read output.")),
-            );
-        },
+      jobs = await this.runner.listBackgroundJobs();
+    } catch (error) {
+      this.showText("Background tasks", errorMessage(error, "Failed to list background tasks."));
+      return;
+    }
+    if (jobs.length === 0) {
+      this.showText("Background tasks", "No background shells or agents in this session.");
+      return;
+    }
+    this.showSelection(
+      "Background tasks",
+      jobs.map((job) => ({ value: job.jobId, label: taskLabel(job), description: job.status })),
+      "background-tasks",
+      (jobId) => {
+        const job = jobs.find((candidate) => candidate.jobId === jobId)!;
+        if (job.status !== "running") {
+          void this.showTaskOutput(jobId);
+          return;
+        }
+        this.showSelection(
+          taskLabel(job),
+          [
+            { value: "output", label: "View output", description: "What it printed so far" },
+            { value: "stop", label: "Stop", description: "Kill this task" },
+          ],
+          "background-tasks",
+          (action) => void (action === "stop" ? this.stopTask(job) : this.showTaskOutput(jobId)),
+        );
+      },
+    );
+  };
+
+  private async showTaskOutput(jobId: string): Promise<void> {
+    try {
+      const result = await this.runner.backgroundOutput(jobId);
+      this.showText(
+        taskLabel(result.job),
+        `status: ${result.job.status}\noutputPath: ${result.outputPath ?? result.job.outputPath ?? ""}\n\n${result.output}${result.truncated ? "\n\n[output truncated]" : ""}`,
       );
     } catch (error) {
-      this.showText("Background jobs", errorMessage(error, "Failed to list background jobs."));
+      this.showText("Background task", errorMessage(error, "Failed to read output."));
     }
-  };
+  }
+
+  /** Stops one task, then shows the list again. */
+  private async stopTask(job: BackgroundJobSummary): Promise<void> {
+    try {
+      await this.runner.killBackgroundJob(job.jobId);
+      this.store.setState({ statusLine: `Stopped ${taskLabel(job)}.` });
+    } catch (error) {
+      this.store.setState({ statusLine: errorMessage(error, `Failed to stop ${taskLabel(job)}.`) });
+    }
+    await this.openTasks();
+  }
 
   openToolInspector = (): void => {
     if (this.toolCalls().length === 0) {
@@ -750,6 +777,7 @@ export class TuiController {
       return "Workspace trusted: its allow rules apply now; MCP servers it declares start with the next session (/clear).";
     },
     openToolInspector: this.openToolInspector,
+    openTasks: this.openTasks,
     openMcpInspector: this.openMcpInspector,
     openSkillInspector: this.openSkillInspector,
     switchSkill: this.switchSkill,
@@ -987,4 +1015,8 @@ export function mcpCounts(runner: SessionRunner): McpCounts {
 
 function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
+}
+
+function taskLabel(job: BackgroundJobSummary): string {
+  return `${job.kind === "terminal" ? "shell" : "agent"}: ${job.title}`;
 }
