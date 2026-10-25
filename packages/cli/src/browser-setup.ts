@@ -1,7 +1,7 @@
 /*
  * Browser integration, set up the way Claude Code does it for its Chrome extension: this CLI
  * depends on the Nova AI Browser host (@datalabrotterdam/nova-ai-browser-host) and registers it
- * on start-up. The host's installer copies itself to ~/.nova-ai-browser/host/<version>/, writes
+ * on start-up. The host's installer copies itself to ~/.nova-ai/browser/host/<version>/, writes
  * a wrapper and the browsers' native messaging manifests, and installs the nova-browser skill
  * (which the agent then offers like any other skill). It changes nothing when everything is
  * current and never replaces a newer host (Nova AI for VS Code ships one too).
