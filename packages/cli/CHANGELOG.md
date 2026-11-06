@@ -1,3 +1,17 @@
+# [@datalabrotterdam/nova-ai-cli-v1.2.0-alpha.18](https://github.com/Datalab-Rotterdam/nova-ai-cli/compare/@datalabrotterdam/nova-ai-cli@1.2.0-alpha.17...@datalabrotterdam/nova-ai-cli@1.2.0-alpha.18) (2026-11-06)
+
+
+### Bug Fixes
+
+* **cli:** keep the prompt alive after the keyboard probe in binaries ([b77d275](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/b77d275440b3f5b4b5f9325bc626b552904a9ece))
+
+
+### Features
+
+* **cli:** browser setup in the standalone binary ([d770794](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/d77079478a51e362beae05f211d947792786eac7))
+* **cli:** publish standalone binaries on GitHub releases ([b5c0580](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/b5c05807142bff8e0bc5669584025b9e6a8020b8))
+* **cli:** standalone binaries update themselves ([ad1ec3c](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/ad1ec3cf84619decabd4aa156ac77e88d442831c))
+
 # [@datalabrotterdam/nova-ai-cli-v1.2.0-alpha.17](https://github.com/Datalab-Rotterdam/nova-ai-cli/compare/@datalabrotterdam/nova-ai-cli@1.2.0-alpha.16...@datalabrotterdam/nova-ai-cli@1.2.0-alpha.17) (2026-10-25)
 
 
