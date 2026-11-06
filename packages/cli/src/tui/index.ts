@@ -3,6 +3,8 @@ import type { TuiOptions } from "../cli.js";
 import { readCredentials } from "@datalabrotterdam/nova-ai-agent/core/credentials.js";
 import { listStoredSessions, loadStoredSession } from "@datalabrotterdam/nova-ai-agent/core/sessions.js";
 import { setWorkspaceTrusted } from "@datalabrotterdam/nova-ai-agent/core/nova-home.js";
+import { standalone } from "@datalabrotterdam/nova-ai-agent/core/standalone.js";
+import { removeReplacedBinary } from "../update-binary.js";
 import { checkForUpdate } from "../update-check.js";
 import {
   installAndRestart,
@@ -23,6 +25,8 @@ export async function runChat(options: TuiOptions): Promise<number> {
   // No model yet: the session takes the account's default (SessionRunner.ensureUsableModel).
   const model = options.model ?? stored.defaultModel ?? process.env.NOVA_MODEL;
   const credentials = { ...stored, defaultModel: model };
+
+  if (standalone()) removeReplacedBinary();
 
   // One npm check per start: the prompt below and the TUI's reminder share it.
   const updateCheck = checkForUpdate().then((update) => withInstallability(update));
@@ -58,7 +62,7 @@ export async function runChat(options: TuiOptions): Promise<number> {
         ...(loadStoredSession(result.sessionId) ? ["--resume", result.sessionId] : []),
         ...(options.model ? ["--model", options.model] : []),
       ];
-      const restartedCode = installAndRestart(update, restartArgs);
+      const restartedCode = await installAndRestart(update, restartArgs);
       if (restartedCode !== null) return restartedCode;
     }
   }

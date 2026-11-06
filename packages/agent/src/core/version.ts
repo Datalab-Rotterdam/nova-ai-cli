@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { standalone } from "./standalone.js";
 
 export const AGENT_PACKAGE_NAME = "@datalabrotterdam/nova-ai-agent";
 
@@ -8,12 +9,15 @@ export const AGENT_PACKAGE_NAME = "@datalabrotterdam/nova-ai-agent";
  * A package's version, read at runtime so semantic-release's final version
  * wins. Walks up from `moduleUrl` to the package.json named `packageName`:
  * sources, compiled tests and bundles sit at different depths below it.
- * Defaults to this (the agent) package.
+ * Defaults to this (the agent) package. A standalone binary has no package.json
+ * on disk, so its build embeds the versions.
  */
 export function readPackageVersion(
   packageName: string = AGENT_PACKAGE_NAME,
   moduleUrl: string = import.meta.url,
 ): string | null {
+  const binary = standalone();
+  if (binary) return binary.versions[packageName] ?? null;
   let directory = dirname(fileURLToPath(moduleUrl));
   for (let depth = 0; depth < 10; depth++) {
     const candidate = join(directory, "package.json");

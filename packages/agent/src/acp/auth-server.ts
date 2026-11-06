@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { NovaAI, NovaAIError } from "@datalabrotterdam/nova-sdk";
 import { chooseDefaultModel } from "../core/model-capabilities.js";
 import { createNovaClient } from "../core/nova-client.js";
+import { standalone, standaloneAssets } from "../core/standalone.js";
 import { dir, json, WebServer } from "@sourceregistry/node-webserver";
 import {
   credentialsPath,
@@ -20,6 +21,7 @@ const HOST = "127.0.0.1";
 export const SETUP_TOKEN_HEADER = "x-nova-setup-token";
 
 function resolveUiDir(): string {
+  if (standalone()) return join(standaloneAssets(), "setup-ui");
   const moduleDir = dirname(fileURLToPath(import.meta.url));
   const candidates = [
     // Running from src/acp/auth-server.ts via tsx.
