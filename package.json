@@ -14,6 +14,7 @@
   "scripts": {
     "build": "npm run build -w @datalabrotterdam/nova-ai-agent && npm run build -w @datalabrotterdam/nova-ai-cli",
     "build:lib": "npm run build:lib -w @datalabrotterdam/nova-ai-agent",
+    "build:binaries": "bun scripts/build-binaries.mjs",
     "typecheck": "npm run build:lib && npm run typecheck --workspaces",
     "test": "npm run build:lib && npm test --workspaces",
     "test:unit": "npm run build:lib && npm run test:unit --workspaces",
