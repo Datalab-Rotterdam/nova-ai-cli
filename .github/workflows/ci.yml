@@ -159,6 +159,10 @@ jobs:
       - name: Smoke test
         timeout-minutes: 3
         run: node scripts/smoke-binary.mjs binaries/nova-ai-${{ matrix.target }}.${{ matrix.archive }} --version 0.0.0-smoke
+      - name: Smoke test the install script
+        if: runner.os != 'Windows'
+        timeout-minutes: 3
+        run: sh scripts/smoke-install.sh binaries 0.0.0-smoke
       # The terminal side needs node-pty, so only one job per OS installs it. See the
       # test job for why it needs preparing.
       - name: Install dependencies

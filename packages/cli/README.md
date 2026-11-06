@@ -60,9 +60,23 @@ shows the command to run instead.
 
 ### Standalone binary
 
-Every [GitHub release](https://github.com/Datalab-Rotterdam/nova-ai-cli/releases)
-of the CLI has a single executable for each platform, with its runtime and all
-dependencies inside:
+No Node.js needed: each [GitHub release](https://github.com/Datalab-Rotterdam/nova-ai-cli/releases)
+of the CLI has a single executable with its runtime and all dependencies inside.
+
+On macOS and Linux, install it with:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Datalab-Rotterdam/nova-ai-cli/alpha/scripts/install.sh | sh -s -- --channel alpha
+nova-ai login
+```
+
+The script picks the build for your machine, checks it against `SHA256SUMS` and
+installs it to `~/.local/bin` (no sudo). `--dir <folder>` installs elsewhere and
+`--version <v>` picks a version. The first binaries are in the alpha channel, so
+`--channel alpha` is needed until a stable release has them.
+
+Or download an archive yourself, and check it with
+`shasum -a 256 --ignore-missing -c SHA256SUMS`:
 
 | | x64 | Arm64 |
 |---|---|---|
@@ -70,18 +84,9 @@ dependencies inside:
 | Linux (glibc) | `nova-ai-linux-x64.tar.gz` | `nova-ai-linux-arm64.tar.gz` |
 | Windows | `nova-ai-windows-x64.zip` | `nova-ai-windows-arm64.zip` |
 
-```sh
-# Replace the file name with the one for your platform.
-shasum -a 256 --ignore-missing -c SHA256SUMS
-tar -xzf nova-ai-linux-x64.tar.gz
-mv nova-ai ~/.local/bin/       # any folder on your PATH
-nova-ai login
-```
-
-The binaries are not signed. A file downloaded with a browser is blocked at
-first: on macOS run `xattr -d com.apple.quarantine nova-ai`, on Windows choose
-More info → Run anyway in the SmartScreen warning. `curl` downloads are not
-affected on macOS.
+Apple Silicon Macs (M1 and newer) need `arm64`. The binaries are not notarized
+yet, so a file downloaded with a browser is blocked on macOS and Windows; see the
+[FAQ](#faq). The install script is not affected.
 
 A binary works like an npm install, with two differences:
 
@@ -293,6 +298,46 @@ default.
 | `NOVA_NES_MODEL` | Separate model for next-edit suggestions (ACP) |
 | `NOVA_KITTY_KEYBOARD` | `1`/`0`: force the kitty keyboard protocol on or off |
 | `NOVA_NO_UPDATE_CHECK` | Don't ask npm for a newer version (also `NO_UPDATE_NOTIFIER`, or `CI`) |
+
+## FAQ
+
+### macOS won't open nova-ai
+
+Binaries downloaded with a browser are quarantined, and they aren't notarized by
+Apple yet. You'll see one of these:
+
+- "nova-ai" is damaged and can't be opened
+- Apple could not verify "nova-ai" is free of malware
+- `zsh: killed ./nova-ai` in the terminal
+
+The simplest fix is the [install script](#standalone-binary), because `curl` doesn't
+quarantine files. To keep a browser download, cancel the dialog (don't move the
+file to the Trash) and clear the quarantine flag in the binary's folder:
+
+```sh
+xattr -d com.apple.quarantine nova-ai
+./nova-ai
+```
+
+Do this only for a file from the
+[releases page](https://github.com/Datalab-Rotterdam/nova-ai-cli/releases) that
+matches `SHA256SUMS`. `sudo` doesn't help: macOS blocks the binary for root too.
+
+On an Apple Silicon Mac, also check that you have `darwin-arm64`, not `darwin-x64`.
+
+### Windows SmartScreen blocks nova-ai
+
+Choose More info → Run anyway. The binaries aren't code-signed yet.
+
+### `nova-ai: command not found` after installing
+
+`~/.local/bin` isn't on your PATH. Add `export PATH="$HOME/.local/bin:$PATH"` to
+`~/.zshrc` or `~/.bashrc` and open a new terminal.
+
+### "The update did not install" or no `/update`
+
+A binary replaces itself, so it needs write access to its own folder. Installed
+with the script, it has that. Otherwise `nova-ai` shows a link to the release.
 
 ## Development
 
