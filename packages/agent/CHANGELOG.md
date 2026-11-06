@@ -1,3 +1,10 @@
+# [@datalabrotterdam/nova-ai-agent-v1.0.0-alpha.11](https://github.com/Datalab-Rotterdam/nova-ai-cli/compare/@datalabrotterdam/nova-ai-agent@1.0.0-alpha.10...@datalabrotterdam/nova-ai-agent@1.0.0-alpha.11) (2026-11-06)
+
+
+### Features
+
+* **agent:** standalone binary support ([524d68e](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/524d68e045478922f90111b67d79cb03fbec9c4c))
+
 # [@datalabrotterdam/nova-ai-agent-v1.0.0-alpha.10](https://github.com/Datalab-Rotterdam/nova-ai-cli/compare/@datalabrotterdam/nova-ai-agent@1.0.0-alpha.9...@datalabrotterdam/nova-ai-agent@1.0.0-alpha.10) (2026-10-24)
 
 
