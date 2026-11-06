@@ -65,6 +65,12 @@
       "@semantic-release/changelog",
       "@semantic-release/npm",
       [
+        "@semantic-release/exec",
+        {
+          "prepareCmd": "bun ../../scripts/build-binaries.mjs --version ${nextRelease.version}"
+        }
+      ],
+      [
         "@semantic-release/git",
         {
           "assets": [
@@ -72,6 +78,20 @@
             "CHANGELOG.md"
           ],
           "message": "nova-ai-cli(release): 🚀 v${nextRelease.version}\n\n${nextRelease.notes}"
+        }
+      ],
+      [
+        "@semantic-release/github",
+        {
+          "assets": [
+            "release/*.tar.gz",
+            "release/*.zip",
+            "release/SHA256SUMS"
+          ],
+          "successComment": false,
+          "failComment": false,
+          "failTitle": false,
+          "releasedLabels": false
         }
       ]
     ]

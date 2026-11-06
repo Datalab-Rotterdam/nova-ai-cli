@@ -4,12 +4,11 @@
 // --tui also drives the interactive UI and the setup page, and needs the repo's npm dependencies.
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
-import { promisify } from "node:util";
-import { parseArgs } from "node:util";
+import { join, resolve } from "node:path";
+import { parseArgs, promisify } from "node:util";
 import { finish, say, startFakeNovaServer, toolCall } from "../test-support/fake-nova-server.ts";
 
 const { values: options, positionals } = parseArgs({
@@ -151,7 +150,7 @@ const checks = {
 
 /** The terminal side, only with --tui: Ink under a real PTY, then the browser sign-in page. */
 function tuiChecks() {
-  const require = createRequire(resolve(dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1")), "..", "package.json"));
+  const require = createRequire(import.meta.url);
   const pty = require("node-pty");
   const { Terminal } = require("@xterm/headless");
 

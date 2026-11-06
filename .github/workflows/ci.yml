@@ -92,6 +92,88 @@ jobs:
           path: packages-out/*.tgz
           if-no-files-found: error
 
+  binaries:
+    name: Build binaries
+    # Bun cross-compiles, so the Linux job builds what the release will ship for every platform.
+    needs:
+      - test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+      - name: Install dependencies
+        run: npm ci
+      - name: Build the packages
+        run: npm run build
+      - name: Build the binaries
+        run: bun scripts/build-binaries.mjs --version 0.0.0-smoke
+      - name: Upload the binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries
+          path: packages/cli/release/
+          if-no-files-found: error
+          retention-days: 3
+
+  binaries-smoke:
+    name: Smoke test (${{ matrix.target }})
+    # Runs each cross-compiled archive on its real OS and CPU, the only place a bad
+    # macOS signature or a missing Windows feature shows up.
+    needs:
+      - binaries
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: darwin-arm64, os: macos-latest, archive: tar.gz, tui: true }
+          - { target: darwin-x64, os: macos-15-intel, archive: tar.gz }
+          - { target: linux-x64, os: ubuntu-latest, archive: tar.gz, tui: true }
+          - { target: linux-arm64, os: ubuntu-24.04-arm, archive: tar.gz }
+          - { target: windows-x64, os: windows-latest, archive: zip, tui: true }
+          - { target: windows-arm64, os: windows-11-arm, archive: zip }
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Download the binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: binaries
+          path: binaries
+      - name: Smoke test
+        run: node scripts/smoke-binary.mjs binaries/nova-ai-${{ matrix.target }}.${{ matrix.archive }} --version 0.0.0-smoke
+      # The terminal side needs node-pty, so only one job per OS installs it. See the
+      # test job for why it needs preparing.
+      - name: Install dependencies
+        if: matrix.tui
+        run: npm ci
+      - name: Prepare node-pty (Linux)
+        if: matrix.tui && runner.os == 'Linux'
+        working-directory: node_modules/node-pty
+        run: npx --yes node-gyp rebuild
+      - name: Prepare node-pty (macOS)
+        if: matrix.tui && runner.os == 'macOS'
+        run: chmod +x node_modules/node-pty/prebuilds/*/spawn-helper
+      - name: Smoke test the terminal UI
+        if: matrix.tui
+        # Reported but not yet required on Windows, like the PTY scenario in the test job.
+        continue-on-error: ${{ runner.os == 'Windows' }}
+        run: node scripts/smoke-binary.mjs binaries/nova-ai-${{ matrix.target }}.${{ matrix.archive }} --version 0.0.0-smoke --tui
+
   release:
     name: Release
     # Each package is released on its own, from the commits that touch its
@@ -104,6 +186,7 @@ jobs:
     needs:
       - test
       - verify
+      - binaries-smoke
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -123,6 +206,11 @@ jobs:
           node-version: 24
           cache: npm
           registry-url: "https://registry.npmjs.org/"
+      # semantic-release builds the binaries for the GitHub release of the CLI.
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
       - name: Install dependencies
         run: npm ci
       - name: Update npm for trusted publishing support
