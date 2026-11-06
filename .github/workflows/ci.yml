@@ -131,6 +131,8 @@ jobs:
     needs:
       - binaries
     runs-on: ${{ matrix.os }}
+    # A hanging binary must fail here: the release waits for this job.
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -155,6 +157,7 @@ jobs:
           name: binaries
           path: binaries
       - name: Smoke test
+        timeout-minutes: 3
         run: node scripts/smoke-binary.mjs binaries/nova-ai-${{ matrix.target }}.${{ matrix.archive }} --version 0.0.0-smoke
       # The terminal side needs node-pty, so only one job per OS installs it. See the
       # test job for why it needs preparing.
@@ -172,6 +175,7 @@ jobs:
         if: matrix.tui
         # Reported but not yet required on Windows, like the PTY scenario in the test job.
         continue-on-error: ${{ runner.os == 'Windows' }}
+        timeout-minutes: 3
         run: node scripts/smoke-binary.mjs binaries/nova-ai-${{ matrix.target }}.${{ matrix.archive }} --version 0.0.0-smoke --tui
 
   release:

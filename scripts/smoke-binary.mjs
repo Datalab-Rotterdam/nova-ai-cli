@@ -68,6 +68,7 @@ function launch(args, env, input) {
   });
 }
 
+/** `what` is text, or a function for what is only known at the end, like the screen. */
 async function poll(check, what, ms = 15_000) {
   const start = Date.now();
   while (Date.now() - start < ms) {
@@ -75,7 +76,18 @@ async function poll(check, what, ms = 15_000) {
     if (value) return value;
     await new Promise((wake) => setTimeout(wake, 50));
   }
-  throw new Error(`Timed out waiting for ${what}.`);
+  throw new Error(`Timed out waiting for ${typeof what === "function" ? what() : what}.`);
+}
+
+/** A check that hangs must fail like any other: this runs before a release, which waits for it. */
+const CHECK_TIMEOUT_MS = 60_000;
+
+function limited(check) {
+  let timer;
+  const limit = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`No result after ${CHECK_TIMEOUT_MS / 1000}s.`)), CHECK_TIMEOUT_MS);
+  });
+  return Promise.race([check(), limit]).finally(() => clearTimeout(timer));
 }
 
 const checks = {
@@ -175,14 +187,14 @@ function tuiChecks() {
       const nova = await startFakeNovaServer([{ chunks: [say("tui-reply")] }]);
       const { child, state, screen } = open([], { ...baseEnv, NOVA_BASE_URL: nova.url });
       try {
-        await poll(() => /Nova AI/.test(screen()), "the TUI");
+        await poll(() => /Nova AI/.test(screen()), () => `the TUI\n${screen()}`);
         await new Promise((wake) => setTimeout(wake, 500));
         child.write("hello\r");
-        await poll(() => /tui-reply/.test(screen()), `the reply\n${screen()}`);
+        await poll(() => /tui-reply/.test(screen()), () => `the reply\n${screen()}`);
         child.write("\u0003");
         await new Promise((wake) => setTimeout(wake, 300));
         child.write("\u0003");
-        await poll(() => state.exit, "the TUI to exit");
+        await poll(() => state.exit, () => `the TUI to exit\n${screen()}`);
         assert.equal(state.exit.exitCode, 0);
       } finally {
         if (!state.exit) child.kill();
@@ -194,8 +206,8 @@ function tuiChecks() {
     async "login serves the setup page"() {
       const { child, state, screen } = open(["login"], { ...baseEnv, NOVA_API_KEY: "", PATH: "" });
       try {
-        const url = await poll(() => /http:\/\/127\.0\.0\.1:\d+/.exec(screen())?.[0], `the login URL\n${screen()}`);
-        const response = await fetch(url);
+        const url = await poll(() => /http:\/\/127\.0\.0\.1:\d+/.exec(screen())?.[0], () => `the login URL\n${screen()}`);
+        const response = await fetch(url, { signal: AbortSignal.timeout(10_000) });
         assert.equal(response.status, 200);
         assert.match(await response.text(), /<html/i);
       } finally {
@@ -207,8 +219,9 @@ function tuiChecks() {
 
 let failed = false;
 for (const [name, check] of Object.entries({ ...checks, ...(options.tui ? tuiChecks() : {}) })) {
+  console.log(`run   ${name}`);
   try {
-    await check();
+    await limited(check);
     console.log(`ok    ${name}`);
   } catch (error) {
     failed = true;
