@@ -172,6 +172,11 @@ function tuiChecks() {
     const state = { exit: null };
     child.onData((data) => term.write(data));
     child.onExit((event) => (state.exit = event));
+    // Answer the app's terminal queries like a real terminal. Without this the TUI takes a
+    // timeout path no user gets, which hid a bug that left the prompt dead in every terminal.
+    term.onData((reply) => {
+      if (!state.exit) child.write(reply);
+    });
     const screen = () => {
       const lines = [];
       for (let row = 0; row < term.buffer.active.length; row++) {
@@ -187,9 +192,11 @@ function tuiChecks() {
       const nova = await startFakeNovaServer([{ chunks: [say("tui-reply")] }]);
       const { child, state, screen } = open([], { ...baseEnv, NOVA_BASE_URL: nova.url });
       try {
-        await poll(() => /Nova AI/.test(screen()), () => `the TUI\n${screen()}`);
+        await poll(() => /\| ready\b/.test(screen()), () => `the TUI\n${screen()}`);
         await new Promise((wake) => setTimeout(wake, 500));
-        child.write("hello\r");
+        child.write("hello");
+        await poll(() => /> *hello/.test(screen()), () => `the typed text\n${screen()}`);
+        child.write("\r");
         await poll(() => /tui-reply/.test(screen()), () => `the reply\n${screen()}`);
         child.write("\u0003");
         await new Promise((wake) => setTimeout(wake, 300));
@@ -202,14 +209,25 @@ function tuiChecks() {
       }
     },
 
-    // No browser may open: PATH is empty, so the open command is not found.
+    // No real browser may open. An empty PATH is not enough: the OS falls back to a default
+    // one, so PATH holds stubs, which also show the command was called. Windows has no way
+    // to replace rundll32, but CI has no browser. Ctrl+C ends login because node-pty's kill
+    // can leave the process unable to exit on Windows.
     async "login serves the setup page"() {
-      const { child, state, screen } = open(["login"], { ...baseEnv, NOVA_API_KEY: "", PATH: "" });
+      const stubs = folder("stubs");
+      const opened = join(sandbox, "opened");
+      for (const name of ["open", "xdg-open"]) {
+        writeFileSync(join(stubs, name), `#!/bin/sh\nprintf %s "$1" > "${opened}"\n`, { mode: 0o755 });
+      }
+      const { child, state, screen } = open(["login"], { ...baseEnv, NOVA_API_KEY: "", PATH: stubs });
       try {
         const url = await poll(() => /http:\/\/127\.0\.0\.1:\d+/.exec(screen())?.[0], () => `the login URL\n${screen()}`);
         const response = await fetch(url, { signal: AbortSignal.timeout(10_000) });
         assert.equal(response.status, 200);
         assert.match(await response.text(), /<html/i);
+        if (!windows) await poll(() => existsSync(opened), "the browser command");
+        child.write("\u0003");
+        await poll(() => state.exit, () => `login to stop\n${screen()}`, 5_000);
       } finally {
         if (!state.exit) child.kill();
       }
@@ -228,6 +246,7 @@ for (const [name, check] of Object.entries({ ...checks, ...(options.tui ? tuiChe
     console.error(`FAIL  ${name}\n${error instanceof Error ? error.stack : error}`);
   }
 }
+console.log(failed ? "Failed." : "All checks passed.");
 // Runs before a release, so a leftover process or folder must not fail or hang CI.
 try {
   rmSync(sandbox, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });

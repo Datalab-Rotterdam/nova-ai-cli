@@ -43,7 +43,10 @@ export function detectKittyKeyboard(
       settled = true;
       clearTimeout(timer);
       stdin.off("data", onData);
-      stdin.pause();
+      // Node drops keys until Ink reads, unless paused. Bun (the standalone binaries) never
+      // delivers input again once a stdin that has read something is paused, so every
+      // terminal that answers this probe would leave the prompt dead.
+      if (!process.versions.bun) stdin.pause();
       const supported = new RegExp(KITTY_REPLY.source).test(received);
       const typed = received.replace(KITTY_REPLY, "").replace(DEVICE_ATTRIBUTES_REPLY, "");
       if (typed) stdin.unshift(Buffer.from(typed, "utf8"));
