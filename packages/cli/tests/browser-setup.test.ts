@@ -75,14 +75,17 @@ test("never runs a Node from the current folder through a relative or empty PATH
   const asked: string[] = [];
   const [cwd] = pathWithNodes(t, "cwd");
   const before = process.cwd();
-  t.after(() => process.chdir(before));
   process.chdir(cwd!);
-  const found = await findNode({ PATH: ["", ".", "bin"].join(delimiter) }, async (path) => {
-    asked.push(path);
-    return "v24.0.0\n";
-  });
-  assert.equal(found, undefined);
-  assert.deepEqual(asked, []);
+  try {
+    const found = await findNode({ PATH: ["", ".", "bin"].join(delimiter) }, async (path) => {
+      asked.push(path);
+      return "v24.0.0\n";
+    });
+    assert.equal(found, undefined);
+    assert.deepEqual(asked, []);
+  } finally {
+    process.chdir(before); // Before the cleanup: Windows can't delete the current folder.
+  }
 });
 
 test("skips a Node that does not run", async (t) => {
