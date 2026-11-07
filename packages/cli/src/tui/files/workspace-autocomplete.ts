@@ -337,7 +337,7 @@ function walkWithFd(
       resolve([]);
       return;
     }
-    const child = spawn(fdPath, args, { stdio: ["ignore", "pipe", "ignore"] });
+    const child = spawn(fdPath, args, { stdio: ["ignore", "pipe", "ignore"], windowsHide: true });
     let stdout = "";
     let settled = false;
     const finish = (entries: FdEntry[]) => {

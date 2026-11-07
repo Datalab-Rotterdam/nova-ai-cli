@@ -7,6 +7,7 @@ import {
   activitySummary,
   changedLines,
   formatToolCallDetails,
+  formatElapsedTime,
   isCompactTool,
   outputLines,
   toolCallSummary,
@@ -14,6 +15,9 @@ import {
 import type { TranscriptBlock } from "../transcript/committer.js";
 import { ASSISTANT_MARKER, palette, WORKING_FRAMES } from "../theme.js";
 import { Markdown } from "./markdown.js";
+import { cliVersion } from "../../../version.js";
+
+const version = cliVersion();
 
 /** Collapsed diffs show this many changed lines; Ctrl+O or Ctrl+T show all. */
 export const COLLAPSED_DIFF_LINES = 40;
@@ -25,9 +29,9 @@ export function TranscriptBlockView({ block, frame = 0 }: BlockProps): ReactNode
     case "header":
       return (
         <Box flexDirection="column" paddingLeft={2}>
-          <Text color={palette.primary}>{`${ASSISTANT_MARKER} Nova AI`}</Text>
-          <Text color={palette.muted}>{`Workspace: ${block.cwd}`}</Text>
-          <Text color={palette.faint}>Ask a question, use @file, or type /help.</Text>
+          <Text><Text color={palette.primary} bold>{`${ASSISTANT_MARKER} Nova AI`}</Text>{version ? <Text color={palette.faint}>{` (v${version})`}</Text> : null}</Text>
+          <Text><Text color={palette.faint}>Workspace  </Text><Text color={palette.muted}>{block.cwd}</Text></Text>
+          <Text color={palette.faint}>Click a status to change it · @file for context · /help for shortcuts</Text>
         </Box>
       );
     case "user":
@@ -74,6 +78,8 @@ export function TranscriptBlockView({ block, frame = 0 }: BlockProps): ReactNode
           <Text color={palette.danger}>{block.text}</Text>
         </Prefixed>
       );
+    case "completion":
+      return <Box paddingLeft={2}><Text color={palette.faint}>{`Completed in ${formatElapsedTime(block.durationMs)} · ${new Date(block.completedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`}</Text></Box>;
     case "tool":
       return <ToolCallBlock call={block.call} expanded={block.expanded} frame={frame} />;
     case "activity":

@@ -28,10 +28,15 @@ export type ToolDiff = {
   newText: string;
 };
 
+/** An image a tool returned (an MCP image block), as base64 data. */
+export type ToolImage = { mimeType: string; data: string };
+
 export type ToolResult =
   | {
       output: string;
       diff?: ToolDiff;
+      /** Images for the model, such as a browser screenshot (see tool-images.ts). */
+      images?: ToolImage[];
       /** Prevent another tool from running after a least-privilege mode change. */
       disableFurtherTools?: boolean;
     }

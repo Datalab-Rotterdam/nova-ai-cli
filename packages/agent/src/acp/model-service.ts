@@ -207,18 +207,23 @@ export class ModelService {
     return window;
   }
 
+  /** Whether `model` reads images; remembered per model. */
+  async imageInput(novaClient: NovaAI, model: string): Promise<boolean> {
+    let supported = this.imageSupportByModel.get(model);
+    if (supported === undefined) {
+      supported = await resolveModelSupportsImageInput(novaClient, model);
+      this.imageSupportByModel.set(model, supported);
+    }
+    return supported;
+  }
+
   async assertImageInputSupported(
     novaClient: NovaAI,
     model: string,
     prompt: acp.PromptRequest["prompt"],
   ): Promise<void> {
     if (!prompt.some((block) => block.type === "image")) return;
-    let supported = this.imageSupportByModel.get(model);
-    if (supported === undefined) {
-      supported = await resolveModelSupportsImageInput(novaClient, model);
-      this.imageSupportByModel.set(model, supported);
-    }
-    if (!supported) {
+    if (!(await this.imageInput(novaClient, model))) {
       throw new Error(`Model ${model} does not support image input.`);
     }
   }

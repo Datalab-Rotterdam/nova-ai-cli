@@ -18,7 +18,9 @@
     "test": "npm run build:lib && npm test --workspaces",
     "test:unit": "npm run build:lib && npm run test:unit --workspaces",
     "test:pty": "npm run build:lib && npm run test:pty -w @datalabrotterdam/nova-ai-cli",
-    "dev": "npm run build:lib && npm run dev -w @datalabrotterdam/nova-ai-cli"
+    "dev": "npm run build:lib && npm run dev -w @datalabrotterdam/nova-ai-cli",
+    "dev:agent:watch": "tsc -p packages/agent/tsconfig.json --sourceMap --watch",
+    "dev:debug": "tsc -p packages/agent/tsconfig.json --sourceMap && node --enable-source-maps --inspect-brk --import tsx packages/cli/src/index.ts"
   },
   "devDependencies": {
     "@semantic-release/changelog": "^6.0.3",

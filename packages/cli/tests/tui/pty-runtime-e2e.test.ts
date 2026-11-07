@@ -56,7 +56,7 @@ async function runPtyScenario(): Promise<void> {
     await harness.waitFor(/fixture scroll line 48/);
 
     harness.resize(96, 30);
-    await harness.waitFor(/fixture-model \| agent/);
+    await harness.waitFor(/Model: fixture-model \| Mode: agent/);
     assert.equal(harness.columns, 96);
     assert.equal(harness.rows, 30);
 
@@ -72,7 +72,7 @@ async function runPtyScenario(): Promise<void> {
     );
     // The alternate screen is gone after exit, prompt and status with it.
     assert.match(harness.output(), /\u001b\[\?1049l/);
-    assert.doesNotMatch(harness.screen(), /fixture-model \| agent/);
+    assert.doesNotMatch(harness.screen(), /Model: fixture-model \| Mode: agent/);
   } finally {
     harness.dispose();
   }

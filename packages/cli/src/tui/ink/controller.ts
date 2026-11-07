@@ -180,6 +180,12 @@ export class TuiController {
       this.pressCtrlC();
       return true;
     }
+    if (this.exitArmed) {
+      this.exitArmed = false;
+      if (this.exitTimer) clearTimeout(this.exitTimer);
+      if (this.store.getState().statusLine?.startsWith("Press Ctrl+C"))
+        this.store.setState({ statusLine: null });
+    }
     if (key.escape) {
       if (this.editor.autocomplete) return false;
       if (this.store.getState().busy) {
@@ -227,16 +233,13 @@ export class TuiController {
     }
   }
 
-  /** Ctrl+C clears a typed prompt first; on an empty one it arms exit. */
+  /** Ctrl+C clears the prompt and arms exit; a second press exits. */
   private pressCtrlC(): void {
-    if (this.editor.getText()) {
-      this.editor.setText("");
-      return;
-    }
     if (this.exitArmed) {
       this.requestExit();
       return;
     }
+    if (this.editor.getText()) this.editor.setText("");
     if (this.store.getState().busy) this.runner.cancel();
     this.exitArmed = true;
     this.store.setState({ statusLine: "Press Ctrl+C again within 2s to exit." });
@@ -590,7 +593,7 @@ export class TuiController {
   }
 
   /** Wheel scrolls; press + drag selects text; a click while text is selected copies it. */
-  handleMouse(input: string): void {
+  handleMouse(input: string, onClick?: (row: number, col: number) => boolean): void {
     const mouse = parseMouse(input);
     if (!mouse) return;
     const rows = wheelRows(input);
@@ -613,6 +616,7 @@ export class TuiController {
       this.io.selection.set(this.pressedAt, cell);
     } else if (button === 0 && mouse.release) {
       if (!this.dragging && this.io.selection.active) void this.copySelection();
+      else if (!this.dragging && this.pressedAt?.row === cell.row && this.pressedAt?.col === cell.col && !this.overlay && !this.question && !this.store.getState().pendingPermission) onClick?.(cell.row, cell.col);
       this.pressedAt = null;
     }
   }
@@ -698,6 +702,19 @@ export class TuiController {
   cycleInteractionMode(): void {
     const modes = this.runner.modeIds;
     this.setInteractionMode(modes[(modes.indexOf(this.runner.interactionMode) + 1) % modes.length]!);
+  }
+
+  openInteractionModes(): void {
+    const descriptions: Record<string, string> = {
+      agent: "Work on tasks using tools",
+      ask: "Answer questions without making changes",
+      plan: "Explore and propose a plan before implementation",
+    };
+    this.showSelection("How should Nova help? · Shift+Tab to cycle", this.runner.modeIds.map((mode) => ({
+      value: mode,
+      label: mode,
+      description: descriptions[mode] ?? "Custom interaction mode",
+    })), "interaction-picker", (mode) => this.setInteractionMode(mode as InteractionMode));
   }
 
   appendAssistant(text: string): void {

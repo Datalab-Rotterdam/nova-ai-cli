@@ -763,6 +763,9 @@ export class SessionRunner {
     preparedPrompt?: acp.ContentBlock[],
   ): Promise<void> {
     this.acpClient.appendUserMessage(value);
+    const startedAt = Date.now();
+    const firstMessage = this.store.getState().messages.length;
+    let completed = false;
     this.acpClient.resetStreaming();
     this.promptActive = true;
     this.store.setState({ busy: true, statusLine: null });
@@ -787,7 +790,7 @@ export class SessionRunner {
           statusLine:
             "Tool-use safety limit reached; the final response uses the results gathered so far.",
         });
-      }
+      } else completed = true;
     } catch (err) {
       // The agent already words Nova API failures (status, request id).
       const message = err instanceof Error ? err.message : "Unknown error.";
@@ -798,6 +801,15 @@ export class SessionRunner {
       this.promptActive = false;
       this.acpClient.failPendingTools(pendingToolFailure);
       this.acpClient.resetStreaming();
+      if (completed) {
+        const completedAt = Date.now();
+        this.store.setState((state) => {
+          if (!state.messages.slice(firstMessage).some((message) => message.role === "assistant" && !message.thinking && message.text.trim())) return {};
+          const queued = state.messages.findIndex((message, index) => index >= firstMessage && message.role === "user" && message.queued);
+          const at = queued < 0 ? state.messages.length : queued;
+          return { messages: [...state.messages.slice(0, at), { id: `completion-${this.sessionId}-${completedAt}-${state.messages.length}`, role: "completion", durationMs: completedAt - startedAt, completedAt }, ...state.messages.slice(at)] };
+        });
+      }
       void this.updateContextUsage();
       this.store.setState({ busy: false });
     }

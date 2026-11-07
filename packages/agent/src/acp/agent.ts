@@ -30,7 +30,6 @@ import {
 } from "../core/mcp.js";
 import { FileOAuthProvider, oauthConfigOf } from "../core/mcp-oauth.js";
 import { buildMemorySystemPrompt, sessionMemory } from "../core/memory.js";
-import { installSkills } from "@datalabrotterdam/nova-ai-skills";
 import { findAgentFile, isAutopilot } from "../core/agent-files.js";
 import { expandCommand, listCommandFiles, type CommandFile } from "../core/command-files.js";
 import { isWorkspaceTrusted, novaHomeRoot, setWorkspaceTrusted } from "../core/nova-home.js";
@@ -348,7 +347,12 @@ export class NovaAgent implements AgentRuntime {
     // The skills every Nova app ships (Word, Excel, PowerPoint, PDF), in the
     // background: a current copy is left alone, so later starts only compare.
     // ponytail: two apps updating at the same moment can race on a folder; the next start repairs it.
-    skillsInstall ??= installSkills(novaHomeRoot()).catch(() => []);
+    // Loaded here, not at the top: the skills package reads its own files when it
+    // loads, which a single-file build (`bun build --compile`) does not have, and
+    // the agent then still starts, without them.
+    skillsInstall ??= import("@datalabrotterdam/nova-ai-skills")
+      .then(({ installSkills }) => installSkills(novaHomeRoot()))
+      .catch(() => []);
     this.clientCapabilities = params.clientCapabilities;
     this.clientInfo = params.clientInfo ?? null;
     this.positionEncoding = selectPositionEncoding(
@@ -1107,6 +1111,8 @@ export class NovaAgent implements AgentRuntime {
       );
     }
     await this.models.assertImageInputSupported(novaClient, model, params.prompt);
+    // Tool images (an MCP screenshot) only go to a model that reads them.
+    const imageInput = await this.models.imageInput(novaClient, model).catch(() => false);
     const contextWindow = await this.models.resolveContextWindow(novaClient, model);
     const reasoningEffort = await this.models.effortFor(
       model,
@@ -1274,6 +1280,7 @@ export class NovaAgent implements AgentRuntime {
             novaClient,
             model,
             reasoningEffort,
+            imageInput,
           });
         },
       });

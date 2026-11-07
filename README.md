@@ -51,6 +51,31 @@ scenario. Tests run with a throwaway home folder and never reach the real Nova
 gateway. On macOS run `chmod +x node_modules/node-pty/prebuilds/*/spawn-helper`
 once after installing (npm 11 skips node-pty's install script).
 
+### Running and debugging locally
+
+Run `npm run dev` from this repository in a terminal. It builds the local agent
+workspace and starts the CLI from source. Restart it after changing CLI source.
+Use the CLI's normal login command if you have not signed in yet. It uses your
+usual Nova settings and sessions, so use `NOVA_AI_HOME` if you want a separate
+development profile.
+
+For automatic restarts while editing CLI code, run `npm run build:lib` and then
+`npm run dev:watch -w @datalabrotterdam/nova-ai-cli`. The watcher stays active
+after the CLI exits; stop the watcher itself with Ctrl+C.
+
+The CLI imports the agent from `packages/agent/dist`, not directly from its
+TypeScript source. After changing agent code, restart `npm run dev` to rebuild
+it. For repeated changes, run `npm run dev:agent:watch` in a second terminal;
+it rebuilds the agent with source maps. Restart the CLI after a successful
+agent rebuild to load the new code.
+
+For a debugger, run `npm run dev:debug` in a terminal and attach WebStorm's
+**Attach to Node.js/Chrome** debugger to `localhost:9229`. The process waits
+for the debugger before starting. Agent source maps let you set breakpoints in
+`packages/agent/src`; CLI breakpoints can be set in `packages/cli/src`. Restart
+the debug command after changes. To debug another CLI command, append its
+arguments, for example `npm run dev:debug -- --help`.
+
 ## Releases
 
 Each package is released on its own by

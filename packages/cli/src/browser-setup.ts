@@ -28,7 +28,7 @@ export type RunInstaller = (node: string, args: string[]) => Promise<string>;
 
 const runInstaller: RunInstaller = (node, args) =>
   new Promise((resolve, reject) => {
-    execFile(node, args, { encoding: "utf8", timeout: 60_000, maxBuffer: 1024 * 1024 }, (error, stdout, stderr) => {
+    execFile(node, args, { encoding: "utf8", timeout: 60_000, maxBuffer: 1024 * 1024, windowsHide: true }, (error, stdout, stderr) => {
       if (error) reject(new Error(`${error.message}${stderr ? `\n${stderr}` : ""}`));
       else resolve(stdout);
     });
@@ -70,7 +70,9 @@ export async function setUpBrowser(run: RunInstaller = runInstaller, installer =
 export function setUpBrowserInBackground(installer = bundledInstaller()): void {
   if (browserSetupDisabled() || !installer) return;
   try {
-    spawn(process.execPath, [installer, ...INSTALLER_ARGS], { detached: true, stdio: "ignore" }).unref();
+    spawn(process.execPath, [installer, ...INSTALLER_ARGS], { detached: true, stdio: "ignore", windowsHide: true })
+      .on("error", () => {})
+      .unref();
   } catch {
     // Not being able to set up the browser must never break the CLI.
   }

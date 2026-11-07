@@ -122,15 +122,43 @@ test("the Ink TUI runs a prompt, answers a permission, redraws on Ctrl+O, select
   });
 
   const show = () => screen(terminal);
-  await waitFor(() => /Nova AI/.test(show()) && /test-model \| agent/.test(show()), show);
+  await waitFor(() => /Nova AI/.test(show()) && /Model: test-model \| Mode: agent/.test(show()), show);
+  await new Promise<void>((resolve) => setTimeout(resolve, 100));
+  const initialLines = show().split("\n");
+  assert.ok(initialLines.findIndex((line) => line.includes("Nova AI")) < 4, "the welcome header starts at the top");
+  assert.match(show(), /Ask Nova anything…/);
+  assert.ok(initialLines.findIndex((line) => line.includes("│>")) > 12, "the prompt stays at the bottom");
+  const statusRow = initialLines.findIndex((line) => line.includes("Approvals:"));
+  const approvalCol = initialLines[statusRow]!.indexOf("Approvals:");
+  stdin.send(`\u001b[<0;${approvalCol + 1};${statusRow + 1}M\u001b[<0;${approvalCol + 1};${statusRow + 1}m`);
+  await waitFor(() => /Permission mode/.test(show()), show);
+  stdin.send("\u001b");
+  await waitFor(() => !/Permission mode/.test(show()), show);
+  const promptRow = initialLines.findIndex((line) => line.includes("│>"));
+  stdin.send("/");
+  await waitFor(() => /› help/.test(show()) && /│> \//.test(show()), show);
+  assert.equal(show().split("\n").findIndex((line) => line.includes("│>")), promptRow, "autocomplete opens above the prompt");
+  assert.equal(show().split("\n").findIndex((line) => line.includes("Nova AI")), initialLines.findIndex((line) => line.includes("Nova AI")), "autocomplete does not move the transcript");
+  stdin.send("\u001b");
+  await waitFor(() => !/› help/.test(show()), show);
+  stdin.send("\u0003");
+  await waitFor(() => /Ask Nova anything…/.test(show()), show);
+  store.setState({ statusLine: "A temporary notice", updateAvailable: { currentVersion: "1.0.0", latestVersion: "1.1.0", tag: "latest", command: "npm ".repeat(40) }, contextUsage: { totalTokens: 200, contextWindow: 1000 } as UIState["contextUsage"] });
+  await waitFor(() => /A temporary notice/.test(show()) && /Context/.test(show()) && /Update 1\.1\.0/.test(show()), show);
+  const noticeLines = show().split("\n");
+  assert.equal(noticeLines.findIndex((line) => line.includes("│>")), promptRow, "notices and context do not move the prompt");
+  assert.equal(noticeLines.findIndex((line) => line.includes("Nova AI")), initialLines.findIndex((line) => line.includes("Nova AI")), "the header stays in place");
+  assert.ok(noticeLines.findIndex((line) => line.includes("A temporary notice")) < promptRow);
+  store.setState({ statusLine: null, updateAvailable: null, contextUsage: null });
   assert.match(stdout.raw, /\u001b\]0;✦ Nova AI\u0007/, "window title");
 
   stdin.send("hello there\r");
   await waitFor(() => /echo: hello there/.test(show()), show);
+  await waitFor(() => /Completed in \d+s · \d{1,2}:\d{2}:\d{2}/.test(show()), show);
   assert.deepEqual(prompts, ["hello there"]);
 
   stdin.send("\u001b[Z"); // Shift+Tab
-  await waitFor(() => /test-model \| ask \|/.test(show()), show);
+  await waitFor(() => /Model: test-model \| Mode: ask \|/.test(show()), show);
 
   const answers: Array<[boolean, PermissionScope]> = [];
   store.setState({
@@ -147,7 +175,7 @@ test("the Ink TUI runs a prompt, answers a permission, redraws on Ctrl+O, select
     },
   });
   await waitFor(() => /\[a\] once/.test(show()), show);
-  assert.doesNotMatch(show(), /╭─+╮\n│>/, "the prompt is replaced by the dialog");
+  assert.equal(show().split("\n").findIndex((line) => line.includes("│>")), promptRow, "the prompt stays below the dialog");
   stdin.send("s");
   await waitFor(() => answers.length === 1 && /│>/.test(show()), show);
   assert.deepEqual(answers, [[true, "session"]]);
@@ -171,15 +199,19 @@ test("the Ink TUI runs a prompt, answers a permission, redraws on Ctrl+O, select
   await waitFor(() => !inverse(answerCol) && !/Selecting: click/.test(show()), show);
   assert.match(show(), /echo: hello there/, "the text under the selection is restored");
 
+  stdin.send("unfinished draft");
+  await waitFor(() => /unfinished draft/.test(show()), show);
+  assert.doesNotMatch(show(), /Ask Nova anything…/);
   stdin.send("\u0003");
   await waitFor(() => /Press Ctrl\+C again within 2s to exit\./.test(show()), show);
+  assert.doesNotMatch(show(), /unfinished draft/);
   stdin.send("\u0003");
   await run;
   assert.match(stdout.raw, /Resume this session with: nova-ai --resume /);
   assert.match(stdout.raw, /\u001b\[\?1049h/, "runs on the alternate screen");
   assert.match(stdout.raw, /\u001b\[\?1049l/, "gives the terminal its screen back on exit");
   assert.match(stdout.raw, /\u001b\[\?1000l\u001b\[\?1002l\u001b\[\?1006l/, "mouse reporting is off again");
-  assert.doesNotMatch(screen(terminal), /test-model \| ask/, "the prompt and status are removed on exit");
+  assert.doesNotMatch(screen(terminal), /Model: test-model \| Mode: ask/, "the prompt and status are removed on exit");
   terminal.dispose();
 });
 
@@ -203,7 +235,7 @@ test("a long answer scrolls inside the full screen with the prompt pinned on top
     },
   });
   const show = () => screen(terminal);
-  await waitFor(() => /test-model \| agent/.test(show()), show);
+  await waitFor(() => /Model: test-model \| Mode: agent/.test(show()), show);
   const startOutput = stdout.raw.length;
 
   const code = Array.from({ length: 60 }, (_, index) => `const line${index} = ${index};`).join("\n");
@@ -215,7 +247,7 @@ test("a long answer scrolls inside the full screen with the prompt pinned on top
     ],
   });
   await waitFor(() => /line59 = 59/.test(show()), show);
-  assert.match(show(), /test-model \| agent \| ask \| working/, "the prompt and status stay visible");
+  assert.match(show(), /Model: test-model \| Mode: agent \| Approvals: ask/, "the prompt and status stay visible");
   assert.doesNotMatch(show(), /line0 = 0;/, "older rows are above the viewport");
   assert.doesNotMatch(stdout.raw.slice(startOutput), /\u001b\[2J/, "frames fit the screen: no full repaint");
 
@@ -230,7 +262,7 @@ test("a long answer scrolls inside the full screen with the prompt pinned on top
 
   stdin.send("\u001b[5~"); // PgUp
   await waitFor(() => /↑\d+ lines/.test(show()) && !/line59 = 59/.test(show()), show);
-  stdin.send("\u001b[5~".repeat(10));
+  stdin.send("\u001b[5~".repeat(8));
   await waitFor(() => /line0 = 0;/.test(show()), show);
   assert.equal(show().match(/print sixty lines/g)?.length, 1, "the prompt itself shows, not pinned twice");
 
@@ -271,7 +303,12 @@ test("resizing redraws cleanly without leftover prompt borders", async () => {
     },
   });
   const show = () => screen(terminal);
-  await waitFor(() => /test-model \| agent/.test(show()), show);
+  await waitFor(() => /Model: test-model \| Mode: agent/.test(show()), show);
+  await waitFor(() => /⣀⣤⣴⣶⣶/.test(show()), show);
+  stdout.resize(80, 30);
+  await waitFor(() => !/⣀⣤⣴⣶⣶/.test(show()), show);
+  stdout.resize(100, 30);
+  await waitFor(() => /⣀⣤⣴⣶⣶/.test(show()), show);
   store.setState({
     messages: [
       {
@@ -283,6 +320,7 @@ test("resizing redraws cleanly without leftover prompt borders", async () => {
     ],
   });
   await waitFor(() => /lantern/.test(show()), show);
+  assert.doesNotMatch(show(), /⣀⣤⣴⣶⣶/, "the logo does not overlap conversation text");
 
   // Shrink step by step, the way dragging a window edge does.
   for (const columns of [96, 90, 84, 77, 70, 64]) {
@@ -290,7 +328,7 @@ test("resizing redraws cleanly without leftover prompt borders", async () => {
     await new Promise<void>((resolve) => setTimeout(resolve, 20));
   }
   await waitFor(
-    () => (text(terminal).match(/╭/g)?.length ?? 0) === 1 && /test-model \| agent/.test(show()),
+    () => (text(terminal).match(/╭/g)?.length ?? 0) === 1 && /Model: test-model \| Mode: agent/.test(show()),
     () => text(terminal),
   );
   // Every printed line fits: the terminal had to wrap none of them itself.
@@ -439,13 +477,13 @@ test("Ctrl+C clears the prompt; Esc interrupts and asks about running background
     },
   });
   const show = () => screen(terminal);
-  await waitFor(() => /test-model \| agent/.test(show()), show);
+  await waitFor(() => /Model: test-model \| Mode: agent/.test(show()), show);
 
   stdin.send("half a thought");
   await waitFor(() => /│> half a thought/.test(show()), show);
   stdin.send("\u0003");
   await waitFor(() => !/half a thought/.test(show()), show);
-  assert.doesNotMatch(show(), /Press Ctrl\+C again/, "clearing does not arm exit");
+  assert.match(show(), /Press Ctrl\+C again/, "clearing also arms exit");
 
   store.setState({ busy: true });
   stdin.send("\u001b");

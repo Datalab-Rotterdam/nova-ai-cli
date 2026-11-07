@@ -324,3 +324,52 @@ describe("native mode with text-written calls", () => {
     assert.match(String(result.turnMessages.at(-1)!.content), /tool_call/);
   });
 });
+
+describe("tool images", () => {
+  const screenshot = { mimeType: "image/png", data: "aGVsbG8=" };
+  const looking = () =>
+    tool("screenshot", async () => ({ output: "Took a screenshot.", images: [screenshot] }));
+
+  it("sends a tool's images to a model that reads them, after the results", async () => {
+    const { novaClient, requests } = fakeClient([
+      [call(0, "c1", "screenshot", { path: "x" }), finish("tool_calls")],
+      [call(0, "c2", "screenshot", { path: "y" }), finish("tool_calls")],
+      [text("Looks fine.", "stop")],
+    ]);
+    const messages: ChatMessage[] = [{ role: "user", content: "check the page" }];
+    const result = await runTurn(
+      messages,
+      new AbortController().signal,
+      deps(novaClient, [looking()], { imageInput: true }),
+    );
+
+    assert.equal(result.stopReason, "end_turn");
+    const second = requests[1]!.messages as Array<{ role: string; content: unknown }>;
+    assert.equal(second.at(-2)?.role, "tool");
+    assert.deepEqual((second.at(-1)?.content as unknown[])[1], {
+      type: "image_url",
+      image_url: { url: "data:image/png;base64,aGVsbG8=" },
+    });
+    // The next round sends only its own images; the earlier ones become a note.
+    const third = JSON.stringify(requests[2]!.messages);
+    assert.equal(third.split("data:image/png").length - 1, 1);
+    assert.match(third, /left out to save room/);
+    // The stored history keeps the text results only.
+    assert.ok(!JSON.stringify(result.turnMessages).includes("data:image"));
+  });
+
+  it("tells a model that cannot see images that there were some", async () => {
+    const { novaClient, requests } = fakeClient([
+      [call(0, "c1", "screenshot", { path: "x" }), finish("tool_calls")],
+      [text("ok", "stop")],
+    ]);
+    await runTurn(
+      [{ role: "user", content: "go" }],
+      new AbortController().signal,
+      deps(novaClient, [looking()]),
+    );
+    const sent = JSON.stringify(requests[1]!.messages);
+    assert.ok(!sent.includes("data:image"));
+    assert.match(sent, /cannot see images/);
+  });
+});

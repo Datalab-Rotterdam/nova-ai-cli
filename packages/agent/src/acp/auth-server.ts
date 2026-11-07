@@ -47,7 +47,7 @@ export function openBrowser(url: string): void {
         ? ["rundll32", ["url.dll,FileProtocolHandler", url]]
         : ["xdg-open", [url]];
   try {
-    spawn(command, args, { stdio: "ignore", detached: true })
+    spawn(command, args, { stdio: "ignore", detached: true, windowsHide: true })
       .on("error", () => {
         // best-effort; the URL is always printed as a fallback
       })

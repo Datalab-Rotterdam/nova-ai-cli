@@ -4,7 +4,7 @@ import { Box, renderToString } from "ink";
 import { createElement } from "react";
 import stringWidth from "string-width";
 import { TranscriptBlockView } from "../../src/tui/ink/components/transcript.js";
-import { StatusLine } from "../../src/tui/ink/components/status-line.js";
+import { StatusLine, StatusNotices } from "../../src/tui/ink/components/status-line.js";
 import { formatElapsedTime, formatTokenCount } from "../../src/tui/ink/format.js";
 import {
   safeSplitOffset,
@@ -411,19 +411,31 @@ test("status shows model, modes and counts on one row, with messages and updates
       { columns: 120 },
     ),
   );
-  const lines = rendered.split("\n");
-  assert.match(lines[0]!, /Update 1\.1\.0 available \(current 1\.0\.0\)\. Run: npm i -g/);
-  assert.equal(lines[1], "Request canceled.");
+  const lines = rendered.split("\n").filter((line) => line.trim());
+  const notices = plain(renderToString(createElement(StatusNotices, { ui }), { columns: 120 }));
+  assert.match(notices, /Update 1\.1\.0 available \(current 1\.0\.0\)\. Run: npm i -g/);
+  assert.match(notices, /Request canceled\./);
   assert.equal(
-    lines[2],
-    "nova-large | agent | ask | working | ctx:12k/128k | queued:2 | mcp:1/2 !1 | skills:3",
+    lines[0],
+    " Model: nova-large | Mode: agent | Approvals: ask | Skills: 3 | Working | queued:2 | mcp:1/2 !1",
   );
+  assert.match(lines[1]!, /Context ■·{9} 10%  12k \/ 128k tokens/);
+});
+
+test("context usage remains readable without a context window", () => {
+  const rendered = plain(renderToString(createElement(StatusLine, {
+    ui: state({ contextUsage: { totalTokens: 1_500, contextWindow: 0 } as UIState["contextUsage"] }),
+    model: "nova",
+    mcp: { configured: 0, connected: 0, failed: 0, skills: 0 },
+  }), { columns: 40 }));
+  assert.match(rendered, /Context 1\.5k tokens/);
+  assert.doesNotMatch(rendered, /NaN|Infinity|%/);
 });
 
 test("an update nova-ai can install itself points at /update", () => {
   const rendered = plain(
     renderToString(
-      createElement(StatusLine, {
+      createElement(StatusNotices, {
         ui: state({
           updateAvailable: {
             currentVersion: "1.0.0",
@@ -433,13 +445,11 @@ test("an update nova-ai can install itself points at /update", () => {
             installable: true,
           },
         }),
-        model: "nova-large",
-        mcp: { configured: 0, connected: 0, failed: 0, skills: 0 },
       }),
       { columns: 120 },
     ),
   );
-  assert.match(rendered.split("\n")[0]!, /Update 1\.1\.0 available \(current 1\.0\.0\)\. Type \/update to install it\./);
+  assert.match(rendered, /Update 1\.1\.0 available \(current 1\.0\.0\)\. Type \/update to install it\./);
 });
 
 test("elapsed time and token counts format compactly", () => {

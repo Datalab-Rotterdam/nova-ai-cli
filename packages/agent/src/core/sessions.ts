@@ -587,7 +587,7 @@ export function deriveTitle(messages: ChatMessage[]): string | null {
   if (!firstUser) return null;
   const text = chatContentToText(firstUser.content).replace(/\s+/g, " ").trim();
   if (!text) return null;
-  return text.length > 60 ? `${text.slice(0, 60)}…` : text;
+  return text;
 }
 
 export function parseSessionIdParams(params: unknown): SessionIdParams {

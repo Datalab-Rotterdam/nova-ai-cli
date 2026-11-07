@@ -118,7 +118,7 @@ added to the transcript once.
 | Escape                           | Interrupt the turn (asks whether running background tasks keep going); otherwise jump back to the newest output |
 | PgUp / PgDn, mouse wheel         | Scroll the transcript                                                                   |
 | Mouse drag                       | Select text; click, Enter or Ctrl+C copies it, Shift+arrows extend, Esc cancels (Shift+drag still selects natively) |
-| Ctrl+C                           | Clear the prompt; on an empty prompt, press twice to cancel and exit with a resume command |
+| Ctrl+C                           | Clear the prompt and cancel the active turn; press again within two seconds to exit with a resume command |
 | Ctrl+O                           | Expand or collapse the model's thinking and verbose inline tool/background details; activity blocks stay compact |
 | Ctrl+T                           | Open the tool inspector                                                                 |
 | Ctrl+R                           | Switch session                                                                          |
@@ -174,7 +174,8 @@ Compaction also starts a new rewind-checkpoint epoch. Completed prompts after
 that point are stored as append-only turn records; `/rewind` appends a reset
 record without erasing the earlier audit log.
 
-The status row shows compact estimated context usage as `ctx:used/window`.
+The context meter below the status row shows estimated usage, the percentage of
+the context window, and the used and available token counts when known.
 `/usage` opens the bordered breakdown for system instructions, conversation,
 agent output, thinking before tool calls, tools, skills, and the total. Counts
 are model-independent estimates because Nova models can use different

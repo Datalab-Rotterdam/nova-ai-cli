@@ -53,6 +53,7 @@ export type UIMessage =
       thinking?: boolean;
     }
   | { id: string; role: "error"; text: string }
+  | { id: string; role: "completion"; durationMs: number; completedAt: number }
   | { id: string; role: "tool"; call: ToolCallView }
   | { id: string; role: "background"; job: BackgroundJobView };
 
@@ -96,6 +97,7 @@ export type Mode =
   | "session-switcher"
   | "model-picker"
   | "permission-picker"
+  | "interaction-picker"
   | "background-tasks";
 
 export type PermissionMode = "ask" | "acceptEdits" | "bypassAll";

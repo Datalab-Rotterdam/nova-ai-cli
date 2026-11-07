@@ -13,9 +13,11 @@ import {
   MOUSE_REPORTING_ON,
 } from "./terminal-keyboard.js";
 import { ScreenSelection } from "./screen-selection.js";
-import { PromptInput } from "./components/prompt-input.js";
-import { StatusLine } from "./components/status-line.js";
+import { PromptInput, Suggestions } from "./components/prompt-input.js";
+import { StatusLine, StatusNotices, statusActions } from "./components/status-line.js";
+import stringWidth from "string-width";
 import { TranscriptBlockView } from "./components/transcript.js";
+import { WelcomeLogo } from "./components/welcome-logo.js";
 import { TuiController, type ViewState } from "./controller.js";
 import type { TranscriptBlock } from "./transcript/committer.js";
 import {
@@ -135,19 +137,41 @@ export async function runInkTui(
 
 export function App({ controller }: { controller: TuiController }) {
   const view = useSyncExternalStore(controller.subscribe, controller.getView);
+  useSyncExternalStore(controller.editor.subscribe, controller.editor.getVersion);
   const { rows, columns } = useWindowSize();
-  const bottomRef = useRef(null);
-  const bottom = useBoxMetrics(bottomRef);
+  const viewportRef = useRef(null);
+  const viewport = useBoxMetrics(viewportRef);
   const contentRef = useRef(null);
   const content = useBoxMetrics(contentRef);
   const working = useWorking(view);
   const [userTops, setUserTops] = useState<ReadonlyMap<string, number>>(new Map());
-  useInput((input) => controller.handleMouse(input));
+  useInput((input) => controller.handleMouse(input, (row, col) => {
+    if (row === height - 1 && view.ui.contextUsage && col >= 2) {
+      void controller.openUsageInspector();
+      return true;
+    }
+    if (row !== height - 2) return false;
+    let start = 2 + (view.scroll ? stringWidth(`↑${view.scroll} lines · PgDn/Esc`) + 3 : 0);
+    for (const action of statusActions(view.model, view.ui, view.mcp)) {
+      const end = start + stringWidth(action.label);
+      if (col >= start && col < Math.min(end, columns - 1)) {
+        if (action.id === "model") void controller.openModels();
+        else if (action.id === "mode") controller.openInteractionModes();
+        else if (action.id === "permissions") controller.openPermissionModes();
+        else if (action.id === "skills") void controller.openSkillInspector();
+        return true;
+      }
+      start = end + 3;
+    }
+    return false;
+  }));
 
   // One row short of the terminal: Ink clears the whole screen for every
   // frame that is exactly as tall (always on Windows), which flickers.
   const height = Math.max(4, rows - 1);
-  const viewportRows = Math.max(3, height - (bottom.hasMeasured ? bottom.height : 6));
+  // Notices have a permanent, bounded area so their arrival never changes the viewport or prompt.
+  const noticeRows = 2;
+  const viewportRows = viewport.hasMeasured ? viewport.height : Math.max(1, height - noticeRows - 5);
   useEffect(() => {
     if (content.hasMeasured) controller.setViewport(viewportRows, content.height);
   }, [controller, viewportRows, content.hasMeasured, content.height]);
@@ -156,12 +180,14 @@ export function App({ controller }: { controller: TuiController }) {
 
   const { transcript } = view;
   const blocks = [...transcript.committed, ...transcript.live];
+  const activeDialog = !!(view.question || view.ui.pendingPermission || view.overlay);
+  const autocomplete = !activeDialog ? controller.editor.autocomplete : null;
   const liveKeys = new Set(transcript.live.map((block) => block.key));
   const onUserTop = (key: string, top: number) =>
     setUserTops((tops) => (tops.get(key) === top ? tops : new Map(tops).set(key, top)));
 
   // The prompt behind the rows on screen, once it has scrolled off the top.
-  const firstVisibleRow = content.height - viewportRows - view.scroll;
+  const firstVisibleRow = Math.max(0, content.height - viewportRows - view.scroll);
   let sticky: string | null = null;
   for (const block of blocks) {
     if (block.kind !== "user") continue;
@@ -174,11 +200,13 @@ export function App({ controller }: { controller: TuiController }) {
   return (
     <Box flexDirection="column" height={height}>
       <Box
+        ref={viewportRef}
         flexDirection="column"
-        height={viewportRows}
-        flexShrink={0}
+        flexGrow={1}
+        flexShrink={1}
+        minHeight={0}
         overflowY="hidden"
-        justifyContent="flex-end"
+        justifyContent={content.hasMeasured && content.height > viewportRows ? "flex-end" : "flex-start"}
       >
         <Box ref={contentRef} flexDirection="column" flexShrink={0} marginBottom={-view.scroll}>
           {blocks.map((block) =>
@@ -199,10 +227,23 @@ export function App({ controller }: { controller: TuiController }) {
             </Box>
           ) : null}
         </Box>
+        {blocks.every((block) => block.kind === "header") && !view.ui.busy ? (
+          <WelcomeLogo columns={columns} rows={viewportRows} />
+        ) : null}
         {sticky !== null ? <StickyPrompt text={sticky} columns={columns} /> : null}
+        {activeDialog || autocomplete ? (
+          <Box position="absolute" bottom={0} left={1} width={Math.max(1, columns - 2)} flexDirection="column" backgroundColor="#151b24" overflowY="hidden" maxHeight={viewportRows}>
+            {activeDialog ? <DialogSurface view={view} rows={Math.max(3, viewportRows)} columns={columns - 2} /> : autocomplete ? <Suggestions view={autocomplete} limit={Math.max(1, viewportRows - 1)} /> : null}
+          </Box>
+        ) : null}
       </Box>
-      <Box ref={bottomRef} flexDirection="column" flexShrink={0}>
-        <Surface controller={controller} view={view} rows={Math.max(6, rows - 4)} columns={columns} />
+      <Box height={noticeRows} flexShrink={0} paddingX={1} overflowY="hidden">
+        <StatusNotices ui={view.ui} />
+      </Box>
+      <Box flexDirection="column" flexShrink={0} paddingX={1}>
+        <PromptInput editor={controller.editor} busy={view.ui.busy} isActive={!activeDialog}
+          maxRows={Math.max(1, Math.floor((rows - 4) / 3))}
+          onKey={(input, key) => controller.handlePromptKey(input, key)} />
         <StatusLine ui={view.ui} model={view.model} effort={view.effort} mcp={view.mcp} scroll={view.scroll} />
       </Box>
     </Box>
@@ -264,53 +305,46 @@ function StickyPrompt({ text, columns }: { text: string; columns: number }) {
   );
 }
 
-function Surface({
-  controller,
+function DialogSurface({
   view,
   rows,
   columns,
 }: {
-  controller: TuiController;
   view: ViewState;
   rows: number;
   columns: number;
 }) {
-  if (view.question) return <QuestionDialog key={view.question.pending.id} state={view.question} />;
   const permission = view.ui.pendingPermission;
-  if (permission)
-    return (
+  const overlay = view.overlay;
+  const dialogRows = rows;
+  let dialog: ReactNode = null;
+  if (view.question) dialog = <QuestionDialog key={view.question.pending.id} state={view.question} />;
+  else if (permission)
+    dialog = (
       <PermissionDialog
         key={permission.toolCallId}
         request={permission}
         onClose={() => {}}
         cwd={view.ui.cwd}
-        height={rows}
+        height={dialogRows}
         width={columns}
       />
     );
-  const overlay = view.overlay;
-  if (overlay?.kind === "selection")
-    return <SelectionDialog title={overlay.title} state={overlay.state} height={rows} />;
-  if (overlay?.kind === "slider") return <SliderDialog title={overlay.title} state={overlay.state} />;
-  if (overlay?.kind === "text")
-    return (
+  else if (overlay?.kind === "selection")
+    dialog = <SelectionDialog title={overlay.title} state={overlay.state} height={dialogRows} />;
+  else if (overlay?.kind === "slider") dialog = <SliderDialog title={overlay.title} state={overlay.state} />;
+  else if (overlay?.kind === "text")
+    dialog = (
       <ScrollPanel
         title={overlay.title}
         content={overlay.content}
         state={overlay.state}
-        height={rows}
+        height={dialogRows}
         width={columns}
       />
     );
-  if (overlay?.kind === "tools") return <ToolInspector state={overlay.state} height={rows} width={columns} />;
-  return (
-    <PromptInput
-      editor={controller.editor}
-      busy={view.ui.busy}
-      maxRows={Math.max(3, Math.floor(rows / 3))}
-      onKey={(input, key) => controller.handlePromptKey(input, key)}
-    />
-  );
+  else if (overlay?.kind === "tools") dialog = <ToolInspector state={overlay.state} height={dialogRows} width={columns} />;
+  return dialog;
 }
 
 /** Spinner frame and "Working (12s • esc to interrupt)" while a turn runs. */

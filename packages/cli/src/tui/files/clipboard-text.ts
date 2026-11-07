@@ -28,7 +28,7 @@ function pipeTo(command: string, args: string[], text: string): Promise<boolean>
   return new Promise((resolve) => {
     let child;
     try {
-      child = spawn(command, args, { stdio: ["pipe", "ignore", "ignore"] });
+      child = spawn(command, args, { stdio: ["pipe", "ignore", "ignore"], windowsHide: true });
     } catch {
       resolve(false);
       return;

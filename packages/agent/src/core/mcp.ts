@@ -199,7 +199,19 @@ function toToolResult(result: {
   const text = truncateToolOutput(rawText, "MCP tool");
 
   if (result.isError) return { error: text || "MCP tool call failed." };
-  return { output: text };
+  const images = (Array.isArray(result.content) ? result.content : []).flatMap(
+    (block: unknown) => {
+      const image = block as { type?: unknown; data?: unknown; mimeType?: unknown } | null;
+      return image?.type === "image" &&
+        typeof image.data === "string" &&
+        typeof image.mimeType === "string"
+        ? [{ mimeType: image.mimeType, data: image.data }]
+        : [];
+    },
+  );
+  return images.length
+    ? { output: text || `Returned ${images.length} image(s).`, images }
+    : { output: text };
 }
 
 /** An MCP server's prompt, offered as the slash command `/mcp__<server>__<prompt>`. */

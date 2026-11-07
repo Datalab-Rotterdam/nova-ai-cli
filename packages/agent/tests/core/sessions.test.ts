@@ -59,10 +59,10 @@ describe("deriveTitle", () => {
     );
   });
 
-  it("truncates long messages to 60 chars with an ellipsis", () => {
+  it("keeps the complete first message for long titles", () => {
     const text = "x".repeat(80);
     const title = deriveTitle([{ role: "user", content: text }]);
-    assert.equal(title, `${"x".repeat(60)}…`);
+    assert.equal(title, text);
   });
 
   it("ignores leading assistant messages and uses the first user message", () => {

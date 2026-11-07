@@ -23,6 +23,7 @@ export type TranscriptBlock =
       expanded?: boolean;
     }
   | { key: string; kind: "error"; text: string }
+  | { key: string; kind: "completion"; durationMs: number; completedAt: number }
   | { key: string; kind: "tool"; call: ToolCallView; expanded: boolean }
   | { key: string; kind: "activity"; calls: ToolCallView[] }
   | { key: string; kind: "background"; job: BackgroundJobView; expanded: boolean }
@@ -130,6 +131,9 @@ export class TranscriptCommitter {
           break;
         case "error":
           emit({ key: message.id, kind: "error", text: message.text }, true, [message.id]);
+          break;
+        case "completion":
+          emit({ key: message.id, kind: "completion", durationMs: message.durationMs, completedAt: message.completedAt }, true, [message.id]);
           break;
         case "tool":
           emit(

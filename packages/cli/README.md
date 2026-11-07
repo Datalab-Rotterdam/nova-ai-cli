@@ -100,7 +100,7 @@ answer.
 |---|---|
 | Enter / Shift+Enter | Send / new line (Shift+Enter where the terminal supports the kitty keyboard protocol: VS Code, kitty, WezTerm, Ghostty, foot, Alacritty, recent iTerm2; Alt+Enter, Ctrl+J or a trailing `\` work everywhere) |
 | Esc | Interrupt the running turn (asks whether running background tasks keep going) |
-| Ctrl+C | Clear the prompt; on an empty prompt, twice to exit (prints `nova-ai --resume <id>`) |
+| Ctrl+C | Clear the prompt and cancel the active turn; press again within two seconds to exit (prints `nova-ai --resume <id>`) |
 | Shift+Tab | Cycle agent / ask / plan / autopilot and your own agents |
 | Ctrl+R / Ctrl+P / Ctrl+K | Sessions / models / permission mode |
 | Ctrl+O / Ctrl+T | Thinking and verbose tool output / tool inspector |

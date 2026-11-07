@@ -26,6 +26,7 @@ import {
   runToolBatch,
   type ToolBatchContext,
 } from "./tool-batch.js";
+import { pushToolImages } from "./tool-images.js";
 import { readUsage, type RequestUsage } from "./usage.js";
 
 const DEFAULT_MAX_TOOL_ROUNDS = 64;
@@ -87,6 +88,8 @@ export type RunTurnDeps = {
    * the system prompt. The caller picks the matching system prompt.
    */
   toolProtocol?: "native" | "text";
+  /** The model reads images: tool images (an MCP screenshot) are sent to it (tool-images.ts). */
+  imageInput?: boolean;
 };
 
 export type RunTurnResult = {
@@ -544,6 +547,10 @@ export async function runTurn(
     );
 
     pushTurn({ role: "user", content: formatBatchResults(entries) });
+    // Only in this request: the stored history keeps the text results, not the images.
+    pushToolImages(messages, entries, deps.imageInput ?? false, (message) =>
+      messages.push(message),
+    );
     hasCompletedRound = true;
   }
 }

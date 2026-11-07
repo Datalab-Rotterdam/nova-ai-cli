@@ -5,7 +5,7 @@ import type { ToolHost } from "./tool-host.js";
 import { truncateToolOutput } from "./tool-output.js";
 import type { ToolEnvironment } from "./tools/environment.js";
 import { formatArgIssues, validateToolArgs } from "./tools/schema.js";
-import type { ToolDefinition } from "./tools/types.js";
+import type { ToolDefinition, ToolImage } from "./tools/types.js";
 
 export const MAX_TOOL_CALLS_PER_ROUND = 8;
 
@@ -18,6 +18,8 @@ export type BatchEntry = {
   status: "ok" | "error" | "rejected" | "skipped";
   /** Model-facing result, e.g. "Tool result: ..." or "Tool error: ...". */
   body: string;
+  /** Images the tool returned; they follow the results as a user message (tool-images.ts). */
+  images?: ToolImage[];
 };
 
 /** Outcome of the permission policy for one call. */
@@ -247,6 +249,7 @@ export async function runToolBatch(
           name: block.name,
           status: "ok",
           body: `Tool result: ${output}${feedback ? `\n\nHook feedback:\n${feedback}` : ""}`,
+          ...(result.images?.length ? { images: result.images } : {}),
         });
       }
     } catch (error) {

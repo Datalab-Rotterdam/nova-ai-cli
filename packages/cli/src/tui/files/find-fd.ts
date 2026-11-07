@@ -14,7 +14,7 @@ let cachedPath: string | null | undefined;
  * Result is memoized for the process lifetime.
  */
 export function resolveFdPath(
-  run: SpawnSync = (command, args) => spawnSync(command, args, { stdio: "ignore" }),
+  run: SpawnSync = (command, args) => spawnSync(command, args, { stdio: "ignore", windowsHide: true }),
 ): string | null {
   if (cachedPath !== undefined) return cachedPath;
   for (const candidate of FD_CANDIDATES) {

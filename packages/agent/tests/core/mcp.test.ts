@@ -261,3 +261,27 @@ test("tools whose sanitized names collide stay separately reachable", async () =
   const { tools } = await listMcpTools([fake("db", ["run.query", "run_query"])]);
   assert.deepEqual(tools.map((t) => t.name), ["mcp__db__run_query", "mcp__db__run_query_2"]);
 });
+
+test("an MCP tool's images come with its result", async () => {
+  const result = await listMcpTools([
+    {
+      serverName: "browser",
+      client: {
+        listTools: async () => ({ tools: [{ name: "screenshot", description: "shoots" }] }),
+        callTool: async () => ({
+          content: [
+            { type: "text", text: "The page at 1280×720." },
+            { type: "image", mimeType: "image/png", data: "aGVsbG8=" },
+          ],
+        }),
+      } as never,
+      close: async () => {},
+    },
+  ]);
+
+  const toolResult = await result.tools[0]!.execute({} as never, {});
+  assert.deepEqual(toolResult, {
+    output: "The page at 1280×720.",
+    images: [{ mimeType: "image/png", data: "aGVsbG8=" }],
+  });
+});

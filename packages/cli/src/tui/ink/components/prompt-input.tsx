@@ -11,12 +11,14 @@ export function PromptInput({
   editor,
   busy,
   maxRows,
+  isActive = true,
   onKey,
 }: {
   editor: PromptEditor;
   busy: boolean;
   /** Most editor lines shown at once; the view follows the cursor. */
   maxRows: number;
+  isActive?: boolean;
   /** Shortcuts get the key first; true means it was used. */
   onKey(input: string, key: KeyPress): boolean;
 }) {
@@ -24,8 +26,8 @@ export function PromptInput({
   useInput((input, key) => {
     if (isMouseInput(input) || onKey(input, key)) return;
     editor.handleKey(input, key);
-  });
-  usePaste((text) => editor.paste(text));
+  }, { isActive });
+  usePaste((text) => editor.paste(text), { isActive });
 
   const lines = editor.buffer.lineList;
   const { row, col } = editor.buffer.cursor;
@@ -35,7 +37,6 @@ export function PromptInput({
     Math.max(0, lines.length - visibleRows),
   );
   const shown = lines.slice(start, start + visibleRows);
-  const autocomplete = editor.autocomplete;
 
   return (
     <Box flexDirection="column">
@@ -54,7 +55,11 @@ export function PromptInput({
                 <Text color={palette.primary}>{lineIndex === 0 ? "> " : "  "}</Text>
               </Box>
               <Box flexGrow={1} flexShrink={1}>
-                <Text>{lineIndex === row ? withCursor(line, col) : line || " "}</Text>
+                <Text wrap="truncate-end">
+                  {lines.length === 1 && line === "" ? (
+                    <><Text inverse> </Text><Text color={palette.faint}>Ask Nova anything…</Text></>
+                  ) : lineIndex === row ? withCursor(line, col) : line || " "}
+                </Text>
               </Box>
             </Box>
           );
@@ -65,14 +70,13 @@ export function PromptInput({
           </Text>
         ) : null}
       </Box>
-      {autocomplete ? <Suggestions view={autocomplete} /> : null}
     </Box>
   );
 }
 
-function Suggestions({ view }: { view: NonNullable<PromptEditor["autocomplete"]> }) {
+export function Suggestions({ view, limit }: { view: NonNullable<PromptEditor["autocomplete"]>; limit: number }) {
   const count = view.items.length;
-  const rows = Math.min(MAX_SUGGESTIONS, count);
+  const rows = Math.min(MAX_SUGGESTIONS, Math.max(1, limit), count);
   const start = Math.max(0, Math.min(view.selected - Math.floor(rows / 2), count - rows));
   return (
     <Box flexDirection="column" paddingLeft={2}>
