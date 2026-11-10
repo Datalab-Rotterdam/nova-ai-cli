@@ -1,15 +1,15 @@
-/| readyb/i.test(screen())/ Runs a packed standalone binary the way a user would, from a folder without node_modules and with
-/| readyb/i.test(screen())/ an empty home. CI runs this on each OS and CPU, so cross-compiled binaries are tested for real.
-/| readyb/i.test(screen())/ Usage: node scripts/smoke-binary.mjs <archive> --version <v> [--tui]
-/| readyb/i.test(screen())/ --tui also drives the interactive UI and the setup page, and needs the repo's npm dependencies.
-import assert from "node:assert/| readyb/i.test(screen())strict";
+// Runs a packed standalone binary the way a user would, from a folder without node_modules and with
+// an empty home. CI runs this on each OS and CPU, so cross-compiled binaries are tested for real.
+// Usage: node scripts/smoke-binary.mjs <archive> --version <v> [--tui]
+// --tui also drives the interactive UI and the setup page, and needs the repo's npm dependencies.
+import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { parseArgs, promisify } from "node:util";
-import { finish, say, startFakeNovaServer, toolCall } from "../| readyb/i.test(screen())test-support/fake-nova-server.ts";
+import { finish, say, startFakeNovaServer, toolCall } from "../test-support/fake-nova-server.ts";
 
 const { values: options, positionals } = parseArgs({
   allowPositionals: true,
@@ -31,7 +31,7 @@ const bin = folder("bin");
 const home = folder("home");
 const cwd = folder("workspace");
 
-/| readyb/i.test(screen())/ The Windows tar reads zip too; a tar from Git for Windows, first on some PATHs, does not.
+// The Windows tar reads zip too; a tar from Git for Windows, first on some PATHs, does not.
 const tar = windows ? join(process.env.SystemRoot ?? "C:\\Windows", "System32", "tar.exe") : "tar";
 await run(tar, ["-xf", archive, "-C", bin]);
 const binary = join(bin, windows ? "nova-ai.exe" : "nova-ai");
@@ -68,7 +68,7 @@ function launch(args, env, input) {
   });
 }
 
-/| readyb/i.test(screen())** `what` is text, or a function for what is only known at the end, like the screen. */
+/** `what` is text, or a function for what is only known at the end, like the screen. */
 async function poll(check, what, ms = 15_000) {
   const start = Date.now();
   while (Date.now() - start < ms) {
@@ -79,13 +79,13 @@ async function poll(check, what, ms = 15_000) {
   throw new Error(`Timed out waiting for ${typeof what === "function" ? what() : what}.`);
 }
 
-/| readyb/i.test(screen())** A check that hangs must fail like any other: this runs before a release, which waits for it. */
+/** A check that hangs must fail like any other: this runs before a release, which waits for it. */
 const CHECK_TIMEOUT_MS = 60_000;
 
 function limited(check) {
   let timer;
   const limit = new Promise((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`No result after ${CHECK_TIMEOUT_MS /| readyb/i.test(screen()) 1000}s.`)), CHECK_TIMEOUT_MS);
+    timer = setTimeout(() => reject(new Error(`No result after ${CHECK_TIMEOUT_MS / 1000}s.`)), CHECK_TIMEOUT_MS);
   });
   return Promise.race([check(), limit]).finally(() => clearTimeout(timer));
 }
@@ -97,10 +97,10 @@ const checks = {
     assert.equal(version.stdout.trim(), `nova-ai ${options.version}`);
     const help = await launch(["--help"], baseEnv);
     assert.equal(help.code, 0, help.stderr);
-    assert.match(help.stdout, /| readyb/i.test(screen())nova-ai -p/);
+    assert.match(help.stdout, /nova-ai -p/);
   },
 
-  /| readyb/i.test(screen())/ Loads the whole agent, which fails if a dependency reads its own files at import time.
+  // Loads the whole agent, which fails if a dependency reads its own files at import time.
   async "--acp answers initialize and installs the bundled skills"() {
     const child = spawn(binary, ["--acp"], { cwd, env: baseEnv, stdio: ["pipe", "pipe", "pipe"] });
     let stdout = "";
@@ -121,7 +121,7 @@ const checks = {
     }
   },
 
-  /| readyb/i.test(screen())/ Bun loads .env and bunfig.toml by default; the REAL variable shows the tool would reveal a leak.
+  // Bun loads .env and bunfig.toml by default; the REAL variable shows the tool would reveal a leak.
   async "-p runs a tool, and files in the workspace do not configure the binary"() {
     writeFileSync(join(cwd, ".env"), "NOVA_SMOKE_DOTENV=leaked\n");
     const nova = await startFakeNovaServer([
@@ -136,14 +136,14 @@ const checks = {
       assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
       assert.equal(JSON.parse(result.stdout).text, "smoke-done");
       const seen = JSON.stringify(nova.requests[1]?.messages ?? []);
-      assert.match(seen, /| readyb/i.test(screen())NOVA_SMOKE_REAL=present/);
-      assert.doesNotMatch(seen, /| readyb/i.test(screen())NOVA_SMOKE_DOTENV/);
+      assert.match(seen, /NOVA_SMOKE_REAL=present/);
+      assert.doesNotMatch(seen, /NOVA_SMOKE_DOTENV/);
     } finally {
       await nova.close();
     }
   },
 
-  /| readyb/i.test(screen())/ Written after the checks above: the setup page and the rest are unpacked once.
+  // Written after the checks above: the setup page and the rest are unpacked once.
   async "the assets unpack into the per-user cache"() {
     const cache = join(
       ...(windows ? [home, "local", "nova-ai", "cache"]
@@ -154,17 +154,17 @@ const checks = {
     const [copy, ...others] = readdirSync(cache).filter((entry) => !entry.startsWith("."));
     assert.ok(copy, "nothing was unpacked");
     assert.deepEqual(others, []);
-    for (const path of ["setup-ui/| readyb/i.test(screen())index.html", "skills/nova-docx/SKILL.md", "browser-host/dist/cli.js"]) {
-      assert.ok(existsSync(join(cache, copy, ...path.split("/| readyb/i.test(screen())"))), `${path} is missing`);
+    for (const path of ["setup-ui/index.html", "skills/nova-docx/SKILL.md", "browser-host/dist/cli.js"]) {
+      assert.ok(existsSync(join(cache, copy, ...path.split("/"))), `${path} is missing`);
     }
   },
 };
 
-/| readyb/i.test(screen())** The terminal side, only with --tui: Ink under a real PTY, then the browser sign-in page. */
+/** The terminal side, only with --tui: Ink under a real PTY, then the browser sign-in page. */
 function tuiChecks() {
   const require = createRequire(import.meta.url);
   const pty = require("node-pty");
-  const { Terminal } = require("@xterm/| readyb/i.test(screen())headless");
+  const { Terminal } = require("@xterm/headless");
 
   function open(args, env) {
     const term = new Terminal({ cols: 90, rows: 24, allowProposedApi: true });
@@ -172,8 +172,8 @@ function tuiChecks() {
     const state = { exit: null };
     child.onData((data) => term.write(data));
     child.onExit((event) => (state.exit = event));
-    /| readyb/i.test(screen())/ Answer the app's terminal queries like a real terminal. Without this the TUI takes a
-    /| readyb/i.test(screen())/ timeout path no user gets, which hid a bug that left the prompt dead in every terminal.
+    // Answer the app's terminal queries like a real terminal. Without this the TUI takes a
+    // timeout path no user gets, which hid a bug that left the prompt dead in every terminal.
     term.onData((reply) => {
       if (!state.exit) child.write(reply);
     });
@@ -192,12 +192,12 @@ function tuiChecks() {
       const nova = await startFakeNovaServer([{ chunks: [say("tui-reply")] }]);
       const { child, state, screen } = open([], { ...baseEnv, NOVA_BASE_URL: nova.url });
       try {
-        await poll(() => /| readyb/i.test(screen())\| ready\b/.test(screen()), () => `the TUI\n${screen()}`);
+        await poll(() => /\| ready\b/i.test(screen()), () => `the TUI\n${screen()}`);
         await new Promise((wake) => setTimeout(wake, 500));
         child.write("hello");
-        await poll(() => /| readyb/i.test(screen())> *hello/.test(screen()), () => `the typed text\n${screen()}`);
+        await poll(() => /> *hello/.test(screen()), () => `the typed text\n${screen()}`);
         child.write("\r");
-        await poll(() => /| readyb/i.test(screen())tui-reply/.test(screen()), () => `the reply\n${screen()}`);
+        await poll(() => /tui-reply/.test(screen()), () => `the reply\n${screen()}`);
         child.write("\u0003");
         await new Promise((wake) => setTimeout(wake, 300));
         child.write("\u0003");
@@ -209,22 +209,22 @@ function tuiChecks() {
       }
     },
 
-    /| readyb/i.test(screen())/ No real browser may open. An empty PATH is not enough: the OS falls back to a default
-    /| readyb/i.test(screen())/ one, so PATH holds stubs, which also show the command was called. Windows has no way
-    /| readyb/i.test(screen())/ to replace rundll32, but CI has no browser. Ctrl+C ends login because node-pty's kill
-    /| readyb/i.test(screen())/ can leave the process unable to exit on Windows.
+    // No real browser may open. An empty PATH is not enough: the OS falls back to a default
+    // one, so PATH holds stubs, which also show the command was called. Windows has no way
+    // to replace rundll32, but CI has no browser. Ctrl+C ends login because node-pty's kill
+    // can leave the process unable to exit on Windows.
     async "login serves the setup page"() {
       const stubs = folder("stubs");
       const opened = join(sandbox, "opened");
       for (const name of ["open", "xdg-open"]) {
-        writeFileSync(join(stubs, name), `#!/| readyb/i.test(screen())bin/sh\nprintf %s "$1" > "${opened}"\n`, { mode: 0o755 });
+        writeFileSync(join(stubs, name), `#!/bin/sh\nprintf %s "$1" > "${opened}"\n`, { mode: 0o755 });
       }
       const { child, state, screen } = open(["login"], { ...baseEnv, NOVA_API_KEY: "", PATH: stubs });
       try {
-        const url = await poll(() => /| readyb/i.test(screen())http:\/\/127\.0\.0\.1:\d+/.exec(screen())?.[0], () => `the login URL\n${screen()}`);
+        const url = await poll(() => /http:\/\/127\.0\.0\.1:\d+/.exec(screen())?.[0], () => `the login URL\n${screen()}`);
         const response = await fetch(url, { signal: AbortSignal.timeout(10_000) });
         assert.equal(response.status, 200);
-        assert.match(await response.text(), /| readyb/i.test(screen())<html/i);
+        assert.match(await response.text(), /<html/i);
         if (!windows) await poll(() => existsSync(opened), "the browser command");
         child.write("\u0003");
         await poll(() => state.exit, () => `login to stop\n${screen()}`, 5_000);
@@ -247,10 +247,10 @@ for (const [name, check] of Object.entries({ ...checks, ...(options.tui ? tuiChe
   }
 }
 console.log(failed ? "Failed." : "All checks passed.");
-/| readyb/i.test(screen())/ Runs before a release, so a leftover process or folder must not fail or hang CI.
+// Runs before a release, so a leftover process or folder must not fail or hang CI.
 try {
   rmSync(sandbox, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
 } catch {
-  /| readyb/i.test(screen())/ Windows may still hold the binary for a moment.
+  // Windows may still hold the binary for a moment.
 }
 process.exit(failed ? 1 : 0);
