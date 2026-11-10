@@ -71,14 +71,15 @@ jobs:
     name: winget-pkgs pull request
     # winget has no prerelease channel, so alpha versions are skipped.
     if: ${{ !contains(inputs.version, '-') }}
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
     env:
       WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
-      GH_TOKEN: ${{ github.token }}
+      GH_TOKEN: ${{ secrets.WINGET_TOKEN }}
+      RELEASE_TOKEN: ${{ github.token }}
+      FORK: Datalab-Rotterdam/winget-pkgs
     steps:
       - name: Check the secret
         id: secret
-        shell: bash
         run: |
           if [ -z "$WINGET_TOKEN" ]; then
             echo "::notice::WINGET_TOKEN is not set, so no winget-pkgs pull request is opened."
@@ -88,14 +89,39 @@ jobs:
           fi
       - name: Download the manifests
         if: steps.secret.outputs.ready == 'true'
-        shell: bash
         run: |
-          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern nova-ai-packaging.tar.gz
+          GH_TOKEN="$RELEASE_TOKEN" gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern nova-ai-packaging.tar.gz
           tar -xzf nova-ai-packaging.tar.gz
+      - name: Bring the fork up to date
+        if: steps.secret.outputs.ready == 'true'
+        run: gh repo sync "$FORK" --branch master
+      - name: Checkout the fork
+        if: steps.secret.outputs.ready == 'true'
+        run: |
+          # The repository is huge: take only the folders needed.
+          git clone --depth 1 --filter=blob:none --sparse --branch master \
+            "https://x-access-token:${WINGET_TOKEN}@github.com/${FORK}.git" winget-pkgs
+          git -C winget-pkgs sparse-checkout set manifests/d/DatalabRotterdam
       - name: Open the pull request
         if: steps.secret.outputs.ready == 'true'
-        shell: pwsh
+        working-directory: winget-pkgs
         run: |
-          # Submits a whole manifest folder, which also works for the first version of a package.
-          Invoke-WebRequest https://aka.ms/wingetcreate/latest -OutFile wingetcreate.exe
-          .\wingetcreate.exe submit --token $env:WINGET_TOKEN "packaging/winget/${{ inputs.version }}"
+          version="${{ inputs.version }}"
+          dir="manifests/d/DatalabRotterdam/NovaAI/$version"
+          if [ -d manifests/d/DatalabRotterdam/NovaAI ]; then
+            title="New version: DatalabRotterdam.NovaAI version $version"
+          else
+            title="New package: DatalabRotterdam.NovaAI version $version"
+          fi
+          branch="nova-ai-$version"
+          git checkout -b "$branch"
+          mkdir -p "$dir"
+          cp "../packaging/winget/$version/"*.yaml "$dir/"
+          git config user.name "nova-ai release bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add manifests
+          git commit -m "$title"
+          git push --force origin "$branch"
+          gh pr create --repo microsoft/winget-pkgs --base master \
+            --head "${FORK%%/*}:$branch" --title "$title" \
+            --body "Published from https://github.com/${GITHUB_REPOSITORY}/releases/tag/${TAG//@/%40}"

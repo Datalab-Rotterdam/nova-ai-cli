@@ -34,10 +34,15 @@ Users then run `brew install --cask datalab-rotterdam/tap/nova-ai`.
 
 ### winget: `WINGET_TOKEN`
 
-1. With the publishing account, fork `microsoft/winget-pkgs` (wingetcreate
-   pushes the manifests to that fork and opens the PR from it).
-2. Create a **classic** token with the `public_repo` scope (wingetcreate does not
-   work with fine-grained tokens).
+The fork is `Datalab-Rotterdam/winget-pkgs` (already created). The job syncs it with
+`microsoft/winget-pkgs`, pushes a branch `nova-ai-<version>` to it and opens the pull
+request from there.
+
+1. Pick a person or machine account that can push to the fork (a member of the org with
+   write access to `winget-pkgs`). The pull request is opened as that account.
+2. Create a **classic** token for it with the `public_repo` scope (a fine-grained token
+   cannot open a pull request on `microsoft/winget-pkgs`). If the org uses SAML SSO,
+   authorize the token for the org.
 3. Save it as the secret `WINGET_TOKEN`.
 
 The first submission is reviewed by a person; later ones are mostly validated by
@@ -51,5 +56,3 @@ yet: do `winget install --manifest <folder>` on Windows before the first PR.
   are not notarized. Remove that block once they are.
 - Tokens expire: when a publish job fails with a 401 or 403, renew the token and
   update the secret.
-- `winget` runs `wingetcreate` downloaded from `aka.ms/wingetcreate/latest`;
-  pin a version there if you want it reproducible.
