@@ -137,6 +137,16 @@ jobs:
         run: |
           sh -n scripts/install.sh
           shellcheck scripts/install.sh scripts/smoke-install.sh
+      - name: Check the package manager manifests
+        run: |
+          mkdir fixture
+          for t in darwin-arm64 darwin-x64; do printf '%064d  nova-ai-%s.tar.gz\n' 1 "$t" >> fixture/SHA256SUMS; done
+          for t in x64 arm64; do printf '%064d  nova-ai-windows-%s.zip\n' 2 "$t" >> fixture/SHA256SUMS; done
+          node scripts/package-manifests.mjs --version 9.9.9 --dir fixture
+          ruby -c fixture/packaging/homebrew/nova-ai.rb
+          test -f fixture/packaging/winget/9.9.9/DatalabRotterdam.NovaAI.installer.yaml
+          node scripts/package-manifests.mjs --version 9.9.9-alpha.1 --dir fixture
+          test -f fixture/packaging/homebrew/nova-ai@alpha.rb
       - name: Collect the scripts
         run: |
           mkdir -p site/nova-ai

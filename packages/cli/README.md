@@ -63,17 +63,30 @@ shows the command to run instead.
 No Node.js needed: each [GitHub release](https://github.com/Datalab-Rotterdam/nova-ai-cli/releases)
 of the CLI has a single executable with its runtime and all dependencies inside.
 
-On macOS and Linux, install it with:
+macOS and Linux:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Datalab-Rotterdam/nova-ai-cli/alpha/scripts/install.sh | sh -s -- --channel alpha
+curl -fsSL https://datalabrotterdam.nl/nova-ai/install.sh | bash
 nova-ai login
 ```
 
-The script picks the build for your machine, checks it against `SHA256SUMS` and
-installs it to `~/.local/bin` (no sudo). `--dir <folder>` installs elsewhere and
-`--version <v>` picks a version. The first binaries are in the alpha channel, so
-`--channel alpha` is needed until a stable release has them.
+Windows PowerShell: `irm https://datalabrotterdam.nl/nova-ai/install.ps1 | iex`.
+Windows cmd: `curl -fsSL https://datalabrotterdam.nl/nova-ai/install.cmd -o install.cmd && install.cmd && del install.cmd`.
+
+The scripts pick the build for your machine, check it against `SHA256SUMS` and
+install it without admin rights (`~/.local/bin`, or
+`%LOCALAPPDATA%\Programs\nova-ai`). Run them again to update: they find the
+`nova-ai` already on your PATH, replace it, or say it is current. Options:
+`--channel alpha` (`-Channel alpha` in PowerShell), `--version <v>`, `--dir
+<folder>`, `--force`. Until a stable release has binaries, use the alpha channel.
+
+With a package manager, once a stable release is out
+([how it is published](../../docs/PACKAGING.md)):
+
+```sh
+brew install --cask datalab-rotterdam/tap/nova-ai   # macOS
+winget install DatalabRotterdam.NovaAI              # Windows
+```
 
 Or download an archive yourself, and check it with
 `shasum -a 256 --ignore-missing -c SHA256SUMS`:

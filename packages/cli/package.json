@@ -67,7 +67,7 @@
       [
         "@semantic-release/exec",
         {
-          "prepareCmd": "bun ../../scripts/build-binaries.mjs --version ${nextRelease.version} && cp ../../scripts/install.sh ../../scripts/install.ps1 ../../scripts/install.cmd release/"
+          "prepareCmd": "bun ../../scripts/build-binaries.mjs --version ${nextRelease.version} && cp ../../scripts/install.sh ../../scripts/install.ps1 ../../scripts/install.cmd release/ && node ../../scripts/package-manifests.mjs --version ${nextRelease.version}"
         }
       ],
       [
@@ -89,7 +89,8 @@
             "release/SHA256SUMS",
             "release/install.sh",
             "release/install.ps1",
-            "release/install.cmd"
+            "release/install.cmd",
+            "release/nova-ai-packaging.tar.gz"
           ],
           "successComment": false,
           "failComment": false,
