@@ -1,7 +1,9 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { novaHomeRoot } from "@datalabrotterdam/nova-ai-agent/core/nova-home.js";
+import { standalone } from "@datalabrotterdam/nova-ai-agent/core/standalone.js";
 import type { UpdateAvailable } from "./tui/state/types.js";
+import { releasePage } from "./update-binary.js";
 import { CLI_PACKAGE_NAME, cliVersion } from "./version.js";
 
 /** All of the package's dist-tags (latest, alpha, …) in one small request. */
@@ -76,7 +78,7 @@ export function chooseUpdate(currentVersion: string, distTags: DistTags): Update
     currentVersion,
     latestVersion: best.version,
     tag: best.tag,
-    command: `npm install -g ${CLI_PACKAGE_NAME}@${best.tag}`,
+    command: standalone() ? releasePage(best.version) : `npm install -g ${CLI_PACKAGE_NAME}@${best.tag}`,
   };
 }
 
@@ -231,5 +233,10 @@ function comparePrerelease(left: string[], right: string[]): number {
 
 /** The one line printed to stderr after `-p` or `--version`. */
 export function formatUpdateNotice(update: UpdateAvailable): string {
-  return `Update available: nova-ai ${update.currentVersion} → ${update.latestVersion}. Run: ${update.command}`;
+  return `Update available: nova-ai ${update.currentVersion} → ${update.latestVersion}. ${howToUpdate(update)}`;
+}
+
+/** The manual way: a command for an npm install, a download page for a standalone binary. */
+export function howToUpdate(update: UpdateAvailable): string {
+  return `${update.command.startsWith("http") ? "Download" : "Run"}: ${update.command}`;
 }

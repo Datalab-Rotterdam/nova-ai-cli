@@ -16,6 +16,7 @@ import {
   contextWindowFromError,
   type ContextCompactionResult,
 } from "../core/context-compaction.js";
+import { installSkills } from "@datalabrotterdam/nova-ai-skills";
 import { readCredentials } from "../core/credentials.js";
 import { AUTOPILOT_MAX_TOOL_ROUNDS, isInteractionMode } from "../core/interaction-modes.js";
 import {
@@ -76,6 +77,7 @@ import {
 } from "../core/agent/tool-protocol.js";
 import type { ToolDefinition } from "../core/tools/types.js";
 import { AcpToolHost } from "./acp-tool-host.js";
+import { standaloneSkillSource } from "../core/standalone.js";
 import { readPackageVersion } from "../core/version.js";
 import { replayHistory, type ReplayItem } from "../core/history.js";
 import { describeToolCall, toolKindOf } from "../core/tools/describe.js";
@@ -347,11 +349,8 @@ export class NovaAgent implements AgentRuntime {
     // The skills every Nova app ships (Word, Excel, PowerPoint, PDF), in the
     // background: a current copy is left alone, so later starts only compare.
     // ponytail: two apps updating at the same moment can race on a folder; the next start repairs it.
-    // Loaded here, not at the top: the skills package reads its own files when it
-    // loads, which a single-file build (`bun build --compile`) does not have, and
-    // the agent then still starts, without them.
-    skillsInstall ??= import("@datalabrotterdam/nova-ai-skills")
-      .then(({ installSkills }) => installSkills(novaHomeRoot()))
+    skillsInstall ??= Promise.resolve()
+      .then(() => installSkills(novaHomeRoot(), standaloneSkillSource()))
       .catch(() => []);
     this.clientCapabilities = params.clientCapabilities;
     this.clientInfo = params.clientInfo ?? null;

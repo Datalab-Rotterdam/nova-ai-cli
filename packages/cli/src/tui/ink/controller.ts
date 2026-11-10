@@ -1,3 +1,5 @@
+import { standalone } from "@datalabrotterdam/nova-ai-agent/core/standalone.js";
+import { howToUpdate } from "../../update-check.js";
 import {
   allCommands,
   findCommand,
@@ -744,7 +746,8 @@ export class TuiController {
       const update = this.store.getState().updateAvailable;
       if (!update) return "No newer nova-ai found on npm.";
       if (!update.installable) {
-        return `nova-ai ${update.latestVersion} is available, but this copy wasn't installed with npm -g, so it can't update itself. Run: ${update.command}`;
+        const reason = standalone() ? "nova-ai can't write to its own folder" : "this copy wasn't installed with npm -g";
+        return `nova-ai ${update.latestVersion} is available, but ${reason}, so it can't update itself. ${howToUpdate(update)}`;
       }
       if (this.store.getState().busy) {
         return "Wait for the current request to finish (or press Esc), then run /update again.";

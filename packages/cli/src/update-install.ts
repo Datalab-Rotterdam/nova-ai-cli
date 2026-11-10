@@ -2,7 +2,9 @@ import { spawnSync } from "node:child_process";
 import { existsSync, realpathSync } from "node:fs";
 import { dirname, join, sep } from "node:path";
 import { createInterface } from "node:readline/promises";
+import { standalone } from "@datalabrotterdam/nova-ai-agent/core/standalone.js";
 import type { UpdateAvailable } from "./tui/state/types.js";
+import { binaryInstallable, binaryPath, installBinaryUpdate, UpdateNotReadyError } from "./update-binary.js";
 import { rememberUpdateAnswer, shouldAskAboutUpdate } from "./update-check.js";
 import { CLI_PACKAGE_NAME } from "./version.js";
 
@@ -48,7 +50,7 @@ export async function withInstallability(
   options: GlobalInstallOptions = {},
 ): Promise<UpdateAvailable | null> {
   if (!update) return null;
-  return { ...update, installable: globalNpmPrefix(options) !== null };
+  return { ...update, installable: standalone() ? binaryInstallable() : globalNpmPrefix(options) !== null };
 }
 
 /** npm is npm.cmd on Windows, which only runs through a shell. */
@@ -118,12 +120,34 @@ export async function offerUpdateAtStart(
   return installAndRestart(update, restartArgs);
 }
 
+/** The standalone counterpart of the npm install below; the same path afterwards is the new version. */
+async function installBinaryAndRestart(update: UpdateAvailable, restartArgs: string[]): Promise<number | null> {
+  const path = binaryPath();
+  console.log(`\nInstalling nova-ai ${update.latestVersion}…`);
+  try {
+    await installBinaryUpdate(update.latestVersion, { target: path });
+  } catch (error) {
+    console.error(
+      error instanceof UpdateNotReadyError
+        ? `\nnova-ai ${update.latestVersion} is still being published. Try again in a few minutes.\n`
+        : `\nThe update did not install: ${(error as Error).message}\nGet it from ${update.command}\n`,
+    );
+    return null;
+  }
+  const restarted = spawnSync(path, restartArgs, {
+    stdio: "inherit",
+    env: { ...process.env, [UPDATED_FROM_ENV]: update.currentVersion },
+  });
+  return restarted.status ?? 1;
+}
+
 /**
- * `npm install -g` the update in the foreground, then runs the new nova-ai
- * with `restartArgs` and returns its exit code. Null when the install
- * failed; this version then keeps running.
+ * `npm install -g` the update in the foreground (a standalone binary downloads
+ * it instead), then runs the new nova-ai with `restartArgs` and returns its
+ * exit code. Null when the install failed; this version then keeps running.
  */
-export function installAndRestart(update: UpdateAvailable, restartArgs: string[]): number | null {
+export async function installAndRestart(update: UpdateAvailable, restartArgs: string[]): Promise<number | null> {
+  if (standalone()) return installBinaryAndRestart(update, restartArgs);
   const prefix = globalNpmPrefix();
   if (!prefix) return null;
   console.log(`\nInstalling nova-ai ${update.latestVersion}…`);

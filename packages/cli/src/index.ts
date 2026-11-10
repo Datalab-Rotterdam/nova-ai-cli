@@ -76,11 +76,13 @@ async function main(): Promise<number> {
       const { runLogin } = await import("@datalabrotterdam/nova-ai-agent/commands/login.js");
       const code = await runLogin(command.args);
       if (code === 0) {
-        const { browserSetupDisabled, describeBrowserSetup, setUpBrowser } = await import("./browser-setup.js");
+        const { BrowserNeedsNodeError, browserSetupDisabled, describeBrowserSetup, setUpBrowser } = await import("./browser-setup.js");
         if (!browserSetupDisabled()) {
           await setUpBrowser().then(
             (result) => process.stderr.write(`${describeBrowserSetup(result)}\n`),
-            () => undefined,
+            (error: unknown) => {
+              if (error instanceof BrowserNeedsNodeError) process.stderr.write(`${error.message}\n`);
+            },
           );
         }
       }

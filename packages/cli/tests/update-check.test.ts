@@ -1,3 +1,4 @@
+import { configureStandalone } from "@datalabrotterdam/nova-ai-agent/core/standalone.js";
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -7,6 +8,7 @@ import {
   checkForUpdate,
   chooseUpdate,
   formatUpdateNotice,
+  howToUpdate,
   isNewerVersion,
   readInstalledVersion,
   rememberUpdateAnswer,
@@ -159,4 +161,19 @@ test("the start-up prompt remembers 'not today' for a day and 'skip' for that ve
   await checkForUpdate({ currentVersion: "1.0.0", cachePath, env: ENV, fetchImpl: npm({ latest: "1.1.0" }), now: () => 3 * day });
   assert.equal(JSON.parse(readFileSync(cachePath, "utf8")).skippedVersion, "1.1.0");
   assert.equal(shouldAskAboutUpdate(update, { cachePath, now: () => 3 * day }), false);
+});
+
+test("a command is run, a release page is downloaded from", () => {
+  const update = { currentVersion: "1.0.0", latestVersion: "1.1.0", tag: "latest" };
+  assert.equal(howToUpdate({ ...update, command: "npm install -g x" }), "Run: npm install -g x");
+  assert.equal(howToUpdate({ ...update, command: "https://github.com/x" }), "Download: https://github.com/x");
+});
+
+test("a standalone binary is pointed at the release instead of npm", (t) => {
+  t.after(() => configureStandalone(null));
+  configureStandalone({ versions: {}, skillsVersion: "1.0.0", archive: "" });
+  assert.equal(
+    chooseUpdate("1.0.0", { latest: "1.1.0" })?.command,
+    "https://github.com/Datalab-Rotterdam/nova-ai-cli/releases/tag/%40datalabrotterdam%2Fnova-ai-cli%401.1.0",
+  );
 });

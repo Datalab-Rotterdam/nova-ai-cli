@@ -1,5 +1,6 @@
 import { Box, Text } from "ink";
 import type { UIState } from "../../state/types.js";
+import { howToUpdate } from "../../../update-check.js";
 import type { McpCounts } from "../controller.js";
 import { formatCost, formatTokenCount } from "../format.js";
 import { palette } from "../theme.js";
@@ -21,7 +22,7 @@ export function StatusNotices({ ui }: { ui: UIState }) {
       {ui.updateAvailable ? (
         <Text color={palette.warning} wrap="truncate-end">
           {`Update ${ui.updateAvailable.latestVersion} available (current ${ui.updateAvailable.currentVersion}). ${
-            ui.updateAvailable.installable ? "Type /update to install it." : `Run: ${ui.updateAvailable.command}`
+            ui.updateAvailable.installable ? "Type /update to install it." : howToUpdate(ui.updateAvailable)
           }`}
         </Text>
       ) : null}

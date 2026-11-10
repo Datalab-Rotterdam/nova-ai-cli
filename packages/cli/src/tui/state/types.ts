@@ -87,8 +87,9 @@ export type UpdateAvailable = {
   latestVersion: string;
   /** The npm dist-tag that has latestVersion (latest, alpha, …). */
   tag: string;
+  /** How to update by hand: an npm command, or the release page for a standalone binary. */
   command: string;
-  /** This is a global npm install that nova-ai can update itself (/update). */
+  /** A global npm install or a standalone binary that nova-ai can update itself (/update). */
   installable?: boolean;
 };
 

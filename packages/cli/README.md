@@ -32,8 +32,10 @@ memory, MCP servers and settings.
 
 ## Install
 
-Requires Node.js 22.19 or newer and a Nova AI API key
-([get one](https://platform.nova.datalabrotterdam.nl/dashboard/api-keys)).
+You need a Nova AI API key
+([get one](https://platform.nova.datalabrotterdam.nl/dashboard/api-keys)), and
+for npm Node.js 22.19 or newer. Without Node.js, use a
+[standalone binary](#standalone-binary).
 
 ```sh
 npm install -g @datalabrotterdam/nova-ai-cli
@@ -55,6 +57,42 @@ most once a day; an alpha install also follows the `alpha` channel.
 nova-ai installs updates itself only when it was installed with
 `npm install -g`; with npx, another package manager or a project dependency it
 shows the command to run instead.
+
+### Standalone binary
+
+Every [GitHub release](https://github.com/Datalab-Rotterdam/nova-ai-cli/releases)
+of the CLI has a single executable for each platform, with its runtime and all
+dependencies inside:
+
+| | x64 | Arm64 |
+|---|---|---|
+| macOS | `nova-ai-darwin-x64.tar.gz` | `nova-ai-darwin-arm64.tar.gz` |
+| Linux (glibc) | `nova-ai-linux-x64.tar.gz` | `nova-ai-linux-arm64.tar.gz` |
+| Windows | `nova-ai-windows-x64.zip` | `nova-ai-windows-arm64.zip` |
+
+```sh
+# Replace the file name with the one for your platform.
+shasum -a 256 --ignore-missing -c SHA256SUMS
+tar -xzf nova-ai-linux-x64.tar.gz
+mv nova-ai ~/.local/bin/       # any folder on your PATH
+nova-ai login
+```
+
+The binaries are not signed. A file downloaded with a browser is blocked at
+first: on macOS run `xattr -d com.apple.quarantine nova-ai`, on Windows choose
+More info → Run anyway in the SmartScreen warning. `curl` downloads are not
+affected on macOS.
+
+A binary works like an npm install, with two differences:
+
+- **Updates** come from GitHub releases: the prompt and `/update` download the
+  new version, check it against `SHA256SUMS`, confirm it starts, and replace the
+  binary and restart. This needs write access to the binary's folder; without
+  it you get a link to the release. `SHA256SUMS` comes from the same release, so
+  it detects a damaged download, not a tampered release.
+- **The browser integration** still needs Node.js 20 or newer on your PATH; the
+  browser starts its host with it. Without Node.js everything else works, and
+  `nova-ai login` tells you.
 
 ```
 nova-ai [options]                 Interactive terminal UI
