@@ -1,3 +1,11 @@
+# [@datalabrotterdam/nova-ai-cli-v1.2.0-alpha.19](https://github.com/Datalab-Rotterdam/nova-ai-cli/compare/@datalabrotterdam/nova-ai-cli@1.2.0-alpha.18...@datalabrotterdam/nova-ai-cli@1.2.0-alpha.19) (2026-11-10)
+
+
+### Bug Fixes
+
+* **ci:** stop the background skills install from racing two Windows tests ([039a1a6](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/039a1a6ed613d49fa5beaa4c919f88ff74be7e4b))
+* improved UI ([f0f677d](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/f0f677d384003cd75d9be1640810c2c2931f7f65))
+
 # [@datalabrotterdam/nova-ai-cli-v1.2.0-alpha.18](https://github.com/Datalab-Rotterdam/nova-ai-cli/compare/@datalabrotterdam/nova-ai-cli@1.2.0-alpha.17...@datalabrotterdam/nova-ai-cli@1.2.0-alpha.18) (2026-11-06)
 
 
