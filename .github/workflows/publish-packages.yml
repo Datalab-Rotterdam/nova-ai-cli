@@ -1,0 +1,101 @@
+name: Publish packages
+
+# Pushes a CLI release to Homebrew and winget. CI calls it after each CLI release; run it by
+# hand (Actions > Publish packages) to redo a version or to publish one for the first time.
+# It uses nova-ai-packaging.tar.gz from that GitHub release. Setup: docs/PACKAGING.md.
+on:
+  workflow_call:
+    inputs:
+      version:
+        type: string
+        required: true
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "CLI version, as in the release tag (for example 1.3.0)"
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  TAG: "@datalabrotterdam/nova-ai-cli@${{ inputs.version }}"
+
+jobs:
+  homebrew:
+    name: Homebrew tap
+    runs-on: ubuntu-latest
+    env:
+      HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Check the secret
+        id: secret
+        run: |
+          if [ -z "$HOMEBREW_TAP_TOKEN" ]; then
+            echo "::notice::HOMEBREW_TAP_TOKEN is not set, so the Homebrew tap is not updated."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Download the manifests
+        if: steps.secret.outputs.ready == 'true'
+        run: |
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern nova-ai-packaging.tar.gz
+          tar -xzf nova-ai-packaging.tar.gz
+      - name: Checkout the tap
+        if: steps.secret.outputs.ready == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: Datalab-Rotterdam/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: tap
+      - name: Update the cask
+        if: steps.secret.outputs.ready == 'true'
+        working-directory: tap
+        run: |
+          mkdir -p Casks
+          cp ../packaging/homebrew/*.rb Casks/
+          git config user.name "nova-ai release bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add Casks
+          if git diff --cached --quiet; then
+            echo "The tap already has ${{ inputs.version }}."
+          else
+            git commit -m "nova-ai ${{ inputs.version }}"
+            git push
+          fi
+
+  winget:
+    name: winget-pkgs pull request
+    # winget has no prerelease channel, so alpha versions are skipped.
+    if: ${{ !contains(inputs.version, '-') }}
+    runs-on: windows-latest
+    env:
+      WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Check the secret
+        id: secret
+        shell: bash
+        run: |
+          if [ -z "$WINGET_TOKEN" ]; then
+            echo "::notice::WINGET_TOKEN is not set, so no winget-pkgs pull request is opened."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Download the manifests
+        if: steps.secret.outputs.ready == 'true'
+        shell: bash
+        run: |
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern nova-ai-packaging.tar.gz
+          tar -xzf nova-ai-packaging.tar.gz
+      - name: Open the pull request
+        if: steps.secret.outputs.ready == 'true'
+        shell: pwsh
+        run: |
+          # Submits a whole manifest folder, which also works for the first version of a package.
+          Invoke-WebRequest https://aka.ms/wingetcreate/latest -OutFile wingetcreate.exe
+          .\wingetcreate.exe submit --token $env:WINGET_TOKEN "packaging/winget/${{ inputs.version }}"

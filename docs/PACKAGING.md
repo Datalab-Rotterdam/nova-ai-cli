@@ -6,30 +6,49 @@ Every CLI release attaches `nova-ai-packaging.tar.gz`, made by
 - `homebrew/nova-ai.rb` (a prerelease gives `nova-ai@alpha.rb`)
 - `winget/<version>/DatalabRotterdam.NovaAI*.yaml` (stable releases only)
 
-Nothing publishes them on its own yet. One-time setup, then a manual step per release.
+After each CLI release, `.github/workflows/publish-packages.yml` pushes them:
+the cask to the Homebrew tap, and a pull request to `microsoft/winget-pkgs`.
+Each job skips itself, with a notice, when its secret is missing. Run it by hand
+from Actions > Publish packages (enter the version, for example `1.3.0`) to redo a
+version or publish the first one.
 
-## Homebrew
+## One-time setup
 
-1. Create the repository `Datalab-Rotterdam/homebrew-tap` with a `Casks/` folder.
-2. Per release, copy `homebrew/nova-ai.rb` to `Casks/nova-ai.rb` and push.
-3. Users: `brew install --cask datalab-rotterdam/tap/nova-ai`.
+Secrets go in this repository: Settings > Secrets and variables > Actions >
+New repository secret (or `gh secret set NAME`). Both are personal access tokens
+of an account that does the publishing; a machine account is better than a
+person's, because the pull requests to winget-pkgs come from it.
 
-The cask clears the quarantine flag in `postflight` because the binaries are not
-notarized. Remove that block once they are.
+### Homebrew: `HOMEBREW_TAP_TOKEN`
 
-## winget
+1. Create the repository `Datalab-Rotterdam/homebrew-tap` (public, with a first
+   commit, for example a README).
+2. Create a fine-grained token (GitHub > Settings > Developer settings >
+   Personal access tokens > Fine-grained tokens): resource owner
+   `Datalab-Rotterdam`, only the repository `homebrew-tap`, permission
+   **Contents: Read and write**. Set an expiry and note it.
+3. Save it as the secret `HOMEBREW_TAP_TOKEN`.
 
-1. Per stable release, copy `winget/<version>/` to
-   `manifests/d/DatalabRotterdam/NovaAI/<version>/` in a fork of
-   `microsoft/winget-pkgs` and open a PR. Their bot validates it; the first
-   submission is reviewed by a person.
-2. Users: `winget install DatalabRotterdam.NovaAI`.
+Users then run `brew install --cask datalab-rotterdam/tap/nova-ai`.
 
-The first submission needs a tested install on Windows (`winget validate` and
-`winget install --manifest <folder>`); the manifests are generated but not yet
-run through winget.
+### winget: `WINGET_TOKEN`
 
-## Automating it later
+1. With the publishing account, fork `microsoft/winget-pkgs` (wingetcreate
+   pushes the manifests to that fork and opens the PR from it).
+2. Create a **classic** token with the `public_repo` scope (wingetcreate does not
+   work with fine-grained tokens).
+3. Save it as the secret `WINGET_TOKEN`.
 
-A token with push access to the tap (and `wingetcreate` for winget-pkgs) in CI
-secrets would let the release job do both steps. Not set up.
+The first submission is reviewed by a person; later ones are mostly validated by
+a bot. Users then run `winget install DatalabRotterdam.NovaAI`. Alpha versions
+are never submitted. The manifests have not been run through `winget validate`
+yet: do `winget install --manifest <folder>` on Windows before the first PR.
+
+## Notes
+
+- The cask clears the macOS quarantine flag in `postflight` because the binaries
+  are not notarized. Remove that block once they are.
+- Tokens expire: when a publish job fails with a 401 or 403, renew the token and
+  update the secret.
+- `winget` runs `wingetcreate` downloaded from `aka.ms/wingetcreate/latest`;
+  pin a version there if you want it reproducible.

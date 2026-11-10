@@ -231,6 +231,9 @@ jobs:
       - verify
       - binaries-smoke
     runs-on: ubuntu-latest
+    outputs:
+      # Empty unless a CLI version was released (and not in a dry run).
+      cli_version: ${{ steps.cli.outputs.version }}
     permissions:
       contents: write
       id-token: write
@@ -268,5 +271,17 @@ jobs:
       - name: Point the CLI at the released agent
         run: node scripts/sync-agent-dependency.mjs
       - name: Release the CLI
+        id: cli
         working-directory: packages/cli
         run: npx semantic-release ${{ inputs.release_dry_run && '--dry-run' || '' }}
+
+  publish-packages:
+    name: Publish packages
+    needs: release
+    if: needs.release.outputs.cli_version != ''
+    permissions:
+      contents: read
+    uses: ./.github/workflows/publish-packages.yml
+    with:
+      version: ${{ needs.release.outputs.cli_version }}
+    secrets: inherit

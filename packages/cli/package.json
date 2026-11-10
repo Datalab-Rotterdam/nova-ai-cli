@@ -67,7 +67,8 @@
       [
         "@semantic-release/exec",
         {
-          "prepareCmd": "bun ../../scripts/build-binaries.mjs --version ${nextRelease.version} && cp ../../scripts/install.sh ../../scripts/install.ps1 ../../scripts/install.cmd release/ && node ../../scripts/package-manifests.mjs --version ${nextRelease.version}"
+          "prepareCmd": "bun ../../scripts/build-binaries.mjs --version ${nextRelease.version} && cp ../../scripts/install.sh ../../scripts/install.ps1 ../../scripts/install.cmd release/ && node ../../scripts/package-manifests.mjs --version ${nextRelease.version}",
+          "successCmd": "echo version=${nextRelease.version} >> $GITHUB_OUTPUT"
         }
       ],
       [
