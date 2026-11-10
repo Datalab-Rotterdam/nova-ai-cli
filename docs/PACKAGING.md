@@ -47,12 +47,17 @@ request from there.
 
 The first submission is reviewed by a person; later ones are mostly validated by
 a bot. Users then run `winget install DatalabRotterdam.NovaAI`. Alpha versions
-are never submitted. The manifests have not been run through `winget validate`
-yet: do `winget install --manifest <folder>` on Windows before the first PR.
+are never submitted.
+
+CI checks both formats on every run (job "Validate manifests", which the release waits
+for): `brew style` and `brew audit` on macOS, `winget validate` on Windows. They use made-up
+hashes, so they check the shape, not the downloads. Before the first real PR, also try
+`winget install --manifest <folder>` on Windows against a real release (it needs
+`winget settings --enable LocalManifestFiles` in an admin shell).
 
 ## Notes
 
-- The cask clears the macOS quarantine flag in `postflight` because the binaries
+- The cask clears the macOS quarantine flag in `postflight_steps` (Homebrew 7 syntax) because the binaries
   are not notarized. Remove that block once they are.
 - Tokens expire: when a publish job fails with a 401 or 403, renew the token and
   update the secret.

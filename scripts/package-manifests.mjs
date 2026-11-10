@@ -53,10 +53,10 @@ writeFileSync(
 
   binary "nova-ai"
 
-  postflight do
-    system_command "/usr/bin/xattr",
-                   args: ["-dr", "com.apple.quarantine", "#{staged_path}/nova-ai"],
-                   must_succeed: false
+  postflight_steps do
+    run "/usr/bin/xattr",
+        args:         ["-dr", "com.apple.quarantine", "{{staged_path}}/nova-ai"],
+        must_succeed: false
   end
 
   zap trash: "~/.nova-ai"

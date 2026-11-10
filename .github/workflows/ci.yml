@@ -137,16 +137,6 @@ jobs:
         run: |
           sh -n scripts/install.sh
           shellcheck scripts/install.sh scripts/smoke-install.sh
-      - name: Check the package manager manifests
-        run: |
-          mkdir fixture
-          for t in darwin-arm64 darwin-x64; do printf '%064d  nova-ai-%s.tar.gz\n' 1 "$t" >> fixture/SHA256SUMS; done
-          for t in x64 arm64; do printf '%064d  nova-ai-windows-%s.zip\n' 2 "$t" >> fixture/SHA256SUMS; done
-          node scripts/package-manifests.mjs --version 9.9.9 --dir fixture
-          ruby -c fixture/packaging/homebrew/nova-ai.rb
-          test -f fixture/packaging/winget/9.9.9/DatalabRotterdam.NovaAI.installer.yaml
-          node scripts/package-manifests.mjs --version 9.9.9-alpha.1 --dir fixture
-          test -f fixture/packaging/homebrew/nova-ai@alpha.rb
       - name: Collect the scripts
         run: |
           mkdir -p site/nova-ai
@@ -158,6 +148,57 @@ jobs:
           path: site/
           if-no-files-found: error
           retention-days: 30
+
+  manifests:
+    name: Validate manifests (${{ matrix.name }})
+    # The generated Homebrew cask and winget manifests, checked by the tools that will read
+    # them. Hashes are made up, so this checks the shape, not the downloads.
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: Homebrew, os: macos-latest }
+          - { name: winget, os: windows-latest }
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Generate the manifests
+        run: |
+          mkdir fixture
+          i=1
+          for t in darwin-arm64 darwin-x64; do printf '%064d  nova-ai-%s.tar.gz\n' "$i" "$t" >> fixture/SHA256SUMS; i=$((i+1)); done
+          for t in x64 arm64; do printf '%064d  nova-ai-windows-%s.zip\n' "$i" "$t" >> fixture/SHA256SUMS; i=$((i+1)); done
+          node scripts/package-manifests.mjs --version 9.9.9 --dir fixture
+          mkdir fixture-alpha
+          cp fixture/SHA256SUMS fixture-alpha/
+          node scripts/package-manifests.mjs --version 9.9.9-alpha.1 --dir fixture-alpha
+          test -f fixture-alpha/packaging/homebrew/nova-ai@alpha.rb
+          test ! -d fixture-alpha/packaging/winget
+      - name: Check the cask
+        if: matrix.name == 'Homebrew'
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: 1
+          HOMEBREW_NO_INSTALL_FROM_API: 1
+        run: |
+          brew tap-new --no-git local/nova-test
+          tap=$(brew --repository local/nova-test)
+          mkdir -p "$tap/Casks"
+          cp fixture/packaging/homebrew/nova-ai.rb fixture-alpha/packaging/homebrew/nova-ai@alpha.rb "$tap/Casks/"
+          brew trust local/nova-test || true # newer Homebrew only
+          brew style --cask local/nova-test/nova-ai local/nova-test/nova-ai@alpha
+          brew audit --cask local/nova-test/nova-ai local/nova-test/nova-ai@alpha
+      - name: Check the winget manifests
+        if: matrix.name == 'winget'
+        shell: pwsh
+        run: winget validate --manifest fixture/packaging/winget/9.9.9
 
   binaries-smoke:
     name: Smoke test (${{ matrix.target }})
@@ -229,6 +270,7 @@ jobs:
     needs:
       - test
       - verify
+      - manifests
       - binaries-smoke
     runs-on: ubuntu-latest
     outputs:
