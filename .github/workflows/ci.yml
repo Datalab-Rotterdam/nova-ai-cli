@@ -275,13 +275,7 @@ jobs:
         working-directory: packages/cli
         run: npx semantic-release ${{ inputs.release_dry_run && '--dry-run' || '' }}
 
-  publish-packages:
-    name: Publish packages
-    needs: release
-    if: needs.release.outputs.cli_version != ''
-    permissions:
-      contents: read
-    uses: ./.github/workflows/publish-packages.yml
-    with:
-      version: ${{ needs.release.outputs.cli_version }}
-    secrets: inherit
+  # Homebrew and winget are published by hand for now: Actions > Publish packages.
+  # To publish automatically again, call .github/workflows/publish-packages.yml here
+  # (uses: ./.github/workflows/publish-packages.yml, with: version: the cli_version output,
+  # secrets: inherit, if: cli_version != '') and give this job `contents: read` permissions.

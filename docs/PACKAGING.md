@@ -6,11 +6,12 @@ Every CLI release attaches `nova-ai-packaging.tar.gz`, made by
 - `homebrew/nova-ai.rb` (a prerelease gives `nova-ai@alpha.rb`)
 - `winget/<version>/DatalabRotterdam.NovaAI*.yaml` (stable releases only)
 
-After each CLI release, `.github/workflows/publish-packages.yml` pushes them:
-the cask to the Homebrew tap, and a pull request to `microsoft/winget-pkgs`.
-Each job skips itself, with a notice, when its secret is missing. Run it by hand
-from Actions > Publish packages (enter the version, for example `1.3.0`) to redo a
-version or publish the first one.
+For now publishing is **manual**: after a CLI release, run
+Actions > Publish packages (`.github/workflows/publish-packages.yml`) and enter the
+version, for example `1.3.0`. It pushes the cask to the Homebrew tap and opens a
+pull request to `microsoft/winget-pkgs`. Each job skips itself, with a notice, when
+its secret is missing. CI used to call it after every release; the comment at the
+end of `ci.yml` says how to switch that back on.
 
 ## One-time setup
 
