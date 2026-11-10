@@ -39,7 +39,10 @@ test("command files are advertised and a /command prompt becomes the file's text
           await new Promise((done) => setTimeout(done, 10));
         }
         const update = updates.find((u) => u.sessionUpdate === "available_commands_update");
-        return update?.sessionUpdate === "available_commands_update" ? update.availableCommands : [];
+        // The shared skills install in the background and may land first (slow on Windows CI).
+        return update?.sessionUpdate === "available_commands_update"
+          ? update.availableCommands.filter((c) => !c.name.startsWith("nova-"))
+          : [];
       };
       assert.deepEqual(await commands(), [
         { name: "compact", description: "Summarize older parts of the conversation to free context space" },

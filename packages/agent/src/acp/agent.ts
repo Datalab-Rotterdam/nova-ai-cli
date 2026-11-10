@@ -349,8 +349,9 @@ export class NovaAgent implements AgentRuntime {
     // The skills every Nova app ships (Word, Excel, PowerPoint, PDF), in the
     // background: a current copy is left alone, so later starts only compare.
     // ponytail: two apps updating at the same moment can race on a folder; the next start repairs it.
+    // NOVA_NO_SKILLS_INSTALL: for tests that time the process exit, where file copies on a slow disk are noise.
     skillsInstall ??= Promise.resolve()
-      .then(() => installSkills(novaHomeRoot(), standaloneSkillSource()))
+      .then(() => (process.env.NOVA_NO_SKILLS_INSTALL ? [] : installSkills(novaHomeRoot(), standaloneSkillSource())))
       .catch(() => []);
     this.clientCapabilities = params.clientCapabilities;
     this.clientInfo = params.clientInfo ?? null;

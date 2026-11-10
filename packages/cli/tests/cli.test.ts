@@ -97,7 +97,7 @@ describe("nova-ai -p process", () => {
     try {
       const entry = fileURLToPath(new URL("../src/index.js", import.meta.url));
       const child = spawn(process.execPath, [entry, "-p", "hi", "--output-format", "json", "--cwd", home], {
-        env: { ...process.env, NOVA_AI_HOME: home, NOVA_API_KEY: "k", NOVA_MODEL: "fake-model", NOVA_BASE_URL: nova.url },
+        env: { ...process.env, NOVA_NO_SKILLS_INSTALL: "1", NOVA_AI_HOME: home, NOVA_API_KEY: "k", NOVA_MODEL: "fake-model", NOVA_BASE_URL: nova.url },
         stdio: ["ignore", "pipe", "pipe"],
       });
       let out = "";
