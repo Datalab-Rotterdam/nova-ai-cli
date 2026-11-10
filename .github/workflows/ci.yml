@@ -124,6 +124,31 @@ jobs:
           if-no-files-found: error
           retention-days: 3
 
+  installers:
+    name: Installers
+    # The install scripts for the website: copy this artifact to
+    # https://datalabrotterdam.nl/nova-ai/. They do not depend on a version, they look up
+    # the newest release themselves. Each release also carries them as assets.
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Check the scripts
+        run: |
+          sh -n scripts/install.sh
+          shellcheck scripts/install.sh scripts/smoke-install.sh
+      - name: Collect the scripts
+        run: |
+          mkdir -p site/nova-ai
+          cp scripts/install.sh scripts/install.ps1 scripts/install.cmd site/nova-ai/
+      - name: Upload the scripts
+        uses: actions/upload-artifact@v4
+        with:
+          name: installers
+          path: site/
+          if-no-files-found: error
+          retention-days: 30
+
   binaries-smoke:
     name: Smoke test (${{ matrix.target }})
     # Runs each cross-compiled archive on its real OS and CPU, the only place a bad

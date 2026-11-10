@@ -67,7 +67,7 @@
       [
         "@semantic-release/exec",
         {
-          "prepareCmd": "bun ../../scripts/build-binaries.mjs --version ${nextRelease.version}"
+          "prepareCmd": "bun ../../scripts/build-binaries.mjs --version ${nextRelease.version} && cp ../../scripts/install.sh ../../scripts/install.ps1 ../../scripts/install.cmd release/"
         }
       ],
       [
@@ -86,7 +86,10 @@
           "assets": [
             "release/*.tar.gz",
             "release/*.zip",
-            "release/SHA256SUMS"
+            "release/SHA256SUMS",
+            "release/install.sh",
+            "release/install.ps1",
+            "release/install.cmd"
           ],
           "successComment": false,
           "failComment": false,

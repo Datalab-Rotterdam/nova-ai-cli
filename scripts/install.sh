@@ -1,17 +1,22 @@
 #!/bin/sh
 # Installs the standalone nova-ai binary from its GitHub release, for macOS and Linux.
 #
-#   curl -fsSL https://raw.githubusercontent.com/Datalab-Rotterdam/nova-ai-cli/alpha/scripts/install.sh | sh -s -- --channel alpha
+#   curl -fsSL https://datalabrotterdam.nl/nova-ai/install.sh | bash
+#   curl -fsSL https://datalabrotterdam.nl/nova-ai/install.sh | bash -s -- --channel alpha
 #
-# Options: --channel <npm dist-tag> (default latest), --version <v>, --dir <folder>
-# (default ~/.local/bin, or NOVA_AI_INSTALL_DIR). Downloading with curl keeps the file free of
+# Run it again to update: it finds the nova-ai already on your PATH, says what changes, and
+# replaces that copy in place (or does nothing when it is current).
+#
+# Options: --channel <latest|alpha> (default latest), --version <v>, --dir <folder>, --force.
+# New installs go to ~/.local/bin, or NOVA_AI_INSTALL_DIR. Downloading with curl keeps the file free of
 # macOS quarantine. It installs into a folder you own, so no sudo, and /update can replace it.
 #
 # Everything runs from main at the end, so a download cut off halfway executes nothing.
 set -eu
 
 REPO_URL="https://github.com/Datalab-Rotterdam/nova-ai-cli"
-DIST_TAGS_URL="https://registry.npmjs.org/-/package/@datalabrotterdam%2Fnova-ai-cli/dist-tags"
+RELEASES_API="https://api.github.com/repos/Datalab-Rotterdam/nova-ai-cli/releases?per_page=100"
+TAG_PREFIX="@datalabrotterdam/nova-ai-cli@"
 work=""
 
 say() { printf '%s\n' "$*"; }
@@ -34,7 +39,7 @@ detect_target() {
     Linux)
       os=linux
       if ldd --version 2>&1 | grep -qi musl; then
-        die "musl Linux (such as Alpine) has no binary. Use: npm install -g @datalabrotterdam/nova-ai-cli"
+        die "musl Linux (such as Alpine) has no binary. See $REPO_URL/releases"
       fi
       ;;
     *) die "no binary for $os. On Windows, download the zip from $REPO_URL/releases" ;;
@@ -47,11 +52,27 @@ detect_target() {
   printf '%s-%s' "$os" "$arch"
 }
 
+# The newest release of this package: "latest" skips prereleases, any other channel (alpha)
+# takes the newest of all. Only curl and awk, so no Node or npm is needed.
 find_version() {
-  tags=$(download "$DIST_TAGS_URL") || die "could not reach npm to find the $1 version."
-  found=$(printf '%s' "$tags" | tr ',{}' '\n' | sed -n "s/^\"$1\":\"\(.*\)\"$/\1/p")
-  [ -n "$found" ] || die "no channel named $1."
+  list=$(download "$RELEASES_API") || die "could not reach GitHub to find the $1 version."
+  found=$(printf '%s\n' "$list" | awk -v prefix="$TAG_PREFIX" -v channel="$1" '
+    /"tag_name":/ { tag = $0; sub(/.*"tag_name": *"/, "", tag); sub(/".*/, "", tag) }
+    /"prerelease":/ {
+      pre = ($0 ~ /true/)
+      if (index(tag, prefix) == 1 && (channel != "latest" || !pre)) { print substr(tag, length(prefix) + 1); exit }
+    }')
+  [ -n "$found" ] || die "no $1 release found. Releases: $REPO_URL/releases"
   printf '%s' "$found"
+}
+
+# Prints the folder of a nova-ai this script can replace: on PATH, writable, a real binary and
+# not an npm install (that one is updated with npm).
+find_existing() {
+  found=$(command -v nova-ai 2>/dev/null) || return 0
+  case "$(readlink "$found" 2>/dev/null || true)$found" in *node_modules*) return 0 ;; esac
+  [ -f "$found" ] && [ ! -L "$found" ] && [ -w "$(dirname "$found")" ] || return 0
+  dirname "$found"
 }
 
 sha256() {
@@ -67,8 +88,14 @@ sha256() {
 main() {
   channel=latest
   version=${NOVA_AI_VERSION:-}
-  dir=${NOVA_AI_INSTALL_DIR:-$HOME/.local/bin}
+  dir=${NOVA_AI_INSTALL_DIR:-}
+  force=0
   while [ $# -gt 0 ]; do
+    if [ "$1" = --force ]; then
+      force=1
+      shift
+      continue
+    fi
     [ $# -ge 2 ] || die "$1 needs a value."
     case "$1" in
       --channel) channel=$2 ;;
@@ -86,6 +113,22 @@ main() {
 
   target=$(detect_target)
   [ -n "$version" ] || version=$(find_version "$channel")
+
+  existing=$(find_existing)
+  [ -n "$dir" ] || dir=${existing:-$HOME/.local/bin}
+  current=""
+  if [ -x "$dir/nova-ai" ]; then
+    current=$(NOVA_NO_UPDATE_CHECK=1 "$dir/nova-ai" --version 2>/dev/null | sed -n 's/^nova-ai //p') || current=""
+  fi
+  if [ -n "$current" ] && [ "$current" = "$version" ] && [ "$force" = 0 ]; then
+    say "nova-ai $version is already installed at $dir/nova-ai. Nothing to do (--force reinstalls)."
+    exit 0
+  fi
+  if [ -n "$current" ]; then
+    say "Updating nova-ai $current -> $version at $dir/nova-ai"
+  elif [ -n "$existing" ] && [ "$existing" != "$dir" ]; then
+    say "Note: another nova-ai is on your PATH in $existing; this one goes to $dir."
+  fi
   asset="nova-ai-$target.tar.gz"
   # NOVA_AI_DOWNLOAD_URL replaces the release, for scripts/smoke-install.sh.
   base=${NOVA_AI_DOWNLOAD_URL:-$REPO_URL/releases/download/%40datalabrotterdam%2Fnova-ai-cli%40$version}
@@ -95,7 +138,7 @@ main() {
 
   say "Downloading nova-ai $version for $target..."
   if ! download "$base/SHA256SUMS" >"$work/SHA256SUMS" || ! download "$base/$asset" >"$work/$asset"; then
-    die "nova-ai $version has no binaries. The first version with them is in the alpha channel: add --channel alpha. Releases: $REPO_URL/releases"
+    die "nova-ai $version has no binaries. Releases: $REPO_URL/releases"
   fi
 
   expected=$(awk -v file="$asset" '$2 == file { print $1 }' "$work/SHA256SUMS")
@@ -114,7 +157,8 @@ main() {
   [ "$reported" = "nova-ai $version" ] || die "expected nova-ai $version, the binary reported: $reported"
   mv -f "$fresh" "$dir/nova-ai"
 
-  say "Installed nova-ai $version to $dir/nova-ai"
+  if [ -n "$current" ]; then verb=Updated; else verb=Installed; fi
+  say "$verb nova-ai $version at $dir/nova-ai"
   case ":$PATH:" in
     *":$dir:"*) say "Next: nova-ai login" ;;
     *)
