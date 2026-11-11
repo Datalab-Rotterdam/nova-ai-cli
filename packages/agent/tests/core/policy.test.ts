@@ -19,7 +19,7 @@ beforeEach(() => {
   process.env.NOVA_AI_HOME = join(base, "home");
 });
 afterEach(() => {
-  rmSync(base, { recursive: true, force: true });
+  rmSync(base, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   if (previousHome === undefined) delete process.env.NOVA_AI_HOME;
   else process.env.NOVA_AI_HOME = previousHome;
 });

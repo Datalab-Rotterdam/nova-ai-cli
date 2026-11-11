@@ -25,7 +25,7 @@ test("headless answers what the agent's policy left without waiting: only bypass
       assert.equal(selectedOption(await permission(client, "run_command")), expected, mode);
     }
   } finally {
-    rmSync(cwd, { recursive: true, force: true });
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 
@@ -54,7 +54,7 @@ test("headless reports decisions the agent made without asking", async () => {
       [{ type: "permission", toolCallId: "c1", toolName: "edit_file", decision: "allow", source: "accept-edits" }],
     );
   } finally {
-    rmSync(cwd, { recursive: true, force: true });
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 

@@ -126,8 +126,8 @@ test("session runner rewinds persisted turns and rebuilds the visible transcript
   } finally {
     if (sessionId) deleteStoredSession(sessionId);
     delete process.env.NOVA_AI_CLI_SESSIONS_DIR;
-    rmSync(cwd, { recursive: true, force: true });
-    rmSync(sessionsDir, { recursive: true, force: true });
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    rmSync(sessionsDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 
@@ -541,7 +541,7 @@ test("session runner attaches mentioned file contents to the model prompt", asyn
     assert.match(prompt, /--- file: context\.md ---/);
     assert.match(prompt, /important file context/);
   } finally {
-    rmSync(cwd, { recursive: true, force: true });
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 
@@ -717,7 +717,7 @@ test("the TUI client refuses file access outside its workspace", async () => {
     });
     assert.equal(content, "inside");
   } finally {
-    rmSync(base, { recursive: true, force: true });
+    rmSync(base, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 

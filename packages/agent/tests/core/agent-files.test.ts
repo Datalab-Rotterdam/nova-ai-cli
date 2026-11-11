@@ -47,9 +47,9 @@ test("agent files become session modes with their prompt and narrowed tools", as
     assert.ok(scribe.includes("read_file") && !scribe.includes("write_file") && !scribe.includes("run_command"));
     assert.throws(() => agent.setSessionMode({ sessionId, modeId: "missing" }), /Unknown interaction mode/);
   } finally {
-    rmSync(cwd, { recursive: true, force: true });
-    rmSync(global, { recursive: true, force: true });
-    rmSync(projectPaths(cwd).dir, { recursive: true, force: true });
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    rmSync(global, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    rmSync(projectPaths(cwd).dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 
@@ -72,7 +72,7 @@ test("autopilot answers ask_user itself, also from an agent file", async () => {
     assert.ok(!buildSessionTools(session, agent.clientCapabilities, { mode: "autopilot", enterPlanMode: () => {} }).some((tool) => tool.name === "enter_plan_mode"));
     assert.match(buildModeSystemPrompt("autopilot", cwd) ?? "", /autopilot mode/);
   } finally {
-    rmSync(cwd, { recursive: true, force: true });
-    rmSync(projectPaths(cwd).dir, { recursive: true, force: true });
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    rmSync(projectPaths(cwd).dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });

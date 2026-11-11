@@ -78,7 +78,7 @@ describe("BackgroundJobManager", () => {
       readFileSync(job.outputPath!, "utf8").endsWith("hello world"),
       true,
     );
-    rmSync(outputDir, { recursive: true, force: true });
+    rmSync(outputDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
 
   it("lists jobs by session", () => {
@@ -100,7 +100,7 @@ describe("BackgroundJobManager", () => {
     assert.equal(manager.list("s1").length, 1);
     assert.equal(manager.list("s1")[0]?.title, "dev");
     assert.equal(manager.list().length, 2);
-    rmSync(outputDir, { recursive: true, force: true });
+    rmSync(outputDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
 
   it("summarizes terminal ids but omits prompt internals", () => {
@@ -122,7 +122,7 @@ describe("BackgroundJobManager", () => {
     assert.equal("terminalId" in summarize(prompt), false);
     assert.equal("output" in summarize(prompt), false);
     assert.equal(summarize(prompt).outputPath?.startsWith(outputDir), true);
-    rmSync(outputDir, { recursive: true, force: true });
+    rmSync(outputDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
 
   it("waits until the first or all selected jobs finish", async () => {
@@ -162,7 +162,7 @@ describe("BackgroundJobManager", () => {
       allResult.jobs.map((job) => job.status),
       ["completed", "failed"],
     );
-    rmSync(outputDir, { recursive: true, force: true });
+    rmSync(outputDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
 
   it("returns current state on timeout", async () => {
@@ -181,7 +181,7 @@ describe("BackgroundJobManager", () => {
 
     assert.equal(result.timedOut, true);
     assert.equal(result.jobs[0]?.status, "running");
-    rmSync(outputDir, { recursive: true, force: true });
+    rmSync(outputDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
 
   it("cancels an active wait through its abort signal", async () => {
@@ -202,6 +202,6 @@ describe("BackgroundJobManager", () => {
 
     abortController.abort();
     await rejected;
-    rmSync(outputDir, { recursive: true, force: true });
+    rmSync(outputDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
 });

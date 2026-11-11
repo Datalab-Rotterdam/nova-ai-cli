@@ -86,7 +86,7 @@ describe("ACP conformance (real process, real HTTP gateway)", () => {
     } finally {
       assert.equal(await agent.close(), 0, "agent exits cleanly on stdin EOF");
       await nova.close();
-      rmSync(workspace, { recursive: true, force: true });
+      rmSync(workspace, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     }
     for (const line of agent.stdoutLines) {
       assert.equal(JSON.parse(line).jsonrpc, "2.0", `stdout must only carry JSON-RPC: ${line.slice(0, 200)}`);

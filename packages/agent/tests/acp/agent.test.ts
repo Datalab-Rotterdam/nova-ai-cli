@@ -31,7 +31,7 @@ process.env.NOVA_AI_CLI_BACKGROUND_JOBS_DIR = join(
 after(() => {
   delete process.env.NOVA_AI_CLI_SESSIONS_DIR;
   delete process.env.NOVA_AI_CLI_BACKGROUND_JOBS_DIR;
-  rmSync(testSessionsDir, { recursive: true, force: true });
+  rmSync(testSessionsDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
 describe("NovaAgent.initialize", () => {
@@ -984,7 +984,7 @@ describe("NovaAgent workspace MCP servers", () => {
       const optedOut = await agent.newSession({ cwd, mcpServers: [], _meta: { "nova-ai-cli/workspaceMcp": false } });
       assert.deepEqual((optedOut._meta?.["nova-ai-cli/mcp"] as { configured: unknown[] }).configured, []);
     } finally {
-      rmSync(cwd, { recursive: true, force: true });
+      rmSync(cwd, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     }
   });
 });
@@ -1031,7 +1031,7 @@ describe("NovaAgent skills", () => {
         /No skill named "missing"/,
       );
     } finally {
-      rmSync(cwd, { recursive: true, force: true });
+      rmSync(cwd, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     }
   });
 });
@@ -1046,7 +1046,7 @@ describe("NovaAgent workspace trust", () => {
       assert.deepEqual(agent.workspaceTrust({ cwd }), { trusted: false, needsTrust: true });
       assert.deepEqual(agent.workspaceTrust({ cwd, trusted: true }), { trusted: true, needsTrust: false });
     } finally {
-      rmSync(cwd, { recursive: true, force: true });
+      rmSync(cwd, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     }
   });
 });

@@ -77,7 +77,7 @@ describe("running hooks", () => {
       assert.equal(tool.allow, false);
       assert.deepEqual(await runHooks("PreToolUse", { tool_name: "read_file", tool_input: {} }, options), { warnings: [] });
     } finally {
-      rmSync(cwd, { recursive: true, force: true });
+      rmSync(cwd, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     }
   });
 
@@ -95,7 +95,7 @@ describe("running hooks", () => {
       assert.match(outcome.warnings[0] ?? "", /timed out after 0.3s/);
       assert.ok(Date.now() - started < 5_000);
     } finally {
-      rmSync(cwd, { recursive: true, force: true });
+      rmSync(cwd, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     }
   });
 
@@ -119,7 +119,7 @@ describe("running hooks", () => {
       options.policy = new PermissionPolicy(cwd, "default");
       assert.deepEqual(await authorizeToolCall(options, "t2", fetchUrlTool, args, true), { allowed: false, reason: "rule" });
     } finally {
-      rmSync(cwd, { recursive: true, force: true });
+      rmSync(cwd, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     }
   });
 });

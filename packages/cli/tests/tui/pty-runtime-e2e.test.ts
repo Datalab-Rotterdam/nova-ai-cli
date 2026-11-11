@@ -283,7 +283,7 @@ if (process.env.NOVA_PTY_STANDALONE === "1") {
 async function removeTempDirectory(path: string): Promise<void> {
   for (let attempt = 0; attempt < 20; attempt++) {
     try {
-      rmSync(path, { recursive: true, force: true });
+      rmSync(path, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
       return;
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;

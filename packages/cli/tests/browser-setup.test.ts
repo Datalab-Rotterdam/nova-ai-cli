@@ -55,7 +55,7 @@ const NODE = process.platform === "win32" ? "node.exe" : "node";
 
 function pathWithNodes(t: { after(fn: () => void): void }, ...names: string[]): string[] {
   const root = mkdtempSync(join(tmpdir(), "nova-find-node-"));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
+  t.after(() => rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
   return names.map((name) => {
     const dir = join(root, name);
     mkdirSync(dir);

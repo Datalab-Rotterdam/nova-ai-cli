@@ -76,6 +76,6 @@ test("a SearXNG server in the Nova settings is the default; a client's own wins"
     writeFileSync(join(home, "settings.json"), JSON.stringify({ webSearch: { searxngUrl: "file:///etc/passwd" } }));
     assert.equal(settingsFromMeta(undefined, home).searxngUrl, null);
   } finally {
-    rmSync(home, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
