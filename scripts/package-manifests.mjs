@@ -112,5 +112,6 @@ ManifestVersion: 1.6.0
   );
 }
 
-execFileSync("tar", ["-czf", join(dir, "nova-ai-packaging.tar.gz"), "-C", dir, "packaging"]);
+// Relative paths: the tar from Git for Windows reads "D:\…" as a remote host.
+execFileSync("tar", ["-czf", "nova-ai-packaging.tar.gz", "packaging"], { cwd: dir });
 console.log(`Wrote ${join(dir, "nova-ai-packaging.tar.gz")} (${prerelease ? "cask only" : "cask and winget"})`);
