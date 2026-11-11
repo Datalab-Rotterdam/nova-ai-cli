@@ -1,3 +1,10 @@
+# [@datalabrotterdam/nova-ai-cli-v1.2.0-alpha.21](https://github.com/Datalab-Rotterdam/nova-ai-cli/compare/@datalabrotterdam/nova-ai-cli@1.2.0-alpha.20...@datalabrotterdam/nova-ai-cli@1.2.0-alpha.21) (2026-11-11)
+
+
+### Features
+
+* **cli:** carry the browser host in the binary, install the nova-browser skill ([51b2cfa](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/51b2cfa1784ce1fd8a5aa6991955b530c877dd15))
+
 # [@datalabrotterdam/nova-ai-cli-v1.2.0-alpha.20](https://github.com/Datalab-Rotterdam/nova-ai-cli/compare/@datalabrotterdam/nova-ai-cli@1.2.0-alpha.19...@datalabrotterdam/nova-ai-cli@1.2.0-alpha.20) (2026-11-11)
 
 
