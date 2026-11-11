@@ -1,3 +1,10 @@
+# [@datalabrotterdam/nova-ai-agent-v1.0.0-alpha.13](https://github.com/Datalab-Rotterdam/nova-ai-cli/compare/@datalabrotterdam/nova-ai-agent@1.0.0-alpha.12...@datalabrotterdam/nova-ai-agent@1.0.0-alpha.13) (2026-11-11)
+
+
+### Features
+
+* **cli:** carry the browser host in the binary, install the nova-browser skill ([51b2cfa](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/51b2cfa1784ce1fd8a5aa6991955b530c877dd15))
+
 # [@datalabrotterdam/nova-ai-agent-v1.0.0-alpha.12](https://github.com/Datalab-Rotterdam/nova-ai-cli/compare/@datalabrotterdam/nova-ai-agent@1.0.0-alpha.11...@datalabrotterdam/nova-ai-agent@1.0.0-alpha.12) (2026-11-10)
 
 
