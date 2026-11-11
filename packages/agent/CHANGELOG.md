@@ -1,3 +1,46 @@
+# @datalabrotterdam/nova-ai-agent-v1.0.0 (2026-11-11)
+
+
+### Bug Fixes
+
+* **agent:** equivalent tool names match each other's rules ([1f4c1e6](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/1f4c1e6de2d1ad55158ac534fa2bbe6d21a2a56a))
+* **agent:** import panel chats wherever a workspace's sessions are listed ([2c83137](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/2c831370644245cdeda6ad511b252db867460033))
+* **agent:** imported panel tool results keep their outcome ([55ef643](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/55ef6432cca0218bbc40685363bcdf239c720901))
+* **agent:** never overwrite an unreadable settings file when switching a skill ([ca989ef](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/ca989ef1810fc903cea069cdadf3041fe164e364))
+* **agent:** read the context window Nova actually reports ([804ffff](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/804fffff683d6e7cb117d25597592948bdd8a66a))
+* **agent:** tell the model which file and lines an attachment is ([75e7980](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/75e7980a72475a102dc884efa0c8ff8ed25cf1e3)), closes [#L10-L20](https://github.com/Datalab-Rotterdam/nova-ai-cli/issues/L10-L20) [#L10](https://github.com/Datalab-Rotterdam/nova-ai-cli/issues/L10)
+* **ci:** stop the background skills install from racing two Windows tests ([039a1a6](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/039a1a6ed613d49fa5beaa4c919f88ff74be7e4b))
+* **cli:** install the command as nova-ai only ([eda8064](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/eda806411af1738ff6f6b1404d23d4e84a74ced8))
+* improved UI ([f0f677d](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/f0f677d384003cd75d9be1640810c2c2931f7f65))
+
+
+### Features
+
+* **agent,cli:** Nova skill folders, switching skills off, a budgeted skill list ([0891c79](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/0891c79248d3a645d638f12f46928a54652b0941))
+* **agent:** autopilot mode, and autopilot in agent files ([c9d47ee](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/c9d47ee97f9f5e648592159678c24a71bdda4b5c))
+* **agent:** bundled skills are read-only and can only be switched off ([16f480c](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/16f480cb9d8f0da03f718d0c102dfb6485e5f47d))
+* **agent:** Claude Code compatible hooks ([227fe8b](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/227fe8b273ec2e211e9d57674e76af5c42a473bd))
+* **agent:** find_files and fetch_url tools ([e2ffcac](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/e2ffcacd317f9c943c8b7941887279f632bb918c))
+* **agent:** import the VS Code panel's chats into the agent's sessions ([a73f4ac](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/a73f4ac777e5f610524f6eacc1259ecd8d3f30af))
+* **agent:** install the shared Nova skills ([64139dd](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/64139dd612933343f04f165de1a9ab78832d6864))
+* **agent:** mark and protect bundled skills ([6ef52eb](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/6ef52eb6d048f8a3b4e75686244aabcfd0f62d6e))
+* **agent:** per-session settings via _meta and _nova/session/set_settings ([a5d1c38](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/a5d1c3851aac5884831a99ae71dea86978825468))
+* **agent:** queue entries can switch kind and move to the front ([e9d1b18](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/e9d1b1819e84fc9219ec4b61af3461def57fd223))
+* **agent:** read ~/.nova-ai/mcp.json and .nova-ai/mcp.json ([cb79481](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/cb794812076a08e99fef0de48e3c8721a88f7f86))
+* **agent:** set workspace trust over ACP ([cec4a89](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/cec4a8949a4232f46448219e4d5363289651215d))
+* **agent:** skills and MCP prompts as slash commands ([95bb049](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/95bb04932c9edc12f964832b3e5274b3100387d1))
+* **agent:** standalone binary support ([524d68e](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/524d68e045478922f90111b67d79cb03fbec9c4c))
+* **agent:** thinking effort for reasoning models ([8551fea](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/8551feacff3e1675f369030e20fb2b5071f0db7f))
+* **agent:** web_search tool ([12985eb](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/12985eb9ca06d6c814d4e0162465c651889d9370))
+* **cli:** /effort slider for thinking models ([8ca67f2](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/8ca67f2f5dcc8f6bff8c36409a2baba5d43c4a02))
+* **cli:** carry the browser host in the binary, install the nova-browser skill ([51b2cfa](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/51b2cfa1784ce1fd8a5aa6991955b530c877dd15))
+* **cli:** remember the thinking level ([883196c](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/883196c9fdb089f4f26ac82b557cc87dfc0b1c0b))
+* OAuth sign-in for MCP servers ([ba57c79](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/ba57c79642f902ab2bc20f59e4627fb2b774bb4a))
+* release the agent separately as @datalabrotterdam/nova-ai-agent ([32ecfc0](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/32ecfc0faa99bd5bb80cb2eaf2363abc050978f0))
+* slash commands from markdown files ([305f111](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/305f1112c6f8312ab8a0683954c4e5bc88d7b952))
+* the user's agent files as session modes ([3386de8](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/3386de88d07b0351bd1e44960fcacfef26e3d45b))
+* token and cost totals per session ([8e9aef8](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/8e9aef81b6345832f38d8a2639c35d4cb6fb3b47))
+
 # [@datalabrotterdam/nova-ai-agent-v1.0.0-alpha.13](https://github.com/Datalab-Rotterdam/nova-ai-cli/compare/@datalabrotterdam/nova-ai-agent@1.0.0-alpha.12...@datalabrotterdam/nova-ai-agent@1.0.0-alpha.13) (2026-11-11)
 
 
