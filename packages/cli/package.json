@@ -41,7 +41,8 @@
   "dependencies": {
     "@agentclientprotocol/sdk": "^0.29.0",
     "@datalabrotterdam/nova-ai-agent": "^1.0.0-alpha.12",
-    "@datalabrotterdam/nova-ai-browser-host": "^1.0.0",
+    "@datalabrotterdam/nova-ai-browser-host": "^1.4.0",
+    "@datalabrotterdam/nova-ai-skills": "^1.1.0-alpha.1",
     "chalk": "^5.3.0",
     "cli-highlight": "^2.1.11",
     "diff": "^9.0.0",

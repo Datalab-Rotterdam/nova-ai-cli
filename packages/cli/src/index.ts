@@ -37,7 +37,16 @@ async function noticeUpdate(check: UpdateCheck, waitMs: number): Promise<void> {
 /** Modes that may use the browser: keep its integration current, like Claude Code does. */
 const BROWSER_MODES = new Set(["tui", "print", "acp", "web"]);
 
+/** Returned by main() when the command ends the process itself, such as the browser host. */
+const OWN_EXIT = -1;
+
 async function main(): Promise<number> {
+  if (process.argv[2] === "browser-host") {
+    // Before anything else: browsers start the binary this way, with stdout as their channel.
+    const { runBrowserHost } = await import("./browser-setup.js");
+    await runBrowserHost(process.argv.slice(3));
+    return OWN_EXIT;
+  }
   const command = parseCli(process.argv.slice(2));
   if (BROWSER_MODES.has(command.mode)) {
     const { setUpBrowserInBackground } = await import("./browser-setup.js");
@@ -76,13 +85,11 @@ async function main(): Promise<number> {
       const { runLogin } = await import("@datalabrotterdam/nova-ai-agent/commands/login.js");
       const code = await runLogin(command.args);
       if (code === 0) {
-        const { BrowserNeedsNodeError, browserSetupDisabled, describeBrowserSetup, setUpBrowser } = await import("./browser-setup.js");
+        const { browserSetupDisabled, describeBrowserSetup, setUpBrowser } = await import("./browser-setup.js");
         if (!browserSetupDisabled()) {
           await setUpBrowser().then(
             (result) => process.stderr.write(`${describeBrowserSetup(result)}\n`),
-            (error: unknown) => {
-              if (error instanceof BrowserNeedsNodeError) process.stderr.write(`${error.message}\n`);
-            },
+            () => undefined,
           );
         }
       }
@@ -114,8 +121,8 @@ async function main(): Promise<number> {
 
 main().then(
   (code) => {
-    // --acp and the TUI end the process themselves; others report a code.
-    process.exitCode = code;
+    // --acp, the TUI and the browser host end the process themselves; others report a code.
+    if (code !== OWN_EXIT) process.exitCode = code;
   },
   (err) => {
     console.error(err);

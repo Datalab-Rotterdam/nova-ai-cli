@@ -1,21 +1,27 @@
 /*
  * Browser integration, set up the way Claude Code does it for its Chrome extension: this CLI
  * depends on the Nova AI Browser host (@datalabrotterdam/nova-ai-browser-host) and registers it
- * on start-up. The host's installer copies itself to ~/.nova-ai/browser/host/<version>/, writes
- * a wrapper and the browsers' native messaging manifests, and installs the nova-browser skill
- * (which the agent then offers like any other skill). It changes nothing when everything is
- * current and never replaces a newer host (Nova AI for VS Code ships one too).
+ * on start-up. The host's installer writes a wrapper and the browsers' native messaging
+ * manifests. It changes nothing when everything is current and never replaces a newer host
+ * (Nova AI for VS Code and Nova AI Desktop carry one too).
  *
- * The standalone binary carries the host too, but browsers start it through Node and a binary
- * has no Node to offer: there it needs a Node 20+ on PATH, and is skipped without one.
+ * - Installed with npm, Node runs the installer, which copies the host to
+ *   ~/.nova-ai/browser/host/<version>/ and has browsers start it with this Node.
+ * - The standalone binary has no Node to offer, so it carries the host itself:
+ *   `nova-ai browser-host …` runs the bundled host, and the installer registers the binary
+ *   (`--carrier`), so the browser starts `nova-ai browser-host chrome-extension://…/`.
+ *
+ * While it is set up, the nova-browser skill from @datalabrotterdam/nova-ai-skills is installed
+ * in the Nova home too (read-only, like every bundled skill), so the agent knows how to use it.
  *
  * Off in CI and with NOVA_AI_BROWSER_AUTO_SETUP=0.
  */
 import { execFile, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
-import { delimiter, dirname, isAbsolute, join } from "node:path";
-import { standalone, standaloneAssets } from "@datalabrotterdam/nova-ai-agent/core/standalone.js";
+import { dirname, join } from "node:path";
+import { pathToFileURL } from "node:url";
+import { standalone, standaloneAssets, standaloneSkillSource } from "@datalabrotterdam/nova-ai-agent/core/standalone.js";
 
 export interface BrowserSetupResult {
   version: string;
@@ -28,11 +34,25 @@ export interface BrowserSetupResult {
   skills: string[];
 }
 
-export type RunInstaller = (node: string, args: string[]) => Promise<string>;
+/** The CLI's subcommand that runs the browser host it carries (only the binary registers it). */
+export const BROWSER_HOST_COMMAND = "browser-host";
 
-const runInstaller: RunInstaller = (node, args) =>
+/** The skill that tells the agent how to use the browser (in @datalabrotterdam/nova-ai-skills). */
+export const BROWSER_SKILL = "nova-browser";
+
+/** How to run the host's command line: a program and the arguments before the host's own. */
+export interface HostLaunch {
+  command: string;
+  args: string[];
+  /** Whether the program is this binary, which then also carries the host for the browser. */
+  carrier: boolean;
+}
+
+export type RunInstaller = (command: string, args: string[]) => Promise<string>;
+
+const runInstaller: RunInstaller = (command, args) =>
   new Promise((resolve, reject) => {
-    execFile(node, args, { encoding: "utf8", timeout: 60_000, maxBuffer: 1024 * 1024, windowsHide: true }, (error, stdout, stderr) => {
+    execFile(command, args, { encoding: "utf8", timeout: 60_000, maxBuffer: 1024 * 1024, windowsHide: true }, (error, stdout, stderr) => {
       if (error) reject(new Error(`${error.message}${stderr ? `\n${stderr}` : ""}`));
       else resolve(stdout);
     });
@@ -42,7 +62,7 @@ export function browserSetupDisabled(env: NodeJS.ProcessEnv = process.env): bool
   return env.NOVA_AI_BROWSER_AUTO_SETUP === "0" || Boolean(env.CI);
 }
 
-/** The host package's installer, resolved like an import from this module. */
+/** The host package's command line, resolved like an import from this module. */
 export function bundledInstaller(from: string = import.meta.url): string | undefined {
   try {
     if (standalone()) {
@@ -57,6 +77,18 @@ export function bundledInstaller(from: string = import.meta.url): string | undef
   }
 }
 
+/** This Node with the host's script, or in a binary the binary itself (`nova-ai browser-host`). */
+export function hostLaunch(
+  installer = bundledInstaller(),
+  binary = standalone() !== null,
+  execPath = process.execPath,
+): HostLaunch | undefined {
+  if (!installer) return undefined;
+  return binary
+    ? { command: execPath, args: [BROWSER_HOST_COMMAND], carrier: true }
+    : { command: execPath, args: [installer], carrier: false };
+}
+
 /** The installer prints one JSON line; anything before it (warnings) is ignored. */
 export function parseSetupOutput(output: string): BrowserSetupResult {
   const line = output.trim().split("\n").reverse().find((entry) => entry.trim().startsWith("{"));
@@ -66,76 +98,61 @@ export function parseSetupOutput(output: string): BrowserSetupResult {
 
 export const INSTALLER_ARGS = ["install", "--auto", "--json"];
 
-/** The oldest Node the browser host runs on (its engines field). */
-const MIN_NODE_MAJOR = 20;
-
-/** Why browser integration is unavailable in a binary; worth telling the user, unlike other failures. */
-export class BrowserNeedsNodeError extends Error {
-  constructor() {
-    super(`Browser: the Nova AI browser extension needs Node.js ${MIN_NODE_MAJOR} or newer on PATH. Install it and run nova-ai login again.`);
-  }
+/** The installer's arguments; a carrier also registers itself as the program browsers start. */
+export function installerArgs(launch: HostLaunch): string[] {
+  const own = launch.carrier ? ["--carrier", launch.command, ...launch.args.flatMap((arg) => ["--carrier-arg", arg])] : [];
+  return [...launch.args, ...INSTALLER_ARGS, ...own];
 }
 
-const nodeVersion = (path: string): Promise<string> =>
-  new Promise((resolve, reject) => {
-    execFile(path, ["--version"], { encoding: "utf8", timeout: 5_000 }, (error, stdout) => {
-      if (error) reject(error);
-      else resolve(stdout);
-    });
-  });
-
-/**
- * The first suitable Node on PATH. Only absolute entries count: an empty or relative one
- * means the current folder, and a workspace must not get its own `node` executed.
- */
-export async function findNode(env: NodeJS.ProcessEnv = process.env, version = nodeVersion): Promise<string | undefined> {
-  const file = process.platform === "win32" ? "node.exe" : "node";
-  for (const dir of (env.PATH ?? env.Path ?? "").split(delimiter)) {
-    if (!isAbsolute(dir)) continue;
-    const candidate = join(dir, file);
-    if (!existsSync(candidate)) continue;
-    const major = /^v(\d+)\./.exec(await version(candidate).catch(() => ""))?.[1];
-    if (Number(major) >= MIN_NODE_MAJOR) return candidate;
-  }
-  return undefined;
+/** Installs the nova-browser skill, or brings it up to date; returns whether it was written. */
+export async function installBrowserSkill(home?: string): Promise<boolean> {
+  if (process.env.NOVA_NO_SKILLS_INSTALL) return false;
+  const [{ installSkills }, { novaHomeRoot }] = await Promise.all([
+    import("@datalabrotterdam/nova-ai-skills"),
+    import("@datalabrotterdam/nova-ai-agent/core/nova-home.js"),
+  ]);
+  const installed = await installSkills(home ?? novaHomeRoot(), { ...standaloneSkillSource(), include: [BROWSER_SKILL] });
+  return installed.includes(BROWSER_SKILL);
 }
-
-/** What runs the installer: this Node, or in a binary (where execPath is nova-ai itself) one from PATH. */
-const installerNode = async (): Promise<string | undefined> => (standalone() ? findNode() : process.execPath);
 
 export async function setUpBrowser(
   run: RunInstaller = runInstaller,
-  installer = bundledInstaller(),
-  node: () => Promise<string | undefined> = installerNode,
+  launch = hostLaunch(),
+  skill: () => Promise<unknown> = installBrowserSkill,
 ): Promise<BrowserSetupResult> {
-  if (!installer) throw new Error("The bundled Nova AI Browser host is missing from this installation.");
-  const path = await node();
-  if (!path) throw new BrowserNeedsNodeError();
-  return parseSetupOutput(await run(path, [installer, ...INSTALLER_ARGS]));
+  if (!launch) throw new Error("The bundled Nova AI Browser host is missing from this installation.");
+  const result = parseSetupOutput(await run(launch.command, installerArgs(launch)));
+  await skill();
+  return result;
 }
 
 /**
  * Start-up check, fire and forget: a detached process with no output, so it never holds up
- * the command, never keeps it alive and never writes into the TUI or the ACP stream.
+ * the command, never keeps it alive and never writes into the TUI or the ACP stream. The skill
+ * is installed alongside; a failure is retried at the next start.
  */
-export function setUpBrowserInBackground(installer = bundledInstaller()): void {
-  if (browserSetupDisabled() || !installer) return;
-  const launch = (node: string): void => {
-    try {
-      spawn(node, [installer, ...INSTALLER_ARGS], { detached: true, stdio: "ignore", windowsHide: true })
-        .on("error", () => {})
-        .unref();
-    } catch {
-      // Not being able to set up the browser must never break the CLI.
-    }
-  };
-  if (!standalone()) {
-    launch(process.execPath);
-    return;
+export function setUpBrowserInBackground(launch = hostLaunch(), skill: () => Promise<unknown> = installBrowserSkill): void {
+  if (browserSetupDisabled() || !launch) return;
+  try {
+    spawn(launch.command, installerArgs(launch), { detached: true, stdio: "ignore", windowsHide: true })
+      .on("error", () => {})
+      .unref();
+  } catch {
+    // Not being able to set up the browser must never break the CLI.
   }
-  findNode().then((node) => {
-    if (node) launch(node);
-  }, () => undefined);
+  skill().catch(() => undefined);
+}
+
+/**
+ * `nova-ai browser-host …`: runs the host's command line in this process. Browsers start the
+ * binary this way (stdout is their native messaging channel, so nothing else may write to it),
+ * and the setup runs its installer this way.
+ */
+export async function runBrowserHost(args: string[], installer = bundledInstaller()): Promise<void> {
+  if (!installer) throw new Error("The bundled Nova AI Browser host is missing from this installation.");
+  // The host reads its arguments from process.argv, after the program and script.
+  process.argv.splice(2, process.argv.length - 2, ...args);
+  await import(pathToFileURL(installer).href);
 }
 
 export function describeBrowserSetup(result: BrowserSetupResult): string {
