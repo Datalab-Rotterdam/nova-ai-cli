@@ -119,8 +119,8 @@ describe("importExtensionSessions", () => {
   });
 
   afterEach(() => {
-    rmSync(projectPaths(cwd).dir, { recursive: true, force: true });
-    rmSync(cwd, { recursive: true, force: true });
+    rmSync(projectPaths(cwd).dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
 
   const writePanelChats = (...chats: ExtensionStoredSession[]) => {
@@ -202,7 +202,7 @@ describe("importExtensionSessions", () => {
   });
 
   it("does nothing for a workspace the panel never used", () => {
-    rmSync(sourceDir, { recursive: true, force: true });
+    rmSync(sourceDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     assert.equal(importExtensionSessions(cwd), 0);
     assert.equal(existsSync(projectPaths(cwd).cliSessions), false);
   });

@@ -18,7 +18,7 @@ test("file mentions resolve directly with normalized and quoted workspace paths"
     );
     assert.deepEqual(mentions.map((mention) => mention.relativePath), ["src/one.ts", "file with spaces.md"]);
   } finally {
-    rmSync(cwd, { recursive: true, force: true });
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 
@@ -27,6 +27,6 @@ test("file mentions reject missing files and paths outside the workspace", () =>
   try {
     assert.deepEqual(findWorkspaceFileMentions("@../secret.txt @missing.txt", cwd), []);
   } finally {
-    rmSync(cwd, { recursive: true, force: true });
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });

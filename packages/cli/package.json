@@ -1,6 +1,6 @@
 {
   "name": "@datalabrotterdam/nova-ai-cli",
-  "version": "1.2.0-alpha.19",
+  "version": "1.2.0-alpha.20",
   "description": "Agentic coding with DataLab Rotterdam's Nova AI in your terminal: interactive TUI, headless mode, and an ACP agent for editors",
   "license": "Apache-2.0",
   "author": "DataLab Rotterdam",
@@ -69,7 +69,8 @@
       [
         "@semantic-release/exec",
         {
-          "prepareCmd": "bun ../../scripts/build-binaries.mjs --version ${nextRelease.version}"
+          "prepareCmd": "bun ../../scripts/build-binaries.mjs --version ${nextRelease.version} && cp ../../scripts/install.sh ../../scripts/install.ps1 ../../scripts/install.cmd release/ && node ../../scripts/package-manifests.mjs --version ${nextRelease.version}",
+          "successCmd": "echo version=${nextRelease.version} >> $GITHUB_OUTPUT"
         }
       ],
       [
@@ -88,7 +89,11 @@
           "assets": [
             "release/*.tar.gz",
             "release/*.zip",
-            "release/SHA256SUMS"
+            "release/SHA256SUMS",
+            "release/install.sh",
+            "release/install.ps1",
+            "release/install.cmd",
+            "release/nova-ai-packaging.tar.gz"
           ],
           "successComment": false,
           "failComment": false,

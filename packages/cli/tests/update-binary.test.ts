@@ -23,7 +23,7 @@ const posixOnly = { skip: process.platform === "win32" };
 
 function tempDir(t: { after(fn: () => void): void }): string {
   const dir = mkdtempSync(join(tmpdir(), "nova-update-binary-"));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  t.after(() => rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
   return dir;
 }
 

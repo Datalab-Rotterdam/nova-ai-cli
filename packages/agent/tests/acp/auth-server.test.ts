@@ -13,7 +13,7 @@ import type { StoredCredentials } from "../../src/core/credentials.js";
 
 const uiDir = mkdtempSync(join(tmpdir(), "nova-auth-ui-"));
 writeFileSync(join(uiDir, "index.html"), "<!doctype html><title>setup</title>");
-after(() => rmSync(uiDir, { recursive: true, force: true }));
+after(() => rmSync(uiDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
 
 async function start(): Promise<{
   server: AuthServer;

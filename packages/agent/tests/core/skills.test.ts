@@ -37,7 +37,7 @@ test("skills are discovered from user and workspace roots with workspace precede
     assert.equal(skills.find((skill) => skill.name === "review")?.source, "workspace");
     assert.match(skills.find((skill) => skill.name === "review")?.description ?? "", /Workspace review/);
   } finally {
-    rmSync(root, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 
@@ -64,7 +64,7 @@ test("load_skill reads instructions and contained resources but blocks traversal
     const escaped = await tool.execute({} as ToolContext, { name: "review", resource: "../secret.md" });
     assert.ok("error" in escaped);
   } finally {
-    rmSync(root, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 
@@ -115,7 +115,7 @@ test("Nova's own skill folders win over the shared ones, and disabled skills are
   } finally {
     if (previousHome === undefined) delete process.env.NOVA_AI_HOME;
     else process.env.NOVA_AI_HOME = previousHome;
-    rmSync(root, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 
@@ -179,7 +179,7 @@ test("skills are switched on and off per scope without touching other settings",
   } finally {
     if (previousHome === undefined) delete process.env.NOVA_AI_HOME;
     else process.env.NOVA_AI_HOME = previousHome;
-    rmSync(root, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 
@@ -215,6 +215,6 @@ test("bundled skills are marked and their files cannot be changed by the file to
     await writeFileTool.execute(ctx, { path: join(own, "SKILL.md"), content: "x" });
     assert.equal(written, join(own, "SKILL.md"));
   } finally {
-    rmSync(root, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
