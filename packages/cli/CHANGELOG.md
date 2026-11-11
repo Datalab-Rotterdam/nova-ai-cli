@@ -1,3 +1,12 @@
+# [@datalabrotterdam/nova-ai-cli-v1.2.0-alpha.20](https://github.com/Datalab-Rotterdam/nova-ai-cli/compare/@datalabrotterdam/nova-ai-cli@1.2.0-alpha.19...@datalabrotterdam/nova-ai-cli@1.2.0-alpha.20) (2026-11-11)
+
+
+### Features
+
+* **cli:** Homebrew cask and winget manifests for each release ([faf8ddc](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/faf8ddcd9799a69e6d6e063bfc09d6d288cf3160))
+* **cli:** install script for the standalone binaries ([50ccfe3](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/50ccfe36009dbd119ea9ef8d0c23045e779dad9b))
+* **cli:** installers for macOS, Linux and Windows that also update ([71f82e3](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/71f82e3ef0321776a8b7d1239ef8dc4f5ccf3513))
+
 # [@datalabrotterdam/nova-ai-cli-v1.2.0-alpha.19](https://github.com/Datalab-Rotterdam/nova-ai-cli/compare/@datalabrotterdam/nova-ai-cli@1.2.0-alpha.18...@datalabrotterdam/nova-ai-cli@1.2.0-alpha.19) (2026-11-10)
 
 
