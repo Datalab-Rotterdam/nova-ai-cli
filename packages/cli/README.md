@@ -108,9 +108,10 @@ A binary works like an npm install, with two differences:
   binary and restart. This needs write access to the binary's folder; without
   it you get a link to the release. `SHA256SUMS` comes from the same release, so
   it detects a damaged download, not a tampered release.
-- **The browser integration** still needs Node.js 20 or newer on your PATH; the
-  browser starts its host with it. Without Node.js everything else works, and
-  `nova-ai login` tells you.
+- **The browser integration** needs no Node.js: the binary carries the Nova AI
+  Browser host itself, and the browser starts it as `nova-ai browser-host`.
+  Keep the binary where it is, or start it once after moving it, so the
+  browser finds it again.
 
 ```
 nova-ai [options]                 Interactive terminal UI
