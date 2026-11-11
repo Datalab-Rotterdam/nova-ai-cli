@@ -14,7 +14,7 @@ const outside = join(base, "outside");
 mkdirSync(join(workspace, "src"), { recursive: true });
 mkdirSync(outside);
 writeFileSync(join(outside, "secret.txt"), "secret");
-after(() => rmSync(base, { recursive: true, force: true }));
+after(() => rmSync(base, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
 
 const posix = process.platform !== "win32";
 

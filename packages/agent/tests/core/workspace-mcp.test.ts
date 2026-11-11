@@ -55,7 +55,7 @@ test("project .mcp.json servers are normalized and override workspace settings b
       message: "Invalid server configuration: stdio server requires a command.",
     }]);
   } finally {
-    rmSync(cwd, { recursive: true, force: true });
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 
@@ -75,7 +75,7 @@ test("an invalid project .mcp.json is reported without hiding settings servers",
     assert.equal(configuration.failures[0]?.serverName, ".mcp.json");
     assert.match(configuration.failures[0]?.message ?? "", /^Invalid JSON:/);
   } finally {
-    rmSync(cwd, { recursive: true, force: true });
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 
@@ -96,7 +96,7 @@ test("MCP servers a workspace declares are not started until it is trusted", () 
     assert.equal(workspaceNeedsTrust(cwd), false);
     assert.equal(readWorkspaceMcpConfiguration(cwd).servers.length, 1);
   } finally {
-    rmSync(cwd, { recursive: true, force: true });
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 
@@ -105,7 +105,7 @@ test("a workspace that declares nothing needs no trust", () => {
   try {
     assert.equal(workspaceNeedsTrust(cwd), false);
   } finally {
-    rmSync(cwd, { recursive: true, force: true });
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 
@@ -144,7 +144,7 @@ test("~/.nova-ai/mcp.json loads without trust; .nova-ai/mcp.json overrides it in
   } finally {
     delete process.env.NOVA_TEST_MCP_TOKEN;
     rmSync(userFile, { force: true });
-    rmSync(cwd, { recursive: true, force: true });
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 
@@ -157,6 +157,6 @@ test("servers only in ~/.nova-ai/mcp.json do not make a workspace ask for trust"
     assert.equal(workspaceNeedsTrust(cwd), false);
   } finally {
     rmSync(userFile, { force: true });
-    rmSync(cwd, { recursive: true, force: true });
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });

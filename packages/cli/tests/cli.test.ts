@@ -85,7 +85,9 @@ describe("nova-ai binary", () => {
 });
 
 describe("nova-ai -p process", () => {
-  it("answers and exits promptly (no timers keeping the process alive)", async () => {
+  // Not on Windows: its process teardown alone has taken 4s on loaded runners, so a leaked
+  // timer cannot be told apart there. Linux and macOS catch one.
+  it("answers and exits promptly (no timers keeping the process alive)", { skip: process.platform === "win32" }, async () => {
     const { spawn } = await import("node:child_process");
     const { mkdtempSync } = await import("node:fs");
     const { tmpdir } = await import("node:os");

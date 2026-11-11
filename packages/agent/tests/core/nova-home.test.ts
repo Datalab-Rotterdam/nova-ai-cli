@@ -52,7 +52,7 @@ describe("session storage layout", () => {
   });
 
   afterEach(() => {
-    rmSync(join(home, ".."), { recursive: true, force: true });
+    rmSync(join(home, ".."), { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     if (previous.home === undefined) delete process.env.NOVA_AI_HOME;
     else process.env.NOVA_AI_HOME = previous.home;
     if (previous.dir === undefined) delete process.env.NOVA_AI_CLI_SESSIONS_DIR;

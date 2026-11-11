@@ -66,7 +66,7 @@ describe("credentials file", () => {
   });
 
   afterEach(() => {
-    rmSync(join(home, ".."), { recursive: true, force: true });
+    rmSync(join(home, ".."), { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     for (const [key, value] of [
       ["NOVA_AI_HOME", original.home],
       ["NOVA_API_KEY", original.apiKey],

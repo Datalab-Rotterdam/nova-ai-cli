@@ -22,7 +22,7 @@ const testSessionsDir = mkdtempSync(join(tmpdir(), "nova-sessions-test-"));
 process.env.NOVA_AI_CLI_SESSIONS_DIR = testSessionsDir;
 after(() => {
   delete process.env.NOVA_AI_CLI_SESSIONS_DIR;
-  rmSync(testSessionsDir, { recursive: true, force: true });
+  rmSync(testSessionsDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
 describe("deriveTitle", () => {

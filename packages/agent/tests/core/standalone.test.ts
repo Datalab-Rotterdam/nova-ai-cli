@@ -14,7 +14,7 @@ const archiveOf = (files: Record<string, string>) =>
 
 function tempCache(t: { after(fn: () => void): void }): string {
   const dir = mkdtempSync(join(tmpdir(), "nova-standalone-"));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  t.after(() => rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
   return dir;
 }
 

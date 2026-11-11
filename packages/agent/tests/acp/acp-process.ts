@@ -63,7 +63,7 @@ export function startAcpProcess(
     close: () =>
       new Promise((resolveExit) => {
         child.once("exit", (code) => {
-          rmSync(home, { recursive: true, force: true });
+          rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
           resolveExit(code);
         });
         child.stdin!.end();
