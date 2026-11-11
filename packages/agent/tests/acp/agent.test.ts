@@ -1,0 +1,1100 @@
+﻿import assert from "node:assert/strict";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
+import { after, describe, it, test } from "node:test";
+import * as acp from "@agentclientprotocol/sdk";
+import {
+  contentBlocksToNovaContent,
+  contentBlocksToText,
+  frameSteeringPrompt,
+  NovaAgent,
+} from "../../src/acp/agent.js";
+import { describeResourceUri } from "../../src/acp/prompt-content.js";
+import { novaHomeRoot, setWorkspaceTrusted } from "../../src/core/nova-home.js";
+import { discoverSkills } from "../../src/core/skills.js";
+import { sse, text, withFakeNova } from "../../../../test-support/fake-nova.js";
+import { startOAuthMcpServer } from "../../../../test-support/fake-oauth-mcp.js";
+import {
+  appendSessionTurn,
+  deleteStoredSession,
+  loadStoredSession,
+} from "../../src/core/sessions.js";
+
+const testSessionsDir = mkdtempSync(join(tmpdir(), "nova-agent-sessions-"));
+process.env.NOVA_AI_CLI_SESSIONS_DIR = testSessionsDir;
+process.env.NOVA_AI_CLI_BACKGROUND_JOBS_DIR = join(
+  testSessionsDir,
+  "background-jobs",
+);
+after(() => {
+  delete process.env.NOVA_AI_CLI_SESSIONS_DIR;
+  delete process.env.NOVA_AI_CLI_BACKGROUND_JOBS_DIR;
+  rmSync(testSessionsDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+});
+
+describe("NovaAgent.initialize", () => {
+  it("advertises the protocol version, capabilities, and auth method", () => {
+    const agent = new NovaAgent();
+    const response = agent.initialize({
+      protocolVersion: acp.PROTOCOL_VERSION,
+      clientCapabilities: {},
+    });
+
+    assert.equal(response.protocolVersion, acp.PROTOCOL_VERSION);
+    assert.equal(response.agentCapabilities?.loadSession, true);
+    assert.equal(response.authMethods?.[0]?.id, "nova-api-key");
+    assert.ok(response.agentCapabilities?.sessionCapabilities?.delete);
+    assert.ok(response.agentCapabilities?.sessionCapabilities?.fork);
+    assert.ok(response.agentCapabilities?.sessionCapabilities?.resume);
+    assert.ok(response.agentCapabilities?.providers);
+    assert.ok(response.agentCapabilities?.nes);
+    assert.equal(
+      response.agentCapabilities?.nes?.events?.document?.didChange?.syncKind,
+      "full",
+    );
+    assert.equal(
+      response.agentCapabilities?.nes?.context?.recentFiles?.maxCount,
+      5,
+    );
+    assert.equal(response.agentCapabilities?.positionEncoding, "utf-16");
+    assert.equal(response.agentCapabilities?.promptCapabilities?.image, true);
+  });
+});
+
+describe("ACP image prompts", () => {
+  it("converts image blocks to OpenAI-compatible data URLs", () => {
+    assert.deepEqual(
+      contentBlocksToNovaContent([
+        { type: "text", text: "Inspect [#Image1]" },
+        { type: "image", mimeType: "image/png", data: "YWJj" },
+      ]),
+      [
+        { type: "text", text: "Inspect [#Image1]" },
+        {
+          type: "image_url",
+          image_url: { url: "data:image/png;base64,YWJj" },
+        },
+      ],
+    );
+  });
+});
+
+describe("ACP attachments", () => {
+  const file = resolve("repo", "src", "app.ts");
+  const uri = pathToFileURL(file).href;
+
+  it("reads a selection's path and line range from a file URI", () => {
+    assert.deepEqual(describeResourceUri(`${uri}#L10-L20`), { source: file, lines: "10-20" });
+    assert.deepEqual(describeResourceUri(`${uri}#L7`), { source: file, lines: "7" });
+    assert.deepEqual(describeResourceUri(`${uri}#L7-7`), { source: file, lines: "7" });
+    assert.deepEqual(describeResourceUri(uri), { source: file, lines: null });
+    assert.deepEqual(describeResourceUri("https://example.com/a#intro"), {
+      source: "https://example.com/a#intro",
+      lines: null,
+    });
+  });
+
+  it("gives the model the file and lines of embedded and linked attachments", () => {
+    const text = contentBlocksToText([
+      { type: "text", text: "Explain this:" },
+      { type: "resource", resource: { uri: `${uri}#L10-L12`, text: "const a = 1;" } },
+      { type: "resource_link", uri: `${uri}#L3`, name: "app.ts" },
+    ]);
+    assert.equal(
+      text,
+      [
+        "Explain this:",
+        `<attached_file path="${file}" lines="10-12">`,
+        "const a = 1;",
+        "</attached_file>",
+        `[Attached file, not included: ${file}, lines 3]`,
+      ].join("\n"),
+    );
+  });
+});
+
+describe("frameSteeringPrompt", () => {
+  it("wraps the original blocks between a preamble and a continue-the-task instruction", () => {
+    const framed = frameSteeringPrompt([
+      { type: "text", text: "focus on the login flow instead" },
+    ]);
+    assert.equal(framed.length, 3);
+    assert.match(
+      contentBlocksToText(framed),
+      /^The user sent this message while you were still working on the current task:\n\n<steering_message>\nfocus on the login flow instead\n<\/steering_message>\n\nThis is guidance for the task already in progress, not a new unrelated request\. Incorporate it and continue\.$/,
+    );
+  });
+
+  it("keeps non-text blocks (e.g. images) inside the wrapper untouched", () => {
+    const image = { type: "image", mimeType: "image/png", data: "YWJj" } as const;
+    const framed = frameSteeringPrompt([image]);
+    assert.deepEqual(framed[1], image);
+  });
+});
+
+describe("NovaAgent.takeSteeringMessages", () => {
+  it("delivers steered prompts to the model framed as guidance for the active turn", async () => {
+    const agent = new NovaAgent();
+    const { sessionId } = await agent.newSession({ cwd: "/repo", mcpServers: [] });
+    const fakeClient = {
+      request: async () => ({}),
+      notify: async () => {},
+    } as never;
+
+    agent.queuePrompt(
+      {
+        sessionId,
+        text: "focus on the login flow instead",
+        prompt: [{ type: "text", text: "focus on the login flow instead" }],
+        kind: "steer",
+      },
+      fakeClient,
+    );
+
+    const messages = await agent.takeSteeringMessages({ sessionId }, fakeClient);
+    assert.equal(messages.length, 1);
+    assert.equal(messages[0]?.role, "user");
+    assert.match(
+      messages[0]?.content as string,
+      /^The user sent this message while you were still working on the current task:/,
+    );
+    assert.match(
+      messages[0]?.content as string,
+      /<steering_message>\nfocus on the login flow instead\n<\/steering_message>/,
+    );
+  });
+});
+
+describe("NovaAgent.newSession", () => {
+  it("creates a session with a fresh id each time", async () => {
+    const agent = new NovaAgent();
+    const a = await agent.newSession({ cwd: "/repo", mcpServers: [] });
+    const b = await agent.newSession({ cwd: "/repo", mcpServers: [] });
+    assert.notEqual(a.sessionId, b.sessionId);
+    assert.deepEqual(a._meta?.["nova-ai-cli/mcp"], {
+      configured: [],
+      connected: [],
+      failures: [],
+    });
+    assert.ok(Array.isArray(a._meta?.["nova-ai-cli/skills"]));
+    assert.equal(a.modes?.currentModeId, "agent");
+    assert.deepEqual(
+      a.modes?.availableModes.map((mode) => mode.id),
+      ["agent", "ask", "plan", "autopilot"],
+    );
+    assert.equal(
+      a.modes?.availableModes.some((mode) => mode.id === "bypassAll"),
+      false,
+    );
+  });
+
+  it("accepts interaction modes but rejects permission modes", async () => {
+    const agent = new NovaAgent();
+    const { sessionId } = await agent.newSession({
+      cwd: "/repo",
+      mcpServers: [],
+    });
+
+    const agentTools = agent.contextUsage({ sessionId }).categories.tools;
+    assert.ok(agentTools > 0);
+    assert.deepEqual(agent.setSessionMode({ sessionId, modeId: "plan" }), {});
+    const planTools = agent.contextUsage({ sessionId }).categories.tools;
+    assert.ok(planTools > 0 && planTools < agentTools, "plan mode keeps only the read-only tools");
+    assert.deepEqual(agent.setSessionMode({ sessionId, modeId: "ask" }), {});
+    assert.equal(agent.contextUsage({ sessionId }).categories.tools, 0);
+    assert.throws(
+      () => agent.setSessionMode({ sessionId, modeId: "bypassAll" }),
+      /Unknown interaction mode: bypassAll/,
+    );
+  });
+});
+
+describe("NovaAgent.cancel", () => {
+  it("is a no-op for an unknown session id", () => {
+    const agent = new NovaAgent();
+    assert.doesNotThrow(() => agent.cancel({ sessionId: "unknown" }));
+  });
+
+  it("aborts the pending prompt for a known session id", async () => {
+    const agent = new NovaAgent();
+    const { sessionId } = await agent.newSession({
+      cwd: "/repo",
+      mcpServers: [],
+    });
+
+    // Reach into prompt()'s session state via authenticate's failure path is
+    // overkill here; instead drive a prompt that fails fast (no credentials)
+    // and assert cancel before it starts doesn't throw.
+    assert.doesNotThrow(() => agent.cancel({ sessionId }));
+  });
+});
+
+describe("NovaAgent.loadSession", () => {
+  it("throws when the stored session is not found", async () => {
+    const agent = new NovaAgent();
+    await assert.rejects(
+      () =>
+        agent.loadSession(
+          { sessionId: "missing", cwd: "/repo", mcpServers: [] },
+          {} as acp.AgentContext,
+        ),
+      /not found/,
+    );
+  });
+});
+
+describe("NovaAgent.prompt", () => {
+  it("throws when the session id is unknown", async () => {
+    const agent = new NovaAgent();
+    await assert.rejects(
+      () =>
+        agent.prompt(
+          { sessionId: "unknown", prompt: [{ type: "text", text: "hi" }] },
+          {} as acp.AgentContext,
+        ),
+      /Session unknown not found/,
+    );
+  });
+});
+
+describe("NovaAgent.deleteSession", () => {
+  it("removes both the in-memory session and the persisted file", async () => {
+    const agent = new NovaAgent();
+    const { sessionId } = await agent.newSession({
+      cwd: "/repo",
+      mcpServers: [],
+    });
+    appendSessionTurn(sessionId, { cwd: "/repo", title: "t" }, [
+      { role: "user", content: "hi" },
+    ]);
+    assert.ok(loadStoredSession(sessionId));
+
+    await agent.deleteSession({ sessionId });
+
+    assert.equal(loadStoredSession(sessionId), null);
+    await assert.rejects(
+      () =>
+        agent.prompt(
+          { sessionId, prompt: [{ type: "text", text: "hi" }] },
+          {} as acp.AgentContext,
+        ),
+      /not found/,
+    );
+  });
+
+  it("is a no-op when the session does not exist anywhere", async () => {
+    const agent = new NovaAgent();
+    await assert.doesNotReject(() =>
+      agent.deleteSession({ sessionId: "unknown" }),
+    );
+  });
+});
+
+describe("NovaAgent.forkSession", () => {
+  it("copies history under a new session id independent from the source", async () => {
+    const agent = new NovaAgent();
+    const sourceId = `test-fork-source-${crypto.randomUUID()}`;
+    appendSessionTurn(sourceId, { cwd: "/repo", title: "original" }, [
+      { role: "user", content: "hi" },
+      { role: "assistant", content: "hello" },
+    ]);
+
+    const result = await agent.forkSession({
+      sessionId: sourceId,
+      cwd: "/repo-fork",
+      mcpServers: [],
+    });
+
+    assert.notEqual(result.sessionId, sourceId);
+    assert.equal(result.modes?.currentModeId, "agent");
+
+    const forkedOnDisk = loadStoredSession(result.sessionId);
+    assert.deepEqual(forkedOnDisk?.messages, [
+      { role: "user", content: "hi" },
+      { role: "assistant", content: "hello" },
+    ]);
+    const sourceOnDisk = loadStoredSession(sourceId);
+    assert.equal(sourceOnDisk?.cwd, "/repo");
+
+    deleteStoredSession(sourceId);
+    deleteStoredSession(result.sessionId);
+  });
+
+  it("throws when the source session does not exist", async () => {
+    const agent = new NovaAgent();
+    await assert.rejects(
+      () =>
+        agent.forkSession({
+          sessionId: "unknown",
+          cwd: "/repo",
+          mcpServers: [],
+        }),
+      /not found/,
+    );
+  });
+});
+
+describe("NovaAgent.resumeSession", () => {
+  it("restores session state, unlike loadSession takes no client to notify", async () => {
+    const agent = new NovaAgent();
+    const sessionId = `test-resume-${crypto.randomUUID()}`;
+    appendSessionTurn(sessionId, { cwd: "/repo", title: "t" }, [
+      { role: "user", content: "hi" },
+      { role: "assistant", content: "hello" },
+    ]);
+
+    const result = await agent.resumeSession({
+      sessionId,
+      cwd: "/repo",
+      mcpServers: [],
+    });
+
+    assert.equal(result.modes?.currentModeId, "agent");
+
+    deleteStoredSession(sessionId);
+  });
+
+  it("throws when the session does not exist", async () => {
+    const agent = new NovaAgent();
+    await assert.rejects(
+      () =>
+        agent.resumeSession({
+          sessionId: "unknown",
+          cwd: "/repo",
+          mcpServers: [],
+        }),
+      /not found/,
+    );
+  });
+});
+
+describe("NovaAgent.rewindSession", () => {
+  it("rewinds live history, clears queued work, and notifies ACP clients", async () => {
+    const agent = new NovaAgent();
+    const sessionId = `test-agent-rewind-${crypto.randomUUID()}`;
+    appendSessionTurn(sessionId, { cwd: "/repo", title: "first" }, [
+      { role: "user", content: "first" },
+      { role: "assistant", content: "one" },
+    ]);
+    appendSessionTurn(sessionId, { cwd: "/repo", title: "first" }, [
+      { role: "user", content: "second" },
+      { role: "assistant", content: "two" },
+    ]);
+    await agent.resumeSession({ sessionId, cwd: "/repo", mcpServers: [] });
+    agent.queuePrompt({
+      sessionId,
+      text: "queued",
+      prompt: [{ type: "text", text: "queued" }],
+    });
+    const notifications: string[] = [];
+    const client = {
+      notify: async (method: string) => {
+        notifications.push(method);
+      },
+      request: async () => ({}),
+    } as unknown as acp.AgentContext;
+
+    const result = await agent.rewindSession({ sessionId }, client);
+
+    assert.equal(result.messageCount, 2);
+    assert.deepEqual(
+      result.removedCheckpoints.map((checkpoint) => checkpoint.userText),
+      ["second"],
+    );
+    assert.deepEqual(agent.listPromptQueue({ sessionId }).entries, []);
+    assert.deepEqual(notifications, ["_nova/queue/changed", "_nova/session/rewound"]);
+    assert.equal(
+      agent.listSessionCheckpoints({ sessionId }).checkpoints.length,
+      1,
+    );
+    await agent.closeSession({ sessionId });
+    deleteStoredSession(sessionId);
+  });
+});
+
+describe("NovaAgent.setSessionConfigOption", () => {
+  it("rejects an unknown configId", async () => {
+    const agent = new NovaAgent();
+    const { sessionId } = await agent.newSession({
+      cwd: "/repo",
+      mcpServers: [],
+    });
+    await assert.rejects(
+      () =>
+        agent.setSessionConfigOption({
+          sessionId,
+          configId: "unknown",
+          value: "x",
+        }),
+      /Unknown config option/,
+    );
+  });
+
+  it("rejects a boolean-shaped value for the model option", async () => {
+    const agent = new NovaAgent();
+    const { sessionId } = await agent.newSession({
+      cwd: "/repo",
+      mcpServers: [],
+    });
+    await assert.rejects(
+      () =>
+        agent.setSessionConfigOption({
+          sessionId,
+          configId: "model",
+          type: "boolean",
+          value: true,
+        } as unknown as acp.SetSessionConfigOptionRequest),
+      /non-empty string value/,
+    );
+  });
+
+  it("accepts a string model value and returns configOptions", async () => {
+    const agent = new NovaAgent();
+    const { sessionId } = await agent.newSession({
+      cwd: "/repo",
+      mcpServers: [],
+    });
+    const result = await agent.setSessionConfigOption({
+      sessionId,
+      configId: "model",
+      value: "some-model",
+    });
+    assert.ok(Array.isArray(result.configOptions));
+  });
+});
+
+describe("NovaAgent.setSessionSettings", () => {
+  it("starts from the settings sent on session/new and merges later changes", async () => {
+    const agent = new NovaAgent();
+    const { sessionId } = await agent.newSession({
+      cwd: "/repo",
+      mcpServers: [],
+      _meta: { "nova-ai-cli/settings": { maxToolRounds: 12, memory: false } },
+    });
+    assert.deepEqual(agent.setSessionSettings({ sessionId, settings: {} }).settings, {
+      maxToolRounds: 12,
+      autoCompact: true,
+      compactThreshold: null,
+      memory: false,
+      commandTimeoutSeconds: null,
+      searxngUrl: null,
+    });
+    assert.deepEqual(
+      agent.setSessionSettings({
+        sessionId,
+        settings: { autoCompact: false, compactThreshold: 0.6, commandTimeoutSeconds: 900 },
+      }).settings,
+      {
+        maxToolRounds: 12,
+        autoCompact: false,
+        compactThreshold: 0.6,
+        memory: false,
+        commandTimeoutSeconds: 600,
+        searxngUrl: null,
+      },
+    );
+    await agent.closeSession({ sessionId });
+  });
+
+  it("rejects an unknown session", () => {
+    const agent = new NovaAgent();
+    assert.throws(() =>
+      agent.setSessionSettings({ sessionId: "00000000-0000-4000-8000-000000000000", settings: {} }),
+    );
+  });
+});
+
+describe("NovaAgent.providers", () => {
+  it("disableProvider is a synchronous, process-wide no-throw call", () => {
+    const agent = new NovaAgent();
+    assert.deepEqual(agent.disableProvider({ id: "main" }), {});
+  });
+});
+
+describe("NovaAgent.nes", () => {
+  it("startNes returns a unique session id each call", () => {
+    const agent = new NovaAgent();
+    const a = agent.startNes({});
+    const b = agent.startNes({});
+    assert.notEqual(a.sessionId, b.sessionId);
+  });
+
+  it("closeNes is idempotent for an unknown session", () => {
+    const agent = new NovaAgent();
+    assert.deepEqual(agent.closeNes({ sessionId: "unknown" }), {});
+  });
+
+  it("suggestNes throws when the NES session does not exist", async () => {
+    const agent = new NovaAgent();
+    await assert.rejects(
+      () =>
+        agent.suggestNes(
+          {
+            sessionId: "unknown",
+            uri: "file:///a.ts",
+            version: 1,
+            position: { line: 0, character: 0 },
+            triggerKind: "manual",
+          },
+          {} as acp.AgentContext,
+        ),
+      /not found/,
+    );
+  });
+
+  it("acceptNes/rejectNes tolerate unknown suggestion ids", () => {
+    const agent = new NovaAgent();
+    const { sessionId } = agent.startNes({});
+    assert.doesNotThrow(() => agent.acceptNes({ sessionId, id: "s1" }));
+    assert.doesNotThrow(() =>
+      agent.rejectNes({ sessionId, id: "s1", reason: "rejected" }),
+    );
+  });
+
+  it("negotiates UTF-8 when it is the only client position encoding", () => {
+    const agent = new NovaAgent();
+    const response = agent.initialize({
+      protocolVersion: acp.PROTOCOL_VERSION,
+      clientCapabilities: { positionEncodings: ["utf-8"] },
+    });
+    assert.equal(response.agentCapabilities?.positionEncoding, "utf-8");
+  });
+
+  it("reads file URIs as absolute paths and returns a validated model edit", async () => {
+    const previousApiKey = process.env.NOVA_API_KEY;
+    const previousNesModel = process.env.NOVA_NES_MODEL;
+    const previousFetch = globalThis.fetch;
+    process.env.NOVA_API_KEY = "test-key";
+    process.env.NOVA_NES_MODEL = "test-nes-model";
+    let requestedPath = "";
+    const requestBodies: Array<Record<string, unknown>> = [];
+    globalThis.fetch = async (_input, init) => {
+      requestBodies.push(
+        JSON.parse(String(init?.body)) as Record<string, unknown>,
+      );
+      return new Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  edits: [
+                    {
+                      range: {
+                        start: { line: 0, character: 14 },
+                        end: { line: 0, character: 15 },
+                      },
+                      newText: "2",
+                    },
+                  ],
+                }),
+              },
+            },
+          ],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    };
+
+    try {
+      const agent = new NovaAgent();
+      agent.initialize({
+        protocolVersion: acp.PROTOCOL_VERSION,
+        clientCapabilities: { fs: { readTextFile: true } },
+      });
+      const { sessionId } = agent.startNes({
+        workspaceUri: "file:///C:/workspace",
+      });
+      const client = {
+        request: async (_method: string, params: { path: string }) => {
+          requestedPath = params.path;
+          return { content: "const value = 1;\n" };
+        },
+      } as unknown as acp.AgentContext;
+      const response = await agent.suggestNes(
+        {
+          sessionId,
+          uri: "file:///C:/workspace/a.ts",
+          version: 1,
+          position: { line: 0, character: 15 },
+          triggerKind: "manual",
+        },
+        client,
+      );
+
+      assert.ok(
+        requestedPath.replace(/\\/g, "/").endsWith("C:/workspace/a.ts"),
+      );
+      assert.equal(requestBodies[0]?.model, "test-nes-model");
+      assert.equal(response.suggestions.length, 1);
+      assert.equal(response.suggestions[0]?.kind, "edit");
+    } finally {
+      globalThis.fetch = previousFetch;
+      if (previousApiKey === undefined) delete process.env.NOVA_API_KEY;
+      else process.env.NOVA_API_KEY = previousApiKey;
+      if (previousNesModel === undefined) delete process.env.NOVA_NES_MODEL;
+      else process.env.NOVA_NES_MODEL = previousNesModel;
+    }
+  });
+
+  it("cancels an in-flight suggestion when the document changes", async () => {
+    const previousApiKey = process.env.NOVA_API_KEY;
+    const previousNesModel = process.env.NOVA_NES_MODEL;
+    const previousFetch = globalThis.fetch;
+    process.env.NOVA_API_KEY = "test-key";
+    process.env.NOVA_NES_MODEL = "test-nes-model";
+
+    let markFetchStarted!: () => void;
+    const fetchStarted = new Promise<void>((resolve) => {
+      markFetchStarted = resolve;
+    });
+    globalThis.fetch = async (_input, init) => {
+      markFetchStarted();
+      return await new Promise<Response>((_resolve, reject) => {
+        const signal = init?.signal;
+        const abort = () => reject(new DOMException("Aborted", "AbortError"));
+        if (signal?.aborted) abort();
+        else signal?.addEventListener("abort", abort, { once: true });
+      });
+    };
+
+    try {
+      const agent = new NovaAgent();
+      const { sessionId } = agent.startNes({
+        workspaceUri: "file:///C:/workspace",
+      });
+      const uri = "file:///C:/workspace/a.ts";
+      agent.didOpenNesDocument({
+        sessionId,
+        uri,
+        languageId: "typescript",
+        version: 1,
+        text: "const value = 1;\n",
+      });
+
+      const pending = agent.suggestNes(
+        {
+          sessionId,
+          uri,
+          version: 1,
+          position: { line: 0, character: 15 },
+          triggerKind: "automatic",
+        },
+        {} as acp.AgentContext,
+      );
+      await fetchStarted;
+      agent.didChangeNesDocument({
+        sessionId,
+        uri,
+        version: 2,
+        contentChanges: [{ text: "const value = 2;\n" }],
+      });
+
+      assert.deepEqual(await pending, { suggestions: [] });
+    } finally {
+      globalThis.fetch = previousFetch;
+      if (previousApiKey === undefined) delete process.env.NOVA_API_KEY;
+      else process.env.NOVA_API_KEY = previousApiKey;
+      if (previousNesModel === undefined) delete process.env.NOVA_NES_MODEL;
+      else process.env.NOVA_NES_MODEL = previousNesModel;
+    }
+  });
+});
+
+describe("NovaAgent background prompt isolation", () => {
+  type CapturedRequest = { url: string; body: Record<string, unknown> | null };
+
+  function installFetchStub(replies: {
+    models?: Array<Record<string, unknown>>;
+    chatText?: () => string;
+  }): { captured: CapturedRequest[]; restore: () => void } {
+    const captured: CapturedRequest[] = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (
+      input: RequestInfo | URL,
+      init?: RequestInit,
+    ) => {
+      const url = String(input);
+      const rawBody = typeof init?.body === "string" ? init.body : null;
+      captured.push({ url, body: rawBody ? JSON.parse(rawBody) : null });
+      if (url.includes("/chat/completions")) {
+        const text = replies.chatText?.() ?? "OK.";
+        const sse =
+          `data: {"object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":${JSON.stringify(text)}}}]}\n\n` +
+          "data: [DONE]\n\n";
+        return new Response(sse, {
+          status: 200,
+          headers: { "Content-Type": "text/event-stream" },
+        });
+      }
+      return new Response(
+        JSON.stringify({ data: replies.models ?? [], has_more: false }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }) as typeof fetch;
+    return {
+      captured,
+      restore: () => {
+        globalThis.fetch = originalFetch;
+      },
+    };
+  }
+
+  const fakeClient = {
+    request: async () => ({}),
+    notify: async () => {},
+  } as never;
+
+  async function waitForJobSettled(
+    agent: NovaAgent,
+    sessionId: string,
+    jobId: string,
+  ): Promise<string> {
+    for (let attempt = 0; attempt < 100; attempt++) {
+      const job = agent
+        .listBackgroundJobs({ sessionId })
+        .jobs.find((entry) => entry.jobId === jobId);
+      if (job && job.status !== "running") return job.status;
+      await new Promise((resolvePoll) => setTimeout(resolvePoll, 10));
+    }
+    throw new Error("Background job did not settle in time.");
+  }
+
+  it("uses the session's selected model for background jobs", async () => {
+    const previousKey = process.env.NOVA_API_KEY;
+    process.env.NOVA_API_KEY = "test-key";
+    const stub = installFetchStub({ chatText: () => "Background done." });
+    try {
+      const agent = new NovaAgent();
+      agent.initialize({
+        protocolVersion: acp.PROTOCOL_VERSION,
+        clientCapabilities: {},
+      });
+      const { sessionId } = await agent.newSession({
+        cwd: "/repo",
+        mcpServers: [],
+      });
+      await agent.setSessionConfigOption({
+        sessionId,
+        configId: "model",
+        value: "session-model",
+      });
+
+      const { job } = await agent.startBackgroundPrompt(
+        { sessionId, prompt: [{ type: "text", text: "background task" }] },
+        fakeClient,
+      );
+      await waitForJobSettled(agent, sessionId, job.jobId);
+
+      const chatRequest = stub.captured.find((entry) =>
+        entry.url.includes("/chat/completions"),
+      );
+      assert.ok(chatRequest);
+      assert.equal(chatRequest?.body?.model, "session-model");
+      deleteStoredSession(sessionId);
+    } finally {
+      stub.restore();
+      if (previousKey === undefined) delete process.env.NOVA_API_KEY;
+      else process.env.NOVA_API_KEY = previousKey;
+    }
+  });
+
+  it("rejects an image prompt for a non-image model before creating a job", async () => {
+    const previousKey = process.env.NOVA_API_KEY;
+    const previousModel = process.env.NOVA_MODEL;
+    process.env.NOVA_API_KEY = "test-key";
+    process.env.NOVA_MODEL = "text-only-model";
+    const stub = installFetchStub({
+      models: [{ id: "text-only-model", capabilities: ["tools"] }],
+    });
+    try {
+      const agent = new NovaAgent();
+      agent.initialize({
+        protocolVersion: acp.PROTOCOL_VERSION,
+        clientCapabilities: {},
+      });
+      const { sessionId } = await agent.newSession({
+        cwd: "/repo",
+        mcpServers: [],
+      });
+
+      await assert.rejects(
+        agent.startBackgroundPrompt(
+          {
+            sessionId,
+            prompt: [
+              { type: "text", text: "describe" },
+              { type: "image", mimeType: "image/png", data: "YWJj" },
+            ],
+          },
+          fakeClient,
+        ),
+        /does not support image input/,
+      );
+      assert.deepEqual(agent.listBackgroundJobs({ sessionId }).jobs, []);
+    } finally {
+      stub.restore();
+      if (previousKey === undefined) delete process.env.NOVA_API_KEY;
+      else process.env.NOVA_API_KEY = previousKey;
+      if (previousModel === undefined) delete process.env.NOVA_MODEL;
+      else process.env.NOVA_MODEL = previousModel;
+    }
+  });
+
+  it("hands background output to the next prompt instead of mutating history", async () => {
+    const previousKey = process.env.NOVA_API_KEY;
+    const previousModel = process.env.NOVA_MODEL;
+    process.env.NOVA_API_KEY = "test-key";
+    process.env.NOVA_MODEL = "test-model";
+    let reply = "BG RESULT: dependencies audited.";
+    const stub = installFetchStub({ chatText: () => reply });
+    try {
+      const agent = new NovaAgent();
+      agent.initialize({
+        protocolVersion: acp.PROTOCOL_VERSION,
+        clientCapabilities: {},
+      });
+      const { sessionId } = await agent.newSession({
+        cwd: "/repo",
+        mcpServers: [],
+      });
+
+      const { job } = await agent.startBackgroundPrompt(
+        { sessionId, prompt: [{ type: "text", text: "audit dependencies" }] },
+        fakeClient,
+      );
+      const status = await waitForJobSettled(agent, sessionId, job.jobId);
+      assert.equal(status, "completed");
+
+      reply = "Continuing with the audit results.";
+      await agent.prompt(
+        {
+          sessionId,
+          prompt: [{ type: "text", text: "continue the main task" }],
+        },
+        fakeClient,
+      );
+
+      const foreground = stub.captured
+        .filter((entry) => entry.url.includes("/chat/completions"))
+        .at(-1);
+      assert.ok(foreground);
+      const requestMessages = foreground?.body?.messages as Array<{
+        role: string;
+        content: unknown;
+      }>;
+      const contents = requestMessages.map((message) =>
+        String(message.content),
+      );
+      const handoffIndex = contents.findIndex((content) =>
+        content.includes("[Background agent job"),
+      );
+      const userIndex = contents.findIndex((content) =>
+        content.includes("continue the main task"),
+      );
+      assert.ok(handoffIndex !== -1, "handoff note missing from the request");
+      assert.ok(contents[handoffIndex].includes("BG RESULT"));
+      assert.ok(
+        handoffIndex < userIndex,
+        "handoff note must precede the user turn",
+      );
+      // The background job's own prompt stays out of foreground history as a
+      // standalone message (its text still appears inside the handoff note's
+      // job title).
+      assert.equal(
+        contents.some((content) => content.trim() === "audit dependencies"),
+        false,
+      );
+
+      const stored = await loadStoredSession(sessionId);
+      const storedContents = (stored?.messages ?? []).map((message) =>
+        String(message.content),
+      );
+      const storedHandoff = storedContents.findIndex((content) =>
+        content.includes("[Background agent job"),
+      );
+      const storedUser = storedContents.findIndex((content) =>
+        content.includes("continue the main task"),
+      );
+      assert.ok(storedHandoff !== -1);
+      assert.ok(storedHandoff < storedUser);
+      deleteStoredSession(sessionId);
+    } finally {
+      stub.restore();
+      if (previousKey === undefined) delete process.env.NOVA_API_KEY;
+      else process.env.NOVA_API_KEY = previousKey;
+      if (previousModel === undefined) delete process.env.NOVA_MODEL;
+      else process.env.NOVA_MODEL = previousModel;
+    }
+  });
+});
+
+describe("NovaAgent.authenticate with the env_var method", () => {
+  it("succeeds only when NOVA_API_KEY is set", async () => {
+    const previous = process.env.NOVA_API_KEY;
+    try {
+      delete process.env.NOVA_API_KEY;
+      await assert.rejects(
+        new NovaAgent().authenticate({ methodId: "nova-api-key-env" }),
+        (error: unknown) => (error as acp.RequestError).code === acp.RequestError.authRequired().code,
+      );
+      process.env.NOVA_API_KEY = "k";
+      assert.deepEqual(await new NovaAgent().authenticate({ methodId: "nova-api-key-env" }), {});
+      await assert.rejects(
+        new NovaAgent().authenticate({ methodId: "unknown" }),
+        (error: unknown) => (error as acp.RequestError).code === -32602,
+      );
+    } finally {
+      if (previous === undefined) delete process.env.NOVA_API_KEY;
+      else process.env.NOVA_API_KEY = previous;
+    }
+  });
+});
+
+describe("NovaAgent workspace MCP servers", () => {
+  it("starts the trusted workspace's servers, reports their status and lets the client opt out", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "nova-agent-mcp-"));
+    setWorkspaceTrusted(cwd, true);
+    try {
+      writeFileSync(
+        join(cwd, ".mcp.json"),
+        JSON.stringify({
+          mcpServers: {
+            local: { command: "nova-ai-definitely-missing-mcp-command", args: ["--x"], env: { TOKEN: "secret" } },
+            broken: { type: "http" },
+          },
+        }),
+      );
+      const agent = new NovaAgent();
+      const { _meta } = await agent.newSession({ cwd, mcpServers: [] });
+      const mcp = _meta?.["nova-ai-cli/mcp"] as {
+        configured: Array<Record<string, unknown>>;
+        failures: Array<{ serverName: string }>;
+      };
+      assert.deepEqual(mcp.configured, [
+        { name: "local", transport: "stdio", command: "nova-ai-definitely-missing-mcp-command", args: ["--x"], env: ["TOKEN"] },
+      ]);
+      assert.deepEqual(
+        mcp.failures.map((failure) => failure.serverName),
+        [".mcp.json:broken", "local"],
+      );
+
+      const optedOut = await agent.newSession({ cwd, mcpServers: [], _meta: { "nova-ai-cli/workspaceMcp": false } });
+      assert.deepEqual((optedOut._meta?.["nova-ai-cli/mcp"] as { configured: unknown[] }).configured, []);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    }
+  });
+});
+
+describe("NovaAgent model metadata", () => {
+  it("lists models with what a client needs and resolves the context window itself", async () => {
+    await withFakeNova(
+      () => sse([text("unused")]),
+      async () => {
+        const agent = new NovaAgent();
+        const listed = await agent.listModels({});
+        assert.equal(listed.defaultModel, "fake-model");
+        assert.deepEqual(
+          listed.models.map(({ id, name, contextWindow, imageInput }) => ({ id, name, contextWindow, imageInput })),
+          [{ id: "fake-model", name: null, contextWindow: 100000, imageInput: false }],
+        );
+        // An id the catalog doesn't list (an alias, a later page) is kept.
+        assert.equal((await agent.listModels({ preferred: "alias" })).defaultModel, "alias");
+
+        const { sessionId } = await agent.newSession({ cwd: "/repo", mcpServers: [] });
+        const usage = await agent.sessionContextUsage({ sessionId, model: "fake-model" });
+        assert.equal(usage.contextWindow, 100000);
+      },
+    );
+  });
+});
+
+describe("NovaAgent skills", () => {
+  it("lists every skill with its state and switches one off and on", () => {
+    const cwd = mkdtempSync(join(tmpdir(), "nova-agent-skills-"));
+    try {
+      mkdirSync(join(cwd, ".nova-ai", "skills", "deploy"), { recursive: true });
+      writeFileSync(join(cwd, ".nova-ai", "skills", "deploy", "SKILL.md"), "---\nname: deploy\ndescription: Deploy safely.\n---\nbody");
+      const agent = new NovaAgent();
+      // Only this workspace's: other tests' initialize installs the shared skills in the home.
+      const state = () => agent.listSkills({ cwd }).skills.filter((skill) => skill.source === "workspace").map(({ name, enabled }) => ({ name, enabled }));
+      assert.deepEqual(state(), [{ name: "deploy", enabled: true }]);
+      agent.setSkillEnabled({ cwd, name: "deploy", enabled: false, scope: "project" });
+      assert.deepEqual(state(), [{ name: "deploy", enabled: false }]);
+      agent.setSkillEnabled({ cwd, name: "deploy", enabled: true, scope: "project" });
+      assert.deepEqual(state(), [{ name: "deploy", enabled: true }]);
+      assert.throws(
+        () => agent.setSkillEnabled({ cwd, name: "missing", enabled: false, scope: "project" }),
+        /No skill named "missing"/,
+      );
+    } finally {
+      rmSync(cwd, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    }
+  });
+});
+
+describe("NovaAgent workspace trust", () => {
+  it("reports and sets trust; a workspace asking for nothing needs none", () => {
+    const cwd = mkdtempSync(join(tmpdir(), "nova-agent-trust-"));
+    try {
+      const agent = new NovaAgent();
+      assert.deepEqual(agent.workspaceTrust({ cwd }), { trusted: false, needsTrust: false });
+      writeFileSync(join(cwd, ".mcp.json"), JSON.stringify({ mcpServers: { s: { command: "x" } } }));
+      assert.deepEqual(agent.workspaceTrust({ cwd }), { trusted: false, needsTrust: true });
+      assert.deepEqual(agent.workspaceTrust({ cwd, trusted: true }), { trusted: true, needsTrust: false });
+    } finally {
+      rmSync(cwd, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    }
+  });
+});
+
+describe("NovaAgent MCP OAuth", () => {
+  it("reports a server that needs sign-in, signs in through the browser page and stays signed in", async () => {
+    const oauthServer = await startOAuthMcpServer();
+    const mcpServers = [{ type: "http" as const, name: "remote", url: oauthServer.url, headers: [] }];
+    const statusOf = (meta: Record<string, unknown> | null | undefined) =>
+      meta?.["nova-ai-cli/mcp"] as { connected: string[]; failures: Array<{ serverName: string; needsAuth?: boolean }> };
+    try {
+      const agent = new NovaAgent();
+      const first = await agent.newSession({ cwd: "/repo", mcpServers });
+      assert.deepEqual(statusOf(first._meta).failures.map(({ serverName, needsAuth }) => ({ serverName, needsAuth })), [
+        { serverName: "remote", needsAuth: true },
+      ]);
+
+      // The "browser": follows the authorization page, which redirects to the loopback callback.
+      const opened: string[] = [];
+      const browser = {
+        notify: async (method: string, params: { url: string }) => {
+          if (method !== "_nova/mcp/auth_url") return;
+          opened.push(params.url);
+          await fetch(params.url);
+        },
+        request: async () => ({}),
+      } as unknown as acp.AgentContext;
+      const signedIn = await agent.mcpLogin({ sessionId: first.sessionId, serverName: "remote" }, browser);
+      assert.equal(opened.length, 1);
+      assert.deepEqual(statusOf(signedIn).connected, ["remote"]);
+      assert.deepEqual(statusOf(signedIn).failures, []);
+
+      const second = await agent.newSession({ cwd: "/repo", mcpServers });
+      assert.deepEqual(statusOf(second._meta).connected, ["remote"], "the stored tokens are reused");
+
+      const signedOut = await agent.mcpLogout({ sessionId: second.sessionId, serverName: "remote" });
+      assert.equal(statusOf(signedOut).failures[0]?.needsAuth, true);
+      await agent.shutdown();
+    } finally {
+      await oauthServer.close();
+    }
+  });
+});
+
+test("initialize installs the shared Nova skills into the Nova home", async () => {
+  new NovaAgent().initialize({ protocolVersion: acp.PROTOCOL_VERSION, clientCapabilities: {} });
+  const bundled = () => discoverSkills(process.cwd()).filter((skill) => skill.bundledBy === "Nova AI Skills").map((skill) => skill.name);
+  for (let i = 0; i < 100 && bundled().length < 4; i++) await new Promise((done) => setTimeout(done, 50));
+  assert.deepEqual(bundled(), ["nova-docx", "nova-pdf", "nova-pptx", "nova-xlsx"]);
+  assert.ok(existsSync(join(novaHomeRoot(), "skills", "nova-pdf", "LICENSE.txt")));
+});

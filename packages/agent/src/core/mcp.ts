@@ -1,0 +1,350 @@
+import type * as acp from "@agentclientprotocol/sdk";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
+import type { Prompt } from "@modelcontextprotocol/sdk/types.js";
+import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
+import { FileOAuthProvider, NeedsAuthError, oauthConfigOf } from "./mcp-oauth.js";
+import { truncateToolOutput } from "./tool-output.js";
+import { toToolParameters, type ToolParameters } from "./tools/schema.js";
+import type { ToolDefinition, ToolResult } from "./tools/types.js";
+
+const TOOL_NAME_PREFIX = "mcp__";
+
+const WORKSPACE_PATH_PROPERTY =
+  /^(project_?path|workspace_?(root|path)?|root|cwd|(base_?)?dir(ectory)?)$/i;
+const WORKSPACE_PATH_HINT =
+  "pass the workspace root given at the top of this prompt";
+
+function sanitize(name: string): string {
+  return name.replace(/[^a-zA-Z0-9_-]/g, "_");
+}
+
+/** The name prefix of every tool listMcpTools makes for this server. */
+export function mcpToolPrefix(serverName: string): string {
+  return `${TOOL_NAME_PREFIX}${sanitize(serverName)}__`;
+}
+
+/**
+ * MCP servers often need the project/workspace root as an argument but
+ * cannot know it themselves; models routinely omit it. Point workspace-root
+ * shaped string properties at the cwd stated in the system prompt.
+ */
+function annotateWorkspacePathHints(parameters: ToolParameters): ToolParameters {
+  if (!parameters.properties) return parameters;
+  const properties: NonNullable<ToolParameters["properties"]> = {};
+  for (const [name, schema] of Object.entries(parameters.properties)) {
+    if (schema.type === "string" && WORKSPACE_PATH_PROPERTY.test(name)) {
+      properties[name] = {
+        ...schema,
+        description: schema.description
+          ? `${schema.description} (${WORKSPACE_PATH_HINT})`
+          : WORKSPACE_PATH_HINT,
+      };
+    } else {
+      properties[name] = schema;
+    }
+  }
+  return { ...parameters, properties };
+}
+
+function headersToRecord(headers: acp.HttpHeader[]): Record<string, string> {
+  return Object.fromEntries(headers.map((h) => [h.name, h.value]));
+}
+
+/** How long one MCP server may take to connect, and to list its tools. */
+export const MCP_TIMEOUT_MS = 10_000;
+const STDERR_TAIL_CHARS = 2_000;
+
+function buildTransport(
+  server: acp.McpServer,
+  stderrTail: { text: string },
+): Transport {
+  // Only used when the server answers 401: then stored tokens (refreshed as
+  // needed) or a NeedsAuthError; signing in is a separate step (_nova/mcp/login).
+  if ("type" in server && server.type === "http") {
+    return new StreamableHTTPClientTransport(new URL(server.url), {
+      requestInit: { headers: headersToRecord(server.headers) },
+      authProvider: new FileOAuthProvider(server.name, server.url, oauthConfigOf(server)),
+    });
+  }
+  if ("type" in server && server.type === "sse") {
+    return new SSEClientTransport(new URL(server.url), {
+      requestInit: { headers: headersToRecord(server.headers) },
+      authProvider: new FileOAuthProvider(server.name, server.url, oauthConfigOf(server)),
+    });
+  }
+  const stdio = server as acp.McpServerStdio;
+  const transport = new StdioClientTransport({
+    command: stdio.command,
+    args: stdio.args,
+    env: Object.fromEntries(stdio.env.map((e) => [e.name, e.value])),
+    // MCP processes are part of the interactive agent runtime. Inheriting
+    // stderr would write through the TUI's synchronized renderer and leave
+    // corrupt rows behind. Connection failures are returned through ACP
+    // status metadata instead.
+    stderr: "pipe",
+  });
+  // Always drained (a full pipe would block the server); the tail explains failures.
+  transport.stderr?.on("data", (chunk: Buffer) => {
+    stderrTail.text = (stderrTail.text + chunk.toString("utf8")).slice(-STDERR_TAIL_CHARS);
+  });
+  return transport;
+}
+
+export type McpConnection = {
+  serverName: string;
+  client: Client;
+  close(): Promise<void>;
+};
+
+export type McpConnectionFailure = {
+  serverName: string;
+  message: string;
+  /** The server wants an OAuth sign-in (_nova/mcp/login). */
+  needsAuth?: boolean;
+};
+
+export type McpConnectionResult = {
+  connections: McpConnection[];
+  failures: McpConnectionFailure[];
+};
+
+/**
+ * Connects all servers in parallel; each gets `timeoutMs`, so one slow or
+ * hung server cannot hold up the session. Failures are reported, never thrown.
+ */
+export async function connectMcpServers(
+  servers: acp.McpServer[],
+  options: { timeoutMs?: number } = {},
+): Promise<McpConnectionResult> {
+  const timeoutMs = options.timeoutMs ?? MCP_TIMEOUT_MS;
+  const attempts = await Promise.all(
+    servers
+      // experimental ACP-transport MCP, not yet supported
+      .filter((server) => !("type" in server && server.type === "acp"))
+      .map(async (server): Promise<McpConnection | McpConnectionFailure> => {
+        const client = new Client({ name: "nova-ai-cli", version: "1.0.0" });
+        const stderrTail = { text: "" };
+        try {
+          const transport = buildTransport(server, stderrTail);
+          await withTimeout(client.connect(transport), timeoutMs, () => client.close());
+          return { serverName: server.name, client, close: () => client.close() };
+        } catch (err) {
+          await client.close().catch(() => {});
+          if (err instanceof NeedsAuthError || err instanceof UnauthorizedError) {
+            return { serverName: server.name, message: new NeedsAuthError(server.name).message, needsAuth: true };
+          }
+          const reason = err instanceof Error ? err.message : "Connection failed.";
+          const stderr = stderrTail.text.trim();
+          return {
+            serverName: server.name,
+            message: stderr ? `${reason}\n${stderr}` : reason,
+          };
+        }
+      }),
+  );
+  const connections = attempts.filter((a): a is McpConnection => "client" in a);
+  const failures = attempts.filter((a): a is McpConnectionFailure => !("client" in a));
+  return { connections, failures };
+}
+
+async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  onTimeout: () => Promise<unknown> | void,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      void Promise.resolve(onTimeout()).catch(() => {});
+      reject(new Error(`Timed out after ${Math.round(timeoutMs / 1000)}s.`));
+    }, timeoutMs);
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export async function closeMcpConnections(
+  connections: McpConnection[],
+): Promise<void> {
+  await Promise.all(connections.map((c) => c.close().catch(() => {})));
+}
+
+function toToolResult(result: {
+  content?: unknown;
+  isError?: boolean;
+}): ToolResult {
+  const rawText = Array.isArray(result.content)
+    ? result.content
+        .map((block: unknown) => {
+          if (
+            typeof block === "object" &&
+            block !== null &&
+            "type" in block &&
+            (block as { type: string }).type === "text"
+          ) {
+            return (block as { type: string; text: string }).text;
+          }
+          return "";
+        })
+        .filter(Boolean)
+        .join("\n")
+    : "";
+  const text = truncateToolOutput(rawText, "MCP tool");
+
+  if (result.isError) return { error: text || "MCP tool call failed." };
+  const images = (Array.isArray(result.content) ? result.content : []).flatMap(
+    (block: unknown) => {
+      const image = block as { type?: unknown; data?: unknown; mimeType?: unknown } | null;
+      return image?.type === "image" &&
+        typeof image.data === "string" &&
+        typeof image.mimeType === "string"
+        ? [{ mimeType: image.mimeType, data: image.data }]
+        : [];
+    },
+  );
+  return images.length
+    ? { output: text || `Returned ${images.length} image(s).`, images }
+    : { output: text };
+}
+
+/** An MCP server's prompt, offered as the slash command `/mcp__<server>__<prompt>`. */
+export type McpPrompt = { name: string; prompt: Prompt; connection: McpConnection };
+
+export async function listMcpTools(
+  connections: McpConnection[],
+  options: { timeoutMs?: number } = {},
+): Promise<{
+  tools: ToolDefinition[];
+  prompts: McpPrompt[];
+  connections: McpConnection[];
+  failures: McpConnectionFailure[];
+}> {
+  const tools: ToolDefinition[] = [];
+  const readyConnections: McpConnection[] = [];
+  const failures: McpConnectionFailure[] = [];
+
+  const timeoutMs = options.timeoutMs ?? MCP_TIMEOUT_MS;
+  const listed = await Promise.all(
+    connections.map((connection) =>
+      withTimeout(connection.client.listTools(), timeoutMs, () => connection.close()).then(
+        (result) => ({ connection, result, error: null as unknown }),
+        (error: unknown) => ({ connection, result: null, error }),
+      ),
+    ),
+  );
+  const usedNames = new Set<string>();
+
+  for (const { connection, result, error } of listed) {
+    let serverTools;
+    if (result) {
+      serverTools = result.tools;
+      readyConnections.push(connection);
+    } else {
+      failures.push({
+        serverName: connection.serverName,
+        message:
+          error instanceof Error
+            ? `Could not list tools: ${error.message}`
+            : "Could not list tools.",
+      });
+      await connection.close().catch(() => {});
+      continue;
+    }
+    for (const tool of serverTools) {
+      // Sanitizing can map different names to one; keep every tool reachable.
+      const baseName = `${mcpToolPrefix(connection.serverName)}${sanitize(tool.name)}`;
+      let qualifiedName = baseName;
+      for (let suffix = 2; usedNames.has(qualifiedName); suffix++) {
+        qualifiedName = `${baseName}_${suffix}`;
+      }
+      usedNames.add(qualifiedName);
+      const parameters = toToolParameters(tool.inputSchema);
+      // Only an explicit readOnlyHint skips the permission prompt; absent
+      // annotations stay mutating (conservative default).
+      const readOnly = tool.annotations?.readOnlyHint === true;
+      tools.push({
+        name: qualifiedName,
+        description: `${tool.description ?? tool.name} (MCP server "${connection.serverName}")`,
+        parameters: parameters && annotateWorkspacePathHints(parameters),
+        mutating: !readOnly,
+        kind: readOnly ? "fetch" : "execute",
+        async execute(ctx, args) {
+          try {
+            const result = await connection.client.callTool(
+              { name: tool.name, arguments: args },
+              undefined,
+              { signal: ctx.signal },
+            );
+            return toToolResult(
+              result as { content?: unknown; isError?: boolean },
+            );
+          } catch (err) {
+            return { error: (err as Error).message };
+          }
+        },
+      });
+    }
+  }
+
+  const prompts = (
+    await Promise.all(readyConnections.map((connection) => listPrompts(connection, timeoutMs)))
+  ).flat();
+  return { tools, prompts, connections: readyConnections, failures };
+}
+
+/** The server's prompts, when it offers any; a server whose prompts fail to list keeps its tools. */
+async function listPrompts(connection: McpConnection, timeoutMs: number): Promise<McpPrompt[]> {
+  if (!connection.client.getServerCapabilities?.()?.prompts) return [];
+  const prompts: Prompt[] = [];
+  try {
+    let cursor: string | undefined;
+    do {
+      const page = await withTimeout(connection.client.listPrompts(cursor ? { cursor } : undefined), timeoutMs, () => {});
+      prompts.push(...page.prompts);
+      cursor = page.nextCursor;
+    } while (cursor);
+  } catch {
+    return [];
+  }
+  return prompts.map((prompt) => ({ name: `${mcpToolPrefix(connection.serverName)}${sanitize(prompt.name)}`, prompt, connection }));
+}
+
+/**
+ * What `/mcp__<server>__<prompt> [arguments]` sends: the prompt's messages as
+ * text and images. Arguments go by position, the last one takes the rest of
+ * the line; missing required ones are named in `missing` instead.
+ */
+export async function getMcpPrompt(
+  entry: McpPrompt,
+  args: string,
+  signal?: AbortSignal,
+): Promise<{ text: string; images: { data: string; mimeType: string }[] } | { missing: string[] }> {
+  const names = entry.prompt.arguments?.map((arg) => arg.name) ?? [];
+  const words = args.split(/\s+/).filter(Boolean);
+  const values = Object.fromEntries(
+    names
+      .map((name, index) => [name, index === names.length - 1 ? words.slice(index).join(" ") : (words[index] ?? "")])
+      .filter(([, value]) => value),
+  );
+  const missing = entry.prompt.arguments?.filter((arg) => arg.required && !values[arg.name]).map((arg) => arg.name) ?? [];
+  if (missing.length) return { missing };
+  const result = await entry.connection.client.getPrompt({ name: entry.prompt.name, arguments: values }, { signal });
+  const texts: string[] = [];
+  const images: { data: string; mimeType: string }[] = [];
+  for (const message of result.messages) {
+    const content = message.content;
+    if (content.type === "text") texts.push(content.text);
+    else if (content.type === "image") images.push({ data: content.data, mimeType: content.mimeType });
+    else if (content.type === "resource" && "text" in content.resource) {
+      texts.push(`<resource uri="${content.resource.uri}">\n${content.resource.text}\n</resource>`);
+    }
+  }
+  return { text: texts.join("\n\n"), images };
+}

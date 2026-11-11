@@ -2,10 +2,18 @@ name: CI
 
 on:
   pull_request:
+  # Other branches are tested through their pull request; running on both
+  # the push and the PR doubled every run.
   push:
     branches:
-      - "**"
+      - main
+      - alpha
   workflow_dispatch:
+    inputs:
+      release_dry_run:
+        description: "Only show what would be released (main/alpha)"
+        type: boolean
+        default: false
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -13,8 +21,13 @@ concurrency:
 
 jobs:
   test:
-    name: Test and build
-    runs-on: ubuntu-latest
+    name: Test (${{ matrix.os }}, Node ${{ matrix.node }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        node: [22, 24]
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -23,21 +36,246 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 24
-          registry-url: "https://registry.npmjs.org/"
+          node-version: ${{ matrix.node }}
+          cache: npm
       - name: Install dependencies
-        run: npm install
-      - name: Run tests
-        run: npm test
-      - name: Build the package
+        run: npm ci
+      # npm 11 skips dependency install scripts, and node-pty has no
+      # prebuilt binary for Linux; its macOS helper loses the execute bit.
+      - name: Prepare node-pty (Linux)
+        if: runner.os == 'Linux'
+        working-directory: node_modules/node-pty
+        run: npx --yes node-gyp rebuild
+      - name: Prepare node-pty (macOS)
+        if: runner.os == 'macOS'
+        run: chmod +x node_modules/node-pty/prebuilds/*/spawn-helper
+      # The CLI type-checks and runs against the agent's compiled output.
+      - name: Build the agent library
+        run: npm run build:lib
+      - name: Type check
+        run: npm run typecheck --workspaces
+      - name: Unit and ACP conformance tests
+        run: npm run test:unit --workspaces
+      # The real-terminal scenario; not yet verified on Windows (ConPTY).
+      - name: PTY scenario
+        if: runner.os != 'Windows'
+        run: npm run test:pty -w @datalabrotterdam/nova-ai-cli
+      - name: Build the packages
+        if: matrix.os == 'ubuntu-latest' && matrix.node == 24
         run: npm run build
 
-  release:
-    name: Release
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/alpha')
+  verify:
+    name: Verify packages
+    # Packs the agent and the CLI as npm will publish them and checks the tarballs
+    # (scripts/check-packages.mjs), so a release never ships a broken package.
     needs:
       - test
     runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Build the packages
+        run: npm run build
+      - name: Check the packages
+        run: node scripts/check-packages.mjs packages-out
+      - name: Upload the packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-packages
+          path: packages-out/*.tgz
+          if-no-files-found: error
+
+  binaries:
+    name: Build binaries
+    # Bun cross-compiles, so the Linux job builds what the release will ship for every platform.
+    needs:
+      - test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+      - name: Install dependencies
+        run: npm ci
+      - name: Build the packages
+        run: npm run build
+      - name: Build the binaries
+        run: bun scripts/build-binaries.mjs --version 0.0.0-smoke
+      - name: Upload the binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries
+          path: packages/cli/release/
+          if-no-files-found: error
+          retention-days: 3
+
+  installers:
+    name: Installers
+    # The install scripts for the website: copy this artifact to
+    # https://datalabrotterdam.nl/nova-ai/. They do not depend on a version, they look up
+    # the newest release themselves. Each release also carries them as assets.
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Check the scripts
+        run: |
+          sh -n scripts/install.sh
+          shellcheck scripts/install.sh scripts/smoke-install.sh
+      - name: Collect the scripts
+        run: |
+          mkdir -p site/nova-ai
+          cp scripts/install.sh scripts/install.ps1 scripts/install.cmd site/nova-ai/
+      - name: Upload the scripts
+        uses: actions/upload-artifact@v4
+        with:
+          name: installers
+          path: site/
+          if-no-files-found: error
+          retention-days: 30
+
+  manifests:
+    name: Validate manifests (${{ matrix.name }})
+    # The generated Homebrew cask and winget manifests, checked by the tools that will read
+    # them. Hashes are made up, so this checks the shape, not the downloads.
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: Homebrew, os: macos-latest }
+          - { name: winget, os: windows-latest }
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Generate the manifests
+        run: |
+          mkdir fixture
+          i=1
+          for t in darwin-arm64 darwin-x64; do printf '%064d  nova-ai-%s.tar.gz\n' "$i" "$t" >> fixture/SHA256SUMS; i=$((i+1)); done
+          for t in x64 arm64; do printf '%064d  nova-ai-windows-%s.zip\n' "$i" "$t" >> fixture/SHA256SUMS; i=$((i+1)); done
+          node scripts/package-manifests.mjs --version 9.9.9 --dir fixture
+          mkdir fixture-alpha
+          cp fixture/SHA256SUMS fixture-alpha/
+          node scripts/package-manifests.mjs --version 9.9.9-alpha.1 --dir fixture-alpha
+          test -f fixture-alpha/packaging/homebrew/nova-ai@alpha.rb
+          test ! -d fixture-alpha/packaging/winget
+      - name: Check the cask
+        if: matrix.name == 'Homebrew'
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: 1
+          HOMEBREW_NO_INSTALL_FROM_API: 1
+        run: |
+          brew tap-new --no-git local/nova-test
+          tap=$(brew --repository local/nova-test)
+          mkdir -p "$tap/Casks"
+          cp fixture/packaging/homebrew/nova-ai.rb fixture-alpha/packaging/homebrew/nova-ai@alpha.rb "$tap/Casks/"
+          brew trust local/nova-test || true # newer Homebrew only
+          brew style --cask local/nova-test/nova-ai local/nova-test/nova-ai@alpha
+          brew audit --cask local/nova-test/nova-ai local/nova-test/nova-ai@alpha
+      - name: Check the winget manifests
+        if: matrix.name == 'winget'
+        shell: pwsh
+        run: winget validate --manifest fixture/packaging/winget/9.9.9
+
+  binaries-smoke:
+    name: Smoke test (${{ matrix.target }})
+    # Runs each cross-compiled archive on its real OS and CPU, the only place a bad
+    # macOS signature or a missing Windows feature shows up.
+    needs:
+      - binaries
+    runs-on: ${{ matrix.os }}
+    # A hanging binary must fail here: the release waits for this job.
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: darwin-arm64, os: macos-latest, archive: tar.gz, tui: true }
+          - { target: darwin-x64, os: macos-15-intel, archive: tar.gz }
+          - { target: linux-x64, os: ubuntu-latest, archive: tar.gz, tui: true }
+          - { target: linux-arm64, os: ubuntu-24.04-arm, archive: tar.gz }
+          - { target: windows-x64, os: windows-latest, archive: zip, tui: true }
+          - { target: windows-arm64, os: windows-11-arm, archive: zip }
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Download the binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: binaries
+          path: binaries
+      - name: Smoke test
+        timeout-minutes: 3
+        run: node scripts/smoke-binary.mjs binaries/nova-ai-${{ matrix.target }}.${{ matrix.archive }} --version 0.0.0-smoke
+      - name: Smoke test the install script
+        if: runner.os != 'Windows'
+        timeout-minutes: 3
+        run: sh scripts/smoke-install.sh binaries 0.0.0-smoke
+      # The terminal side needs node-pty, so only one job per OS installs it. See the
+      # test job for why it needs preparing.
+      - name: Install dependencies
+        if: matrix.tui
+        run: npm ci
+      - name: Prepare node-pty (Linux)
+        if: matrix.tui && runner.os == 'Linux'
+        working-directory: node_modules/node-pty
+        run: npx --yes node-gyp rebuild
+      - name: Prepare node-pty (macOS)
+        if: matrix.tui && runner.os == 'macOS'
+        run: chmod +x node_modules/node-pty/prebuilds/*/spawn-helper
+      - name: Smoke test the terminal UI
+        if: matrix.tui
+        # Reported but not yet required on Windows, like the PTY scenario in the test job.
+        continue-on-error: ${{ runner.os == 'Windows' }}
+        timeout-minutes: 3
+        run: node scripts/smoke-binary.mjs binaries/nova-ai-${{ matrix.target }}.${{ matrix.archive }} --version 0.0.0-smoke --tui
+
+  release:
+    name: Release
+    # Each package is released on its own, from the commits that touch its
+    # folder (semantic-release-monorepo): an agent-only change releases only
+    # the agent. The agent goes first, so a CLI release can depend on it.
+    # A manual run with release_dry_run only reports.
+    if: >-
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+      (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/alpha')
+    needs:
+      - test
+      - verify
+      - manifests
+      - binaries-smoke
+    runs-on: ubuntu-latest
+    outputs:
+      # Empty unless a CLI version was released (and not in a dry run).
+      cli_version: ${{ steps.cli.outputs.version }}
     permissions:
       contents: write
       id-token: write
@@ -54,14 +292,32 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 24
+          cache: npm
           registry-url: "https://registry.npmjs.org/"
+      # semantic-release builds the binaries for the GitHub release of the CLI.
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
       - name: Install dependencies
-        run: npm install
-      - name: Restore tracked files
-        run: git restore .
+        run: npm ci
       - name: Update npm for trusted publishing support
         run: npm install -g npm@latest
-      - name: Build the package
+      - name: Build the packages
         run: npm run build
-      - name: Run semantic-release
-        run: npx semantic-release
+      - name: Restore tracked files
+        run: git restore .
+      - name: Release the agent
+        working-directory: packages/agent
+        run: npx semantic-release ${{ inputs.release_dry_run && '--dry-run' || '' }}
+      - name: Point the CLI at the released agent
+        run: node scripts/sync-agent-dependency.mjs
+      - name: Release the CLI
+        id: cli
+        working-directory: packages/cli
+        run: npx semantic-release ${{ inputs.release_dry_run && '--dry-run' || '' }}
+
+  # Homebrew and winget are published by hand for now: Actions > Publish packages.
+  # To publish automatically again, call .github/workflows/publish-packages.yml here
+  # (uses: ./.github/workflows/publish-packages.yml, with: version: the cli_version output,
+  # secrets: inherit, if: cli_version != '') and give this job `contents: read` permissions.

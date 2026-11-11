@@ -1,0 +1,61 @@
+# Nova AI for GitLab CI: runs `nova-ai -p` headless and optionally posts the answer on the
+# merge request. Include it and extend `.nova-ai` (docs/CI.md):
+#
+#   include:
+#     - remote: https://raw.githubusercontent.com/Datalab-Rotterdam/nova-ai-cli/main/ci/gitlab/nova-ai.yml
+#
+#   nova-review:
+#     extends: .nova-ai
+#     rules:
+#       - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+#     variables:
+#       NOVA_PROMPT: Review the changes in this merge request against $CI_MERGE_REQUEST_TARGET_BRANCH_NAME.
+#       NOVA_COMMENT: "true"
+#
+# CI/CD variables (masked): NOVA_API_KEY; for NOVA_COMMENT also NOVA_GITLAB_TOKEN, a project
+# access token with the `api` scope (the job token cannot post notes).
+
+.nova-ai:
+  image: node:22
+  variables:
+    NOVA_PROMPT: ""
+    # read-only, accept-edits or bypass-all; see docs/CI.md before choosing anything but read-only.
+    NOVA_PERMISSION_MODE: read-only
+    NOVA_MODEL: ""
+    NOVA_VERSION: alpha
+    NOVA_COMMENT: "false"
+    # The full history, so Nova can diff against the target branch.
+    GIT_DEPTH: "0"
+  script:
+    - |
+      set +e
+      if [ -n "$NOVA_MODEL" ]; then set -- --model "$NOVA_MODEL"; else set --; fi
+      npx -y "@datalabrotterdam/nova-ai-cli@$NOVA_VERSION" -p --output-format json --permission-mode "$NOVA_PERMISSION_MODE" "$@" -- "$NOVA_PROMPT" > nova-ai-result.json
+      code=$?
+      set -e
+      node -e '
+        const fs = require("node:fs");
+        let text;
+        try {
+          const result = JSON.parse(fs.readFileSync("nova-ai-result.json", "utf8"));
+          text = result.type === "error" ? `Nova AI failed: ${result.message}` : String(result.text ?? "").trimStart();
+        } catch {
+          text = fs.readFileSync("nova-ai-result.json", "utf8");
+        }
+        fs.writeFileSync("nova-ai-answer.md", text + "\n");
+      '
+      cat nova-ai-answer.md
+      if [ "$NOVA_COMMENT" = "true" ] && [ -n "$CI_MERGE_REQUEST_IID" ]; then
+        node -e '
+          const body = require("node:fs").readFileSync("nova-ai-answer.md", "utf8") + "\n<sub>Nova AI</sub>\n";
+          const url = `${process.env.CI_API_V4_URL}/projects/${process.env.CI_PROJECT_ID}/merge_requests/${process.env.CI_MERGE_REQUEST_IID}/notes`;
+          fetch(url, { method: "POST", headers: { "PRIVATE-TOKEN": process.env.NOVA_GITLAB_TOKEN ?? "", "Content-Type": "application/json" }, body: JSON.stringify({ body }) })
+            .then(async (response) => { if (!response.ok) { console.error(`Posting the note failed: ${response.status} ${await response.text()}`); process.exit(1); } });
+        '
+      fi
+      exit $code
+  artifacts:
+    when: always
+    paths:
+      - nova-ai-result.json
+      - nova-ai-answer.md

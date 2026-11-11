@@ -1,0 +1,1042 @@
+import { standalone } from "@datalabrotterdam/nova-ai-agent/core/standalone.js";
+import { howToUpdate } from "../../update-check.js";
+import {
+  allCommands,
+  findCommand,
+  type SlashCommandContext,
+} from "../commands/index.js";
+import { readClipboardImage } from "../files/clipboard-image.js";
+import { copyText } from "../files/clipboard-text.js";
+import { resolveFdPath } from "../files/find-fd.js";
+import { listWorkspaceFiles } from "../files/list-workspace-files.js";
+import {
+  DraftImageAttachments,
+  type PromptImageAttachment,
+} from "../files/prompt-images.js";
+import {
+  expandPromptPastes,
+  type PromptPasteAttachment,
+} from "../files/prompt-pastes.js";
+import { WorkspaceAutocompleteProvider } from "../files/workspace-autocomplete.js";
+import {
+  listSessionPickerItems,
+  listSessionsForCwd,
+} from "../session/session-picker.js";
+import type { McpSessionStatus, SessionRunner } from "../session/session-runner.js";
+import type { Store } from "../state/store.js";
+import type {
+  InteractionMode,
+  PermissionMode,
+  QuestionRequestView,
+  ToolCallView,
+  UIState,
+} from "../state/types.js";
+import {
+  QuestionState,
+  ScrollState,
+  SelectionState,
+  SliderState,
+  ToolInspectorState,
+  type SelectionItem,
+} from "./dialogs/state.js";
+import type { BackgroundJobSummary } from "@datalabrotterdam/nova-ai-agent/core/background.js";
+import { effortLabel } from "@datalabrotterdam/nova-ai-agent/core/model-capabilities.js";
+import type { KeyPress } from "./editor/prompt-editor.js";
+import { PromptEditor } from "./editor/prompt-editor.js";
+import { formatContextUsage, formatImageSize, formatUsageTotals } from "./format.js";
+import { bindPromptSubmission } from "./prompt-submission.js";
+import type { Cell, ScreenSelection } from "./screen-selection.js";
+import { parseMouse, wheelRows } from "./terminal-keyboard.js";
+import { ASSISTANT_MARKER, WORKING_FRAMES } from "./theme.js";
+import {
+  TranscriptCommitter,
+  type TranscriptSnapshot,
+} from "./transcript/committer.js";
+
+export type Overlay =
+  | { kind: "selection"; title: string; state: SelectionState }
+  | { kind: "slider"; title: string; state: SliderState }
+  | { kind: "text"; title: string; content: string; state: ScrollState }
+  | { kind: "tools"; state: ToolInspectorState };
+
+export type McpCounts = {
+  configured: number;
+  connected: number;
+  failed: number;
+  skills: number;
+};
+
+/** Everything the view renders, replaced as a whole on every change. */
+export type ViewState = {
+  ui: UIState;
+  transcript: TranscriptSnapshot;
+  overlay: Overlay | null;
+  question: QuestionState | null;
+  model: string;
+  /** The current model's thinking level ("High", "On"); null when it has none. */
+  effort: string | null;
+  mcp: McpCounts;
+  expandedTools: boolean;
+  exiting: boolean;
+  /** Transcript rows scrolled up from the newest; 0 follows the output. */
+  scroll: number;
+};
+
+export type ControllerIo = {
+  /** Raw terminal output that bypasses Ink (title, clearing the screen). */
+  write(data: string): void;
+  /** Text selected with the mouse, painted over Ink's frame. */
+  selection: ScreenSelection;
+};
+
+const EXIT_CONFIRM_MS = 2_000;
+
+/**
+ * The TUI's behaviour without React: commands, shortcuts, dialogs, prompt
+ * submission and transcript scrolling. The Ink view only renders
+ * `getView()` and forwards keys.
+ */
+export class TuiController {
+  readonly editor = new PromptEditor();
+  private readonly draftImages = new DraftImageAttachments();
+  private readonly committer = new TranscriptCommitter();
+  private readonly listeners = new Set<() => void>();
+  private overlay: Overlay | null = null;
+  private question: QuestionState | null = null;
+  private expandedTools = false;
+  private exiting = false;
+  private view: ViewState;
+  private lastEpoch = 0;
+  private scroll = 0;
+  private viewport = { rows: 10, contentRows: 0 };
+  private exitArmed = false;
+  private exitTimer: ReturnType<typeof setTimeout> | undefined;
+  private animationTimer: ReturnType<typeof setInterval> | undefined;
+  private windowTitle: string | undefined;
+  private windowTitleBusy = false;
+  private windowTitleFrame = 0;
+  private imagePasteActive = false;
+  private pressedAt: Cell | null = null;
+  private dragging = false;
+  private stopped = false;
+  private readonly unsubscribeStore: () => void;
+  private resolveExit: () => void = () => {};
+  /** Set by /update: the caller installs and restarts after the TUI exits. */
+  updateRequested = false;
+  /** Settles once the user asked to quit; `run` then tears the view down. */
+  readonly exitRequested = new Promise<void>((resolve) => {
+    this.resolveExit = resolve;
+  });
+
+  constructor(
+    readonly store: Store<UIState>,
+    readonly runner: SessionRunner,
+    private readonly io: ControllerIo,
+  ) {
+    this.view = this.buildView();
+    this.lastEpoch = this.view.transcript.epoch;
+    this.configureEditor();
+    this.unsubscribeStore = store.subscribe(() => this.refresh());
+  }
+
+  subscribe = (listener: () => void): (() => void) => {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  };
+
+  getView = (): ViewState => this.view;
+
+  start(): void {
+    // Fix a saved model that can't chat, and start the session (MCP servers,
+    // skills), before the first prompt needs them.
+    void this.runner.prepareSession().then(() => this.refresh());
+    this.syncWindowTitle();
+    this.animationTimer = setInterval(() => this.syncWindowTitle(true), 120);
+    this.animationTimer.unref?.();
+  }
+
+  /** Stops timers and the session; the caller unmounts the view afterwards. */
+  async stop(): Promise<void> {
+    if (this.stopped) return;
+    this.stopped = true;
+    if (this.exitTimer) clearTimeout(this.exitTimer);
+    if (this.animationTimer) clearInterval(this.animationTimer);
+    this.setWindowTitle(`${ASSISTANT_MARKER} Nova AI`);
+    this.unsubscribeStore();
+    await this.runner.close().catch(() => {});
+  }
+
+  requestExit(): void {
+    if (this.exiting) return;
+    this.exiting = true;
+    this.refresh();
+    this.resolveExit();
+  }
+
+  // ---------------------------------------------------------------- keys
+
+  /** Shortcuts that work while the prompt has focus; false lets the editor have the key. */
+  handlePromptKey(input: string, key: KeyPress): boolean {
+    if (this.io.selection.active && this.handleSelectionKey(input, key)) return true;
+    if (key.ctrl && input === "c") {
+      this.pressCtrlC();
+      return true;
+    }
+    if (this.exitArmed) {
+      this.exitArmed = false;
+      if (this.exitTimer) clearTimeout(this.exitTimer);
+      if (this.store.getState().statusLine?.startsWith("Press Ctrl+C"))
+        this.store.setState({ statusLine: null });
+    }
+    if (key.escape) {
+      if (this.editor.autocomplete) return false;
+      if (this.store.getState().busy) {
+        void this.interrupt();
+        return true;
+      }
+      if (this.scroll > 0) {
+        this.scrollTo(0);
+        return true;
+      }
+      return false;
+    }
+    if (key.pageUp || key.pageDown) {
+      const page = Math.max(1, this.viewport.rows - 2);
+      this.scrollBy(key.pageUp ? page : -page);
+      return true;
+    }
+    if (key.tab && key.shift) {
+      this.cycleInteractionMode();
+      return true;
+    }
+    if (key.meta && input === "v") {
+      void this.pasteClipboardImage();
+      return true;
+    }
+    if (!key.ctrl) return false;
+    switch (input) {
+      case "r":
+        this.openSessions();
+        return true;
+      case "p":
+        void this.openModels();
+        return true;
+      case "k":
+        this.openPermissionModes();
+        return true;
+      case "o":
+        this.toggleToolDetails();
+        return true;
+      case "t":
+        this.openToolInspector();
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  /** Ctrl+C clears the prompt and arms exit; a second press exits. */
+  private pressCtrlC(): void {
+    if (this.exitArmed) {
+      this.requestExit();
+      return;
+    }
+    if (this.editor.getText()) this.editor.setText("");
+    if (this.store.getState().busy) this.runner.cancel();
+    this.exitArmed = true;
+    this.store.setState({ statusLine: "Press Ctrl+C again within 2s to exit." });
+    if (this.exitTimer) clearTimeout(this.exitTimer);
+    this.exitTimer = setTimeout(() => {
+      this.exitArmed = false;
+      if (this.store.getState().statusLine?.startsWith("Press Ctrl+C"))
+        this.store.setState({ statusLine: null });
+    }, EXIT_CONFIRM_MS);
+    this.exitTimer.unref?.();
+  }
+
+  closeOverlay = (): void => {
+    this.overlay = null;
+    this.store.setState({ mode: "chat" });
+    this.refresh();
+  };
+
+  // ------------------------------------------------------------ overlays
+
+  private showOverlay(overlay: Overlay, mode: UIState["mode"] = "chat"): void {
+    this.overlay = overlay;
+    this.store.setState({ mode });
+    this.refresh();
+  }
+
+  showText(title: string, content: string): void {
+    this.showOverlay({
+      kind: "text",
+      title,
+      content: content || "(no output)",
+      state: new ScrollState(this.closeOverlay),
+    });
+  }
+
+  private showSelection(
+    title: string,
+    items: SelectionItem[],
+    mode: UIState["mode"],
+    onSelect: (value: string) => void,
+  ): void {
+    if (items.length === 0) {
+      this.showText(title, "Nothing to show.");
+      return;
+    }
+    const state = new SelectionState(
+      items,
+      (item) => {
+        this.closeOverlay();
+        onSelect(item.value);
+      },
+      this.closeOverlay,
+    );
+    this.showOverlay({ kind: "selection", title, state }, mode);
+  }
+
+  openSessions = (): void => {
+    this.showSelection(
+      "Sessions · age | prompt | datetime",
+      listSessionPickerItems(this.runner.cwd),
+      "session-switcher",
+      (sessionId) => {
+        if (!this.runner.resumeFrom(sessionId))
+          this.appendError(`Session not found: ${sessionId}`);
+      },
+    );
+  };
+
+  openModels = async (): Promise<void> => {
+    this.showText("Models", "Loading models...");
+    try {
+      const models = await this.runner.listModels();
+      this.showSelection(
+        "Models",
+        models.map((model) => ({
+          value: model.id,
+          label: model.thinking ? `${model.id} ◆` : model.id,
+          description:
+            [model.name, model.thinking ? "thinking" : null].filter(Boolean).join(" · ") || undefined,
+        })),
+        "model-picker",
+        (model) => this.setModel(model),
+      );
+    } catch (error) {
+      this.showText("Models", errorMessage(error, "Failed to list models."));
+    }
+  };
+
+  private effortName(): string | null {
+    const level = this.runner.currentEffort();
+    const efforts = level ? this.runner.modelEffortLevels() : [];
+    return level ? effortLabel(level, efforts) : null;
+  }
+
+  /** The selected model's levels and current one, or why it has none. */
+  private async effortLevels(): Promise<{ efforts: string[]; current: string } | string> {
+    let info: Awaited<ReturnType<SessionRunner["modelDetails"]>>;
+    try {
+      info = await this.runner.modelDetails();
+    } catch (error) {
+      return errorMessage(error, "Could not load the model list.");
+    }
+    const model = this.runner.model || "This model";
+    if (!info?.efforts.length) {
+      return info?.thinking
+        ? `${model} thinks at a fixed depth; there is no level to choose.`
+        : `${model} is not a thinking model; /model lists the ones marked ◆.`;
+    }
+    return { efforts: info.efforts, current: this.runner.currentEffort() ?? info.efforts[0]! };
+  }
+
+  /** /effort: a slider over the selected model's levels. */
+  openEffort = async (): Promise<void> => {
+    const levels = await this.effortLevels();
+    if (typeof levels === "string") {
+      this.showText("Thinking effort", levels);
+      return;
+    }
+    const state = new SliderState(
+      levels.efforts.map((value) => ({ value, label: effortLabel(value, levels.efforts) })),
+      Math.max(0, levels.efforts.indexOf(levels.current)),
+      (item) => {
+        this.closeOverlay();
+        this.runner.setEffort(item.value);
+        this.store.setState({ statusLine: `Thinking effort: ${item.label}.` });
+      },
+      this.closeOverlay,
+    );
+    this.showOverlay({ kind: "slider", title: `Thinking effort · ${this.runner.model}`, state });
+  };
+
+  /** /effort <level>: by id ("high") or name ("Extra high", "off"). */
+  setEffort = async (level: string): Promise<string> => {
+    const levels = await this.effortLevels();
+    if (typeof levels === "string") return levels;
+    const wanted = level.trim().toLowerCase();
+    const value = levels.efforts.find(
+      (candidate) => candidate === wanted || effortLabel(candidate, levels.efforts).toLowerCase() === wanted,
+    );
+    const names = levels.efforts.map((candidate) => effortLabel(candidate, levels.efforts).toLowerCase());
+    if (!value) return `${this.runner.model} has these levels: ${names.join(", ")}.`;
+    this.runner.setEffort(value);
+    this.refresh();
+    return `Thinking effort: ${effortLabel(value, levels.efforts)}.`;
+  };
+
+  openPermissionModes = (): void => {
+    const modes: Array<{ value: PermissionMode; label: string; description: string }> = [
+      { value: "ask", label: "ask", description: "Prompt before tools make changes" },
+      { value: "acceptEdits", label: "acceptEdits", description: "Allow file edits automatically" },
+      { value: "bypassAll", label: "bypassAll", description: "Allow all tools automatically" },
+    ];
+    this.showSelection("Permission mode", modes, "permission-picker", (value) =>
+      this.setPermissionMode(value as PermissionMode),
+    );
+  };
+
+  /** Esc during a turn: stop it, then ask whether background tasks it started keep running. */
+  private async interrupt(): Promise<void> {
+    this.runner.cancel();
+    const running = (await this.runner.listBackgroundJobs().catch(() => [])).filter(
+      (job) => job.status === "running",
+    );
+    if (running.length === 0) return;
+    const titles = running.map((job) => job.title).join(", ");
+    this.showSelection(
+      `Interrupted. ${running.length === 1 ? "1 background task is" : `${running.length} background tasks are`} still running.`,
+      [
+        { value: "keep", label: "Keep running", description: titles },
+        { value: "stop", label: running.length === 1 ? "Stop it" : "Stop them", description: titles },
+      ],
+      "background-tasks",
+      (value) => {
+        if (value !== "stop") return;
+        void Promise.allSettled(running.map((job) => this.runner.killBackgroundJob(job.jobId))).then(
+          (results) => {
+            const stopped = results.filter((result) => result.status === "fulfilled").length;
+            this.store.setState({ statusLine: `Stopped ${stopped} of ${running.length} background tasks.` });
+          },
+        );
+      },
+    );
+  }
+
+  /** /tasks: background shells and agents; pick one to read its output or stop it. */
+  openTasks = async (): Promise<void> => {
+    let jobs: BackgroundJobSummary[];
+    try {
+      jobs = await this.runner.listBackgroundJobs();
+    } catch (error) {
+      this.showText("Background tasks", errorMessage(error, "Failed to list background tasks."));
+      return;
+    }
+    if (jobs.length === 0) {
+      this.showText("Background tasks", "No background shells or agents in this session.");
+      return;
+    }
+    this.showSelection(
+      "Background tasks",
+      jobs.map((job) => ({ value: job.jobId, label: taskLabel(job), description: job.status })),
+      "background-tasks",
+      (jobId) => {
+        const job = jobs.find((candidate) => candidate.jobId === jobId)!;
+        if (job.status !== "running") {
+          void this.showTaskOutput(jobId);
+          return;
+        }
+        this.showSelection(
+          taskLabel(job),
+          [
+            { value: "output", label: "View output", description: "What it printed so far" },
+            { value: "stop", label: "Stop", description: "Kill this task" },
+          ],
+          "background-tasks",
+          (action) => void (action === "stop" ? this.stopTask(job) : this.showTaskOutput(jobId)),
+        );
+      },
+    );
+  };
+
+  private async showTaskOutput(jobId: string): Promise<void> {
+    try {
+      const result = await this.runner.backgroundOutput(jobId);
+      this.showText(
+        taskLabel(result.job),
+        `status: ${result.job.status}\noutputPath: ${result.outputPath ?? result.job.outputPath ?? ""}\n\n${result.output}${result.truncated ? "\n\n[output truncated]" : ""}`,
+      );
+    } catch (error) {
+      this.showText("Background task", errorMessage(error, "Failed to read output."));
+    }
+  }
+
+  /** Stops one task, then shows the list again. */
+  private async stopTask(job: BackgroundJobSummary): Promise<void> {
+    try {
+      await this.runner.killBackgroundJob(job.jobId);
+      this.store.setState({ statusLine: `Stopped ${taskLabel(job)}.` });
+    } catch (error) {
+      this.store.setState({ statusLine: errorMessage(error, `Failed to stop ${taskLabel(job)}.`) });
+    }
+    await this.openTasks();
+  }
+
+  openToolInspector = (): void => {
+    if (this.toolCalls().length === 0) {
+      this.showText("Tool calls", "No tool calls yet.");
+      return;
+    }
+    this.showOverlay({
+      kind: "tools",
+      state: new ToolInspectorState(() => this.toolCalls(), this.closeOverlay),
+    });
+  };
+
+  openMcpInspector = async (): Promise<void> => {
+    if (!this.runner.sessionLoaded) {
+      this.showText("MCP servers", "Connecting MCP servers...");
+      await this.runner.prepareSession();
+    }
+    const connection = this.runner.mcpSessionStatus();
+    const servers = connection.configured;
+    const configuredNames = new Set(servers.map((server) => server.name));
+    const configurationFailures = connection.failures
+      .filter((failure) => !configuredNames.has(failure.serverName))
+      .map((failure) => `${failure.serverName}\nstatus: failed - ${failure.message}`);
+    const rows = [
+      ...servers.map((server) => formatMcpServer(server, connection)),
+      ...configurationFailures,
+    ];
+    this.showText(
+      "MCP servers",
+      rows.length
+        ? rows.join("\n\n")
+        : "No MCP servers configured for this workspace.\n\nAdd a project .mcp.json or mcpServers to .nova-ai/settings.json; ACP connects them when the session starts.",
+    );
+  };
+
+  /** Every discovered skill with its state; switched-off skills stay listed. */
+  openSkillInspector = async (): Promise<void> => {
+    let skills: Awaited<ReturnType<SessionRunner["listSkills"]>>;
+    try {
+      skills = await this.runner.listSkills();
+    } catch (error) {
+      this.showText("Skills", errorMessage(error, "Could not list the skills."));
+      return;
+    }
+    const on = skills.filter((skill) => skill.enabled).length;
+    this.showText(
+      `Skills (${on} on, ${skills.length - on} off)`,
+      skills.length
+        ? [
+            ...skills.map(
+              (skill) =>
+                `${skill.name} [${skill.bundledBy ? `bundled with ${skill.bundledBy}` : skill.source}]${skill.enabled ? "" : " (off)"}\n${skill.description}\n${skill.path}`,
+            ),
+            "/skills off <name> switches one off in this project (--global: everywhere); /skills on <name> switches it back on.",
+          ].join("\n\n")
+        : "No skills discovered. Add SKILL.md under .nova-ai/skills (or .agents, .claude, .codex skills) in the workspace, or ~/.nova-ai/skills for all projects.",
+    );
+  };
+
+  /** /skills on|off <name> [--global]: applies from the next message. */
+  switchSkill = async (name: string, enabled: boolean, global: boolean): Promise<string> => {
+    let skills: Awaited<ReturnType<SessionRunner["setSkillEnabled"]>>;
+    try {
+      skills = await this.runner.setSkillEnabled(name, enabled, global);
+    } catch (error) {
+      const message = errorMessage(error, "Could not change the skill.");
+      return message.startsWith("No skill named") ? `${message} /skills lists them.` : message;
+    }
+    const stillOff = enabled && skills.some((skill) => skill.name === name && !skill.enabled);
+    return (
+      stillOff
+        ? `Switched "${name}" on ${global ? "globally" : "in this project"}, but it is still off ${global ? "in this project" : "globally"} (use ${global ? "/skills on " + name : "/skills on " + name + " --global"}).`
+        : `Skill "${name}" is ${enabled ? "on" : "off"} ${global ? "everywhere" : "in this project"} from the next message.`
+    );
+  };
+
+  openUsageInspector = async (): Promise<void> => {
+    this.showText("Context usage", "Calculating context usage...");
+    try {
+      const usage = await this.runner.refreshContextUsage();
+      const totals = this.store.getState().usageTotals;
+      this.showText("Context usage", [formatContextUsage(usage), ...(totals ? [formatUsageTotals(totals)] : [])].join("\n\n"));
+    } catch (error) {
+      this.showText("Context usage", errorMessage(error, "Failed to calculate context usage."));
+    }
+  };
+
+  /**
+   * The view reports its transcript size after each layout. While scrolled
+   * up, new output below grows the offset so the rows being read stay put.
+   */
+  setViewport(rows: number, contentRows: number): void {
+    const grown = contentRows - this.viewport.contentRows;
+    this.viewport = { rows, contentRows };
+    this.scrollTo(this.scroll > 0 && grown > 0 ? this.scroll + grown : this.scroll);
+  }
+
+  /** Positive scrolls toward older output. */
+  scrollBy(rows: number): void {
+    this.scrollTo(this.scroll + rows);
+  }
+
+  private scrollTo(offset: number): void {
+    const max = Math.max(0, this.viewport.contentRows - this.viewport.rows);
+    const next = Math.max(0, Math.min(offset, max));
+    if (next === this.scroll) return;
+    this.scroll = next;
+    this.refresh();
+  }
+
+  /** Wheel scrolls; press + drag selects text; a click while text is selected copies it. */
+  handleMouse(input: string, onClick?: (row: number, col: number) => boolean): void {
+    const mouse = parseMouse(input);
+    if (!mouse) return;
+    const rows = wheelRows(input);
+    if (rows) {
+      this.dropSelection();
+      this.scrollBy(rows);
+      return;
+    }
+    const button = mouse.button & ~28; // without Shift/Meta/Ctrl
+    const cell = { row: mouse.row, col: mouse.col };
+    if (button === 0 && !mouse.release) {
+      this.pressedAt = cell;
+      this.dragging = false;
+    } else if (button === 32 && this.pressedAt) {
+      if (!this.dragging)
+        this.store.setState({
+          statusLine: "Selecting: click, Enter or Ctrl+C copies · Shift+arrows extend · Esc cancels",
+        });
+      this.dragging = true;
+      this.io.selection.set(this.pressedAt, cell);
+    } else if (button === 0 && mouse.release) {
+      if (!this.dragging && this.io.selection.active) void this.copySelection();
+      else if (!this.dragging && this.pressedAt?.row === cell.row && this.pressedAt?.col === cell.col && !this.overlay && !this.question && !this.store.getState().pendingPermission) onClick?.(cell.row, cell.col);
+      this.pressedAt = null;
+    }
+  }
+
+  /** Keys while text is selected: Shift+arrows extend, Enter/Ctrl+C copy, Esc cancels; any other key drops it. */
+  private handleSelectionKey(input: string, key: KeyPress): boolean {
+    if (key.shift && (key.leftArrow || key.rightArrow || key.upArrow || key.downArrow)) {
+      this.io.selection.extend(
+        key.upArrow ? -1 : key.downArrow ? 1 : 0,
+        key.leftArrow ? -1 : key.rightArrow ? 1 : 0,
+      );
+      return true;
+    }
+    if (key.return || (key.ctrl && input === "c")) {
+      void this.copySelection();
+      return true;
+    }
+    this.dropSelection();
+    return Boolean(key.escape);
+  }
+
+  private dropSelection(): void {
+    this.io.selection.clear();
+    if (this.store.getState().statusLine?.startsWith("Selecting:")) this.store.setState({ statusLine: null });
+  }
+
+  private async copySelection(): Promise<void> {
+    const text = this.io.selection.text();
+    this.dropSelection();
+    if (!text) return;
+    const tool = await copyText(text, (data) => this.io.write(data));
+    this.store.setState({
+      statusLine: tool
+        ? `Copied ${text.length} characters.`
+        : `Sent ${text.length} characters to the terminal's clipboard.`,
+    });
+  }
+
+  /** /copy: the last answer (not its thinking) to the clipboard. */
+  async copyLastAnswer(): Promise<string> {
+    const answer = [...this.store.getState().messages]
+      .reverse()
+      .find((message) => message.role === "assistant" && !message.thinking && message.text.trim());
+    if (answer?.role !== "assistant") return "There is no answer to copy yet.";
+    const tool = await copyText(answer.text.trim(), (data) => this.io.write(data));
+    const size = `${answer.text.trim().length} characters`;
+    return tool
+      ? `Copied the last answer (${size}).`
+      : `Sent the last answer (${size}) to the terminal's clipboard; if nothing was copied, drag over it with the mouse and click to copy.`;
+  }
+
+  toggleToolDetails(): void {
+    this.expandedTools = !this.expandedTools;
+    this.store.setState({
+      statusLine: this.expandedTools
+        ? "Thinking and verbose tool details expanded; read/search stay compact."
+        : "Thinking and verbose tool details collapsed.",
+    });
+  }
+
+  toolCalls(): ToolCallView[] {
+    return this.store
+      .getState()
+      .messages.flatMap((message) => (message.role === "tool" ? [message.call] : []));
+  }
+
+  // ------------------------------------------------------- session state
+
+  setModel(model: string): void {
+    this.runner.setModel(model);
+    this.store.setState({ statusLine: `Model: ${model}` });
+  }
+
+  setPermissionMode(mode: PermissionMode): void {
+    this.runner.setPermissionMode(mode);
+    this.store.setState({ statusLine: `Permission mode: ${mode}` });
+  }
+
+  setInteractionMode(mode: InteractionMode): void {
+    this.runner.setInteractionMode(mode);
+  }
+
+  cycleInteractionMode(): void {
+    const modes = this.runner.modeIds;
+    this.setInteractionMode(modes[(modes.indexOf(this.runner.interactionMode) + 1) % modes.length]!);
+  }
+
+  openInteractionModes(): void {
+    const descriptions: Record<string, string> = {
+      agent: "Work on tasks using tools",
+      ask: "Answer questions without making changes",
+      plan: "Explore and propose a plan before implementation",
+    };
+    this.showSelection("How should Nova help? · Shift+Tab to cycle", this.runner.modeIds.map((mode) => ({
+      value: mode,
+      label: mode,
+      description: descriptions[mode] ?? "Custom interaction mode",
+    })), "interaction-picker", (mode) => this.setInteractionMode(mode as InteractionMode));
+  }
+
+  appendAssistant(text: string): void {
+    this.store.setState((state) => ({
+      messages: [
+        ...state.messages,
+        { id: `command-${Date.now()}-${state.messages.length}`, role: "assistant", text, streaming: false },
+      ],
+    }));
+  }
+
+  appendError = (text: string): void => {
+    this.store.setState((state) => ({
+      messages: [
+        ...state.messages,
+        { id: `error-${Date.now()}-${state.messages.length}`, role: "error", text },
+      ],
+    }));
+  };
+
+  readonly commandContext: SlashCommandContext = {
+    print: (text) => this.appendAssistant(text),
+    clear: () => void this.runner.startNewSession(),
+    newSession: () => this.runner.startNewSession(),
+    exit: () => this.requestExit(),
+    requestUpdate: () => {
+      const update = this.store.getState().updateAvailable;
+      if (!update) return "No newer nova-ai found on npm.";
+      if (!update.installable) {
+        const reason = standalone() ? "nova-ai can't write to its own folder" : "this copy wasn't installed with npm -g";
+        return `nova-ai ${update.latestVersion} is available, but ${reason}, so it can't update itself. ${howToUpdate(update)}`;
+      }
+      if (this.store.getState().busy) {
+        return "Wait for the current request to finish (or press Esc), then run /update again.";
+      }
+      this.updateRequested = true;
+      this.requestExit();
+      return null;
+    },
+    resumeSession: (sessionId) => {
+      const id = sessionId ?? listSessionsForCwd(this.runner.cwd)[0]?.sessionId;
+      return id ? this.runner.resumeFrom(id) : false;
+    },
+    openSessionSwitcher: this.openSessions,
+    openModelPicker: () => void this.openModels(),
+    hasThinkingLevels: () => this.runner.hasThinkingLevels(),
+    openEffortPicker: () => this.openEffort(),
+    setEffort: (level) => this.setEffort(level),
+    getModel: () => this.runner.model,
+    setModel: (model) => this.setModel(model),
+    getInteractionMode: () => this.runner.interactionMode,
+    getInteractionModes: () => this.runner.modeIds,
+    copyLastAnswer: () => this.copyLastAnswer(),
+    agentCommands: () => this.agentCommands(),
+    setInteractionMode: (mode) => this.setInteractionMode(mode),
+    getPermissionMode: () => this.store.getState().permissionMode,
+    setPermissionMode: (mode) => this.setPermissionMode(mode),
+    openPermissionPicker: this.openPermissionModes,
+    mcpSignIn: async (serverName, signIn) => {
+      try {
+        const status = await this.runner.mcpSignIn(serverName, signIn);
+        this.refresh();
+        const failure = status.failures.find((item) => item.serverName === serverName);
+        if (!signIn) return `Signed out of "${serverName}".`;
+        return failure
+          ? `Signed in, but "${serverName}" did not connect: ${failure.message}`
+          : `Signed in to "${serverName}"; its tools are available from the next message.`;
+      } catch (error) {
+        return errorMessage(error, signIn ? "Sign-in failed." : "Sign-out failed.");
+      }
+    },
+    trustWorkspace: async () => {
+      try {
+        await this.runner.trustWorkspace();
+      } catch (error) {
+        return errorMessage(error, "Could not trust the workspace.");
+      }
+      return "Workspace trusted: its allow rules apply now; MCP servers it declares start with the next session (/clear).";
+    },
+    openToolInspector: this.openToolInspector,
+    openTasks: this.openTasks,
+    openMcpInspector: this.openMcpInspector,
+    openSkillInspector: this.openSkillInspector,
+    switchSkill: this.switchSkill,
+    openUsageInspector: this.openUsageInspector,
+    steerMessage: (message) => this.runner.steer(message),
+    queuedMessages: () => this.runner.queuedMessages(),
+    clearQueuedMessages: () => this.runner.clearQueuedMessages(),
+    compactContext: () => this.runner.compactContext(),
+    rewind: (turns) => this.runner.rewind(turns),
+    listModels: () => this.runner.listModels(),
+    startBackgroundShell: (command) => this.runner.startBackgroundShell(command),
+    startBackgroundAgent: (prompt) => this.runner.startBackgroundAgent(prompt),
+    listBackgroundJobs: (kind) => this.runner.listBackgroundJobs(kind),
+    backgroundOutput: (jobId) => this.runner.backgroundOutput(jobId),
+    killBackgroundJob: (jobId) => this.runner.killBackgroundJob(jobId),
+    releaseBackgroundJob: (jobId) => this.runner.releaseBackgroundJob(jobId),
+  };
+
+  /** The agent's commands the CLI doesn't have itself; a hint is shown after the description. */
+  private agentCommands(): { name: string; description: string }[] {
+    return this.runner.agentCommands
+      .filter((command) => !findCommand(command.name))
+      .map(({ name, description, hint }) => ({ name, description: hint ? `${description} ${hint}` : description }));
+  }
+
+  // ------------------------------------------------------------ prompt
+
+  submit = async (
+    text: string,
+    images: PromptImageAttachment[] = [],
+    pastes: PromptPasteAttachment[] = [],
+  ): Promise<void> => {
+    const value = text.trim();
+    if (!value) return;
+    this.scroll = 0;
+    this.editor.addToHistory(value);
+    this.store.setState((state) => ({
+      inputHistory: [...state.inputHistory, value],
+      statusLine: null,
+    }));
+    if (!value.startsWith("/")) {
+      await this.runner.submit(value, images, pastes);
+      return;
+    }
+    const commandValue = expandPromptPastes(value, pastes);
+    const match = /^\/(\S+)(?:\s+([\s\S]*))?$/.exec(commandValue);
+    const name = match?.[1] ?? "";
+    const command = findCommand(name);
+    if (!command) {
+      // The agent's own commands (the user's command files) are prompts it expands.
+      if (this.agentCommands().some((agentCommand) => agentCommand.name === name)) {
+        await this.runner.submit(value, images, pastes);
+        return;
+      }
+      this.appendError(`Unknown command: /${name}`);
+      return;
+    }
+    try {
+      await command.run(this.commandContext, match?.[2] ?? "");
+    } catch (error) {
+      this.appendError(`Command /${name} failed: ${errorMessage(error, "Unknown error.")}`);
+      this.store.setState({ statusLine: `Command /${name} failed.` });
+    }
+  };
+
+  private async pasteClipboardImage(): Promise<void> {
+    if (this.imagePasteActive) return;
+    this.imagePasteActive = true;
+    const model = this.runner.model;
+    this.store.setState({ statusLine: "Reading clipboard image..." });
+    try {
+      if (!(await this.runner.supportsImageInput(model))) {
+        this.store.setState({ statusLine: `Model ${model} does not support image input.` });
+        return;
+      }
+      if (this.runner.model !== model && !(await this.runner.supportsImageInput())) {
+        this.store.setState({
+          statusLine: `Model ${this.runner.model} does not support image input.`,
+        });
+        return;
+      }
+      const attachment = this.draftImages.add(await readClipboardImage());
+      this.editor.insertTextAtCursor(attachment.marker);
+      this.store.setState({
+        statusLine: `Attached ${attachment.marker} (${formatImageSize(attachment.byteLength)}).`,
+      });
+    } catch (error) {
+      this.store.setState({
+        statusLine: `Image paste failed: ${errorMessage(error, "Unknown error.")}`,
+      });
+    } finally {
+      this.imagePasteActive = false;
+    }
+  }
+
+  private configureEditor(): void {
+    const { editor, runner, draftImages } = this;
+    editor.setQueuedMessageProvider(() => runner.queuedMessageEntries());
+    editor.onQueuedMessageEditStart = (id) => {
+      runner.beginQueuedMessageEdit(id);
+    };
+    editor.onQueuedMessageEditFinish = (id, text) => {
+      runner.finishQueuedMessageEdit(
+        id,
+        text,
+        draftImages.referencedBy(text),
+        editor.referencedPastes(text),
+      );
+      draftImages.clear();
+    };
+    editor.onChange = (text) => {
+      const id = editor.editingQueuedMessage();
+      if (id) runner.updateQueuedMessage(id, text);
+    };
+    const fdPath = resolveFdPath();
+    editor.setAutocompleteProvider(
+      new WorkspaceAutocompleteProvider(
+        () =>
+          [...allCommands(this.commandContext), ...this.agentCommands()].map((command) => ({
+            name: command.name,
+            description: command.description,
+          })),
+        runner.cwd,
+        // fd (when available) walks the tree itself and respects .gitignore;
+        // the pre-scanned list is only its fallback.
+        fdPath ? [] : listWorkspaceFiles(runner.cwd, 10_000),
+        fdPath,
+      ),
+    );
+    bindPromptSubmission({
+      editor,
+      draftImages,
+      runner,
+      store: this.store,
+      submit: this.submit,
+      appendError: this.appendError,
+    });
+  }
+
+  // -------------------------------------------------------------- view
+
+  private refresh(): void {
+    this.syncWindowTitle();
+    this.view = this.buildView();
+    if (this.view.transcript.epoch !== this.lastEpoch) {
+      this.lastEpoch = this.view.transcript.epoch;
+      // Another session, a rewind or verbose tools: back to the newest output.
+      if (this.scroll) {
+        this.scroll = 0;
+        this.view = this.buildView();
+      }
+    }
+    for (const listener of this.listeners) listener();
+  }
+
+  private buildView(): ViewState {
+    const ui = this.store.getState();
+    return {
+      ui,
+      transcript: this.committer.sync(ui, this.expandedTools),
+      overlay: this.overlay,
+      question: this.questionState(ui.pendingQuestion),
+      model: this.runner.model,
+      effort: this.effortName(),
+      mcp: mcpCounts(this.runner),
+      expandedTools: this.expandedTools,
+      exiting: this.exiting,
+      scroll: this.scroll,
+    };
+  }
+
+  private questionState(pending: QuestionRequestView | null): QuestionState | null {
+    if (!pending) {
+      this.question = null;
+      return null;
+    }
+    if (this.question?.pending.id !== pending.id) {
+      this.question = new QuestionState(pending, () => {});
+    }
+    return this.question;
+  }
+
+  private syncWindowTitle(advance = false): void {
+    const busy = this.store.getState().busy;
+    if (busy !== this.windowTitleBusy) {
+      this.windowTitleBusy = busy;
+      this.windowTitleFrame = 0;
+    } else if (busy && advance) {
+      this.windowTitleFrame = (this.windowTitleFrame + 1) % WORKING_FRAMES.length;
+    }
+    const marker = busy ? WORKING_FRAMES[this.windowTitleFrame]! : ASSISTANT_MARKER;
+    this.setWindowTitle(`${marker} ${busy ? "Nova-AI" : "Nova AI"}`);
+  }
+
+  private setWindowTitle(title: string): void {
+    if (title === this.windowTitle) return;
+    this.windowTitle = title;
+    this.io.write(`\u001b]0;${title}\u0007`);
+  }
+}
+
+function formatMcpServer(
+  server: McpSessionStatus["configured"][number],
+  status: McpSessionStatus,
+): string {
+  const lines = [`${server.name} [${server.transport}]`];
+  if (server.url) lines.push(`url: ${server.url}`);
+  if (server.command) {
+    lines.push(`command: ${server.command}`);
+    if (server.args?.length) lines.push(`args: ${server.args.join(" ")}`);
+    if (server.env?.length) lines.push(`env: ${server.env.join(", ")} (values hidden)`);
+  }
+  const failure = status.failures.find((item) => item.serverName === server.name);
+  lines.push(
+    failure?.needsAuth
+      ? `status: needs sign-in - /mcp login ${server.name}`
+      : failure
+      ? `status: failed - ${failure.message}`
+      : status.connected.includes(server.name)
+        ? "status: connected"
+        : "status: configured; connection starts with the ACP session",
+  );
+  return lines.join("\n");
+}
+
+export function mcpCounts(runner: SessionRunner): McpCounts {
+  const status = runner.mcpSessionStatus();
+  return {
+    configured: status.configured.length,
+    connected: status.connected.length,
+    failed: status.failures.length,
+    skills: runner.skillSessionStatus().length,
+  };
+}
+
+function errorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback;
+}
+
+function taskLabel(job: BackgroundJobSummary): string {
+  return `${job.kind === "terminal" ? "shell" : "agent"}: ${job.title}`;
+}

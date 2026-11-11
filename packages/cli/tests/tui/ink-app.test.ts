@@ -1,0 +1,519 @@
+import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
+import { createRequire } from "node:module";
+import test from "node:test";
+import type * as acp from "@agentclientprotocol/sdk";
+import type { Terminal as HeadlessTerminal } from "@xterm/headless";
+import { runInkTui } from "../../src/tui/ink/app.js";
+import { detectKittyKeyboard, kittyKeyboardOverride } from "../../src/tui/ink/terminal-keyboard.js";
+import { SessionRunner } from "../../src/tui/session/session-runner.js";
+import type { Store } from "../../src/tui/state/store.js";
+import type { PermissionScope, UIState } from "../../src/tui/state/types.js";
+import { installFakeAgentQueue } from "./fake-agent-queue.js";
+
+const { Terminal } = createRequire(import.meta.url)("@xterm/headless") as typeof import("@xterm/headless");
+
+/** A terminal for Ink: output goes into a headless xterm we can read back. */
+class FakeTerminalOutput extends EventEmitter {
+  readonly isTTY = true;
+  columns = 80;
+  rows = 24;
+  raw = "";
+  constructor(private readonly terminal: HeadlessTerminal) {
+    super();
+  }
+  write(data: string): boolean {
+    this.raw += data;
+    this.terminal.write(data);
+    return true;
+  }
+  /** Like a real window resize: the terminal re-wraps, then the app is told. */
+  resize(columns: number, rows: number): void {
+    this.columns = columns;
+    this.rows = rows;
+    this.terminal.resize(columns, rows);
+    this.emit("resize");
+  }
+}
+
+class FakeTerminalInput extends EventEmitter {
+  readonly isTTY = true;
+  private readonly pending: string[] = [];
+  setRawMode(): this {
+    return this;
+  }
+  setEncoding(): this {
+    return this;
+  }
+  ref(): this {
+    return this;
+  }
+  unref(): this {
+    return this;
+  }
+  resume(): this {
+    return this;
+  }
+  pause(): this {
+    return this;
+  }
+  read(): string | null {
+    return this.pending.shift() ?? null;
+  }
+  send(data: string): void {
+    this.pending.push(data);
+    this.emit("readable");
+  }
+}
+
+function text(terminal: HeadlessTerminal, from = 0): string {
+  const buffer = terminal.buffer.active;
+  const lines: string[] = [];
+  for (let index = from; index < buffer.length; index++) {
+    lines.push(buffer.getLine(index)?.translateToString(true) ?? "");
+  }
+  return lines.join("\n");
+}
+
+const screen = (terminal: HeadlessTerminal) => text(terminal, terminal.buffer.active.baseY);
+
+async function waitFor(check: () => boolean, describe: () => string, timeoutMs = 3_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    await new Promise<void>((resolve) => setTimeout(resolve, 10));
+    if (check()) return;
+  }
+  throw new Error(`Timed out. Screen:\n${describe()}`);
+}
+
+test("the Ink TUI runs a prompt, answers a permission, redraws on Ctrl+O, selects with a drag and exits on Ctrl+C twice", async () => {
+  const terminal = new Terminal({ cols: 80, rows: 24, allowProposedApi: true, scrollback: 1_000, convertEol: true });
+  const stdout = new FakeTerminalOutput(terminal);
+  const stdin = new FakeTerminalInput();
+  let store!: Store<UIState>;
+  const prompts: string[] = [];
+
+  const run = runInkTui({ apiKey: "test", defaultModel: "test-model" }, process.cwd(), [], {
+    stdin: stdin as unknown as NodeJS.ReadStream,
+    stdout: stdout as unknown as NodeJS.WriteStream,
+    checkForUpdate: async () => null,
+    kittyKeyboard: false,
+    createRunner(created) {
+      store = created;
+      const runner = new SessionRunner(created, { apiKey: "test", defaultModel: "test-model" }, process.cwd());
+      installFakeAgentQueue(runner);
+      const internals = runner as unknown as {
+        agent: { prompt(params: acp.PromptRequest): Promise<{ stopReason: "end_turn" }> };
+      };
+      internals.agent.prompt = async (params) => {
+        const prompt = params.prompt.map((block) => (block.type === "text" ? block.text : "")).join("");
+        prompts.push(prompt);
+        created.setState((state) => ({
+          messages: [
+            ...state.messages,
+            { id: `reply-${prompts.length}`, role: "assistant", text: `**echo**: ${prompt}`, streaming: false },
+          ],
+        }));
+        return { stopReason: "end_turn" };
+      };
+      return runner;
+    },
+  });
+
+  const show = () => screen(terminal);
+  await waitFor(() => /Nova AI/.test(show()) && /Model: test-model \| Mode: agent/.test(show()), show);
+  await new Promise<void>((resolve) => setTimeout(resolve, 100));
+  const initialLines = show().split("\n");
+  assert.ok(initialLines.findIndex((line) => line.includes("Nova AI")) < 4, "the welcome header starts at the top");
+  assert.match(show(), /Ask Nova anything…/);
+  assert.ok(initialLines.findIndex((line) => line.includes("│>")) > 12, "the prompt stays at the bottom");
+  const statusRow = initialLines.findIndex((line) => line.includes("Approvals:"));
+  const approvalCol = initialLines[statusRow]!.indexOf("Approvals:");
+  stdin.send(`\u001b[<0;${approvalCol + 1};${statusRow + 1}M\u001b[<0;${approvalCol + 1};${statusRow + 1}m`);
+  await waitFor(() => /Permission mode/.test(show()), show);
+  stdin.send("\u001b");
+  await waitFor(() => !/Permission mode/.test(show()), show);
+  const promptRow = initialLines.findIndex((line) => line.includes("│>"));
+  stdin.send("/");
+  await waitFor(() => /› help/.test(show()) && /│> \//.test(show()), show);
+  assert.equal(show().split("\n").findIndex((line) => line.includes("│>")), promptRow, "autocomplete opens above the prompt");
+  assert.equal(show().split("\n").findIndex((line) => line.includes("Nova AI")), initialLines.findIndex((line) => line.includes("Nova AI")), "autocomplete does not move the transcript");
+  stdin.send("\u001b");
+  await waitFor(() => !/› help/.test(show()), show);
+  stdin.send("\u0003");
+  await waitFor(() => /Ask Nova anything…/.test(show()), show);
+  store.setState({ statusLine: "A temporary notice", updateAvailable: { currentVersion: "1.0.0", latestVersion: "1.1.0", tag: "latest", command: "npm ".repeat(40) }, contextUsage: { totalTokens: 200, contextWindow: 1000 } as UIState["contextUsage"] });
+  await waitFor(() => /A temporary notice/.test(show()) && /Context/.test(show()) && /Update 1\.1\.0/.test(show()), show);
+  const noticeLines = show().split("\n");
+  assert.equal(noticeLines.findIndex((line) => line.includes("│>")), promptRow, "notices and context do not move the prompt");
+  assert.equal(noticeLines.findIndex((line) => line.includes("Nova AI")), initialLines.findIndex((line) => line.includes("Nova AI")), "the header stays in place");
+  assert.ok(noticeLines.findIndex((line) => line.includes("A temporary notice")) < promptRow);
+  store.setState({ statusLine: null, updateAvailable: null, contextUsage: null });
+  assert.match(stdout.raw, /\u001b\]0;✦ Nova AI\u0007/, "window title");
+
+  stdin.send("hello there\r");
+  await waitFor(() => /echo: hello there/.test(show()), show);
+  await waitFor(() => /Completed in \d+s · \d{1,2}:\d{2}:\d{2}/.test(show()), show);
+  assert.deepEqual(prompts, ["hello there"]);
+
+  stdin.send("\u001b[Z"); // Shift+Tab
+  await waitFor(() => /Model: test-model \| Mode: ask \|/.test(show()), show);
+
+  const answers: Array<[boolean, PermissionScope]> = [];
+  store.setState({
+    pendingPermission: {
+      toolCallId: "tool-1",
+      toolName: "run_command",
+      title: "Run `npm test`",
+      kind: "execute",
+      args: { command: "npm test" },
+      resolve(allow, scope) {
+        answers.push([allow, scope]);
+        store.setState({ pendingPermission: null });
+      },
+    },
+  });
+  await waitFor(() => /\[a\] once/.test(show()), show);
+  assert.equal(show().split("\n").findIndex((line) => line.includes("│>")), promptRow, "the prompt stays below the dialog");
+  stdin.send("s");
+  await waitFor(() => answers.length === 1 && /│>/.test(show()), show);
+  assert.deepEqual(answers, [[true, "session"]]);
+
+  stdin.send("\u000f"); // Ctrl+O redraws the transcript with verbose tools
+  await waitFor(() => /Thinking and verbose tool details expanded/.test(show()), show);
+  await waitFor(() => /echo: hello there/.test(show()), show);
+  assert.equal(show().match(/echo: hello there/g)?.length, 1, "shown once after the redraw");
+
+  // Drag over the answer: selected in the app, painted in inverse.
+  const answerRow = show().split("\n").findIndex((line) => line.includes("echo: hello there"));
+  const answerCol = show().split("\n")[answerRow]!.indexOf("echo");
+  stdin.send(`\u001b[<0;${answerCol + 1};${answerRow + 1}M`);
+  stdin.send(`\u001b[<32;${answerCol + 4};${answerRow + 1}M`);
+  await waitFor(() => /Selecting: click/.test(show()), show);
+  const inverse = (col: number) => terminal.buffer.active.getLine(terminal.buffer.active.baseY + answerRow)!.getCell(col)!.isInverse();
+  await waitFor(() => Boolean(inverse(answerCol) && inverse(answerCol + 3) && !inverse(answerCol + 4)), show);
+  stdin.send("\u001b[1;2C"); // Shift+Right grows it by one cell
+  await waitFor(() => Boolean(inverse(answerCol + 4)), show);
+  stdin.send("\u001b");
+  await waitFor(() => !inverse(answerCol) && !/Selecting: click/.test(show()), show);
+  assert.match(show(), /echo: hello there/, "the text under the selection is restored");
+
+  stdin.send("unfinished draft");
+  await waitFor(() => /unfinished draft/.test(show()), show);
+  assert.doesNotMatch(show(), /Ask Nova anything…/);
+  stdin.send("\u0003");
+  await waitFor(() => /Press Ctrl\+C again within 2s to exit\./.test(show()), show);
+  assert.doesNotMatch(show(), /unfinished draft/);
+  stdin.send("\u0003");
+  await run;
+  assert.match(stdout.raw, /Resume this session with: nova-ai --resume /);
+  assert.match(stdout.raw, /\u001b\[\?1049h/, "runs on the alternate screen");
+  assert.match(stdout.raw, /\u001b\[\?1049l/, "gives the terminal its screen back on exit");
+  assert.match(stdout.raw, /\u001b\[\?1000l\u001b\[\?1002l\u001b\[\?1006l/, "mouse reporting is off again");
+  assert.doesNotMatch(screen(terminal), /Model: test-model \| Mode: ask/, "the prompt and status are removed on exit");
+  terminal.dispose();
+});
+
+test("a long answer scrolls inside the full screen with the prompt pinned on top", async () => {
+  const terminal = new Terminal({ cols: 60, rows: 16, allowProposedApi: true, scrollback: 1_000, convertEol: true });
+  const stdout = new FakeTerminalOutput(terminal);
+  Object.defineProperty(stdout, "columns", { value: 60 });
+  Object.defineProperty(stdout, "rows", { value: 16 });
+  const stdin = new FakeTerminalInput();
+  let store!: Store<UIState>;
+  const run = runInkTui({ apiKey: "test", defaultModel: "test-model" }, process.cwd(), [], {
+    stdin: stdin as unknown as NodeJS.ReadStream,
+    stdout: stdout as unknown as NodeJS.WriteStream,
+    checkForUpdate: async () => null,
+    kittyKeyboard: false,
+    createRunner(created) {
+      store = created;
+      const runner = new SessionRunner(created, { apiKey: "test", defaultModel: "test-model" }, process.cwd());
+      installFakeAgentQueue(runner);
+      return runner;
+    },
+  });
+  const show = () => screen(terminal);
+  await waitFor(() => /Model: test-model \| Mode: agent/.test(show()), show);
+  const startOutput = stdout.raw.length;
+
+  const code = Array.from({ length: 60 }, (_, index) => `const line${index} = ${index};`).join("\n");
+  store.setState({
+    busy: true,
+    messages: [
+      { id: "u1", role: "user", text: "print sixty lines" },
+      { id: "a1", role: "assistant", text: `\`\`\`ts\n${code}`, streaming: true },
+    ],
+  });
+  await waitFor(() => /line59 = 59/.test(show()), show);
+  assert.match(show(), /Model: test-model \| Mode: agent \| Approvals: ask/, "the prompt and status stay visible");
+  assert.doesNotMatch(show(), /line0 = 0;/, "older rows are above the viewport");
+  assert.doesNotMatch(stdout.raw.slice(startOutput), /\u001b\[2J/, "frames fit the screen: no full repaint");
+
+  store.setState({
+    busy: false,
+    messages: [
+      { id: "u1", role: "user", text: "print sixty lines" },
+      { id: "a1", role: "assistant", text: `\`\`\`ts\n${code}\n\`\`\``, streaming: false },
+    ],
+  });
+  await waitFor(() => /^> print sixty lines/.test(show()), show);
+
+  stdin.send("\u001b[5~"); // PgUp
+  await waitFor(() => /↑\d+ lines/.test(show()) && !/line59 = 59/.test(show()), show);
+  stdin.send("\u001b[5~".repeat(8));
+  await waitFor(() => /line0 = 0;/.test(show()), show);
+  assert.equal(show().match(/print sixty lines/g)?.length, 1, "the prompt itself shows, not pinned twice");
+
+  stdin.send("\u001b"); // Esc jumps back to the newest output
+  await waitFor(() => /line59 = 59/.test(show()) && !/↑\d+ lines/.test(show()), show);
+
+  stdin.send("\u001b[<64;10;5M"); // wheel up
+  await waitFor(() => /↑3 lines/.test(show()), show);
+  stdin.send("\u001b[<0;10;5M\u001b[<0;10;5m"); // a click is ignored
+  stdin.send("\u001b[<65;10;5M"); // wheel down
+  await waitFor(() => !/↑\d+ lines/.test(show()), show);
+  assert.doesNotMatch(show(), /\[</, "mouse reports never reach the prompt");
+  assert.match(stdout.raw, /\u001b\[\?1006h/, "mouse reporting is on while the TUI runs");
+
+  stdin.send("\u0003");
+  stdin.send("\u0003");
+  await run;
+  terminal.dispose();
+});
+
+test("resizing redraws cleanly without leftover prompt borders", async () => {
+  const terminal = new Terminal({ cols: 100, rows: 30, allowProposedApi: true, scrollback: 1_000, convertEol: true });
+  const stdout = new FakeTerminalOutput(terminal);
+  stdout.columns = 100;
+  stdout.rows = 30;
+  const stdin = new FakeTerminalInput();
+  let store!: Store<UIState>;
+  const run = runInkTui({ apiKey: "test", defaultModel: "test-model" }, process.cwd(), [], {
+    stdin: stdin as unknown as NodeJS.ReadStream,
+    stdout: stdout as unknown as NodeJS.WriteStream,
+    checkForUpdate: async () => null,
+    kittyKeyboard: false,
+    createRunner(created) {
+      store = created;
+      const runner = new SessionRunner(created, { apiKey: "test", defaultModel: "test-model" }, process.cwd());
+      installFakeAgentQueue(runner);
+      return runner;
+    },
+  });
+  const show = () => screen(terminal);
+  await waitFor(() => /Model: test-model \| Mode: agent/.test(show()), show);
+  await waitFor(() => /⣀⣤⣴⣶⣶/.test(show()), show);
+  stdout.resize(80, 30);
+  await waitFor(() => !/⣀⣤⣴⣶⣶/.test(show()), show);
+  stdout.resize(100, 30);
+  await waitFor(() => /⣀⣤⣴⣶⣶/.test(show()), show);
+  store.setState({
+    messages: [
+      {
+        id: "a1",
+        role: "assistant",
+        text: `Once upon a time. ${"A story about a lantern. ".repeat(12)}\n\n- ${"a long list item ".repeat(10)}`,
+        streaming: false,
+      },
+    ],
+  });
+  await waitFor(() => /lantern/.test(show()), show);
+  assert.doesNotMatch(show(), /⣀⣤⣴⣶⣶/, "the logo does not overlap conversation text");
+
+  // Shrink step by step, the way dragging a window edge does.
+  for (const columns of [96, 90, 84, 77, 70, 64]) {
+    stdout.resize(columns, 30);
+    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+  }
+  await waitFor(
+    () => (text(terminal).match(/╭/g)?.length ?? 0) === 1 && /Model: test-model \| Mode: agent/.test(show()),
+    () => text(terminal),
+  );
+  // Every printed line fits: the terminal had to wrap none of them itself.
+  const buffer = terminal.buffer.active;
+  const softWrapped: string[] = [];
+  for (let index = 0; index < buffer.length; index++) {
+    const line = buffer.getLine(index);
+    if (line?.isWrapped) softWrapped.push(buffer.getLine(index - 1)?.translateToString(true) ?? "");
+  }
+  assert.deepEqual(softWrapped, []);
+  assert.equal(text(terminal).match(/Once upon a time/g)?.length, 1, "the answer is printed once");
+  assert.equal(text(terminal).match(/Nova AI/g)?.length, 1, "the header is printed once");
+
+  stdin.send("\u0003");
+  stdin.send("\u0003");
+  await run;
+  terminal.dispose();
+});
+
+test("the terminal probe detects the kitty protocol and keeps keys typed meanwhile", async () => {
+  const probe = (reply: string | null, typedFirst = "") => {
+    const stdin = Object.assign(new PassThrough(), { isTTY: true, isRaw: false, setRawMode: () => {} });
+    const stdout = {
+      isTTY: true,
+      written: "",
+      write(data: string) {
+        this.written += data;
+        if (typedFirst) stdin.write(typedFirst);
+        if (reply !== null) setImmediate(() => stdin.write(reply));
+        return true;
+      },
+    };
+    return { stdin, stdout, result: detectKittyKeyboard(stdin, stdout, 200) };
+  };
+
+  const kitty = probe("\u001b[?0u\u001b[?62;22c", "ab");
+  assert.equal(await kitty.result, true);
+  assert.equal(kitty.stdout.written, "\u001b[?u\u001b[c");
+  assert.equal(String(kitty.stdin.read()), "ab", "keys typed during the probe come back once");
+  assert.equal(kitty.stdin.read(), null);
+
+  const plain = probe("\u001b[?1;2c");
+  const started = Date.now();
+  assert.equal(await plain.result, false);
+  assert.ok(Date.now() - started < 150, "a terminal without kitty support is known without waiting for the timeout");
+
+  assert.equal(await probe(null).result, false, "no answer at all: off after the timeout");
+  assert.equal(kittyKeyboardOverride({ NOVA_KITTY_KEYBOARD: "1" }), true);
+  assert.equal(kittyKeyboardOverride({ NOVA_KITTY_KEYBOARD: "0" }), false);
+  assert.equal(kittyKeyboardOverride({}), null);
+});
+
+test("/update exits the TUI and asks the caller to install and restart", async () => {
+  const terminal = new Terminal({ cols: 100, rows: 24, allowProposedApi: true, scrollback: 1_000, convertEol: true });
+  const stdout = new FakeTerminalOutput(terminal);
+  const stdin = new FakeTerminalInput();
+  const run = runInkTui({ apiKey: "test", defaultModel: "test-model" }, process.cwd(), [], {
+    stdin: stdin as unknown as NodeJS.ReadStream,
+    stdout: stdout as unknown as NodeJS.WriteStream,
+    checkForUpdate: async () => ({
+      currentVersion: "1.0.0",
+      latestVersion: "1.1.0",
+      tag: "latest",
+      command: "npm install -g @datalabrotterdam/nova-ai-cli@latest",
+      installable: true,
+    }),
+    kittyKeyboard: false,
+    createRunner(created) {
+      const runner = new SessionRunner(created, { apiKey: "test", defaultModel: "test-model" }, process.cwd());
+      installFakeAgentQueue(runner);
+      return runner;
+    },
+  });
+  const show = () => screen(terminal);
+  await waitFor(() => /Type \/update to install it\./.test(show()), show);
+
+  stdin.send("/update\r");
+  const result = await run;
+  assert.equal(result.updateRequested, true);
+  assert.ok(result.sessionId);
+  terminal.dispose();
+});
+
+test("/update without an installable update explains and keeps running", async () => {
+  const terminal = new Terminal({ cols: 100, rows: 24, allowProposedApi: true, scrollback: 1_000, convertEol: true });
+  const stdout = new FakeTerminalOutput(terminal);
+  const stdin = new FakeTerminalInput();
+  const run = runInkTui({ apiKey: "test", defaultModel: "test-model" }, process.cwd(), [], {
+    stdin: stdin as unknown as NodeJS.ReadStream,
+    stdout: stdout as unknown as NodeJS.WriteStream,
+    checkForUpdate: async () => ({
+      currentVersion: "1.0.0",
+      latestVersion: "1.1.0",
+      tag: "latest",
+      command: "npm install -g @datalabrotterdam/nova-ai-cli@latest",
+      installable: false,
+    }),
+    kittyKeyboard: false,
+    createRunner(created) {
+      const runner = new SessionRunner(created, { apiKey: "test", defaultModel: "test-model" }, process.cwd());
+      installFakeAgentQueue(runner);
+      return runner;
+    },
+  });
+  const show = () => screen(terminal);
+  await waitFor(() => /Run: npm install -g/.test(show()), show);
+
+  stdin.send("/update\r");
+  await waitFor(() => /wasn't installed with npm -g/.test(text(terminal)), () => text(terminal));
+  stdin.send("\u0003");
+  await waitFor(() => /Press Ctrl\+C again/.test(show()), show);
+  stdin.send("\u0003");
+  const result = await run;
+  assert.equal(result.updateRequested, false);
+  terminal.dispose();
+});
+
+test("Ctrl+C clears the prompt; Esc interrupts and asks about running background tasks; /tasks stops one", async () => {
+  const terminal = new Terminal({ cols: 80, rows: 24, allowProposedApi: true, scrollback: 1_000, convertEol: true });
+  const stdout = new FakeTerminalOutput(terminal);
+  const stdin = new FakeTerminalInput();
+  let store!: Store<UIState>;
+  let cancels = 0;
+  const killed: string[] = [];
+  const job = { jobId: "job-1", sessionId: "s", kind: "terminal", title: "npm run dev", status: "running", createdAt: "", updatedAt: "" } as const;
+  const run = runInkTui({ apiKey: "test", defaultModel: "test-model" }, process.cwd(), [], {
+    stdin: stdin as unknown as NodeJS.ReadStream,
+    stdout: stdout as unknown as NodeJS.WriteStream,
+    checkForUpdate: async () => null,
+    kittyKeyboard: false,
+    createRunner(created) {
+      store = created;
+      const runner = new SessionRunner(created, { apiKey: "test", defaultModel: "test-model" }, process.cwd());
+      installFakeAgentQueue(runner);
+      runner.cancel = () => void cancels++;
+      runner.listBackgroundJobs = async () => [
+        { ...job },
+        { ...job, jobId: "job-2", title: "tsc --watch" },
+        { ...job, jobId: "job-3", title: "old build", status: "completed" },
+      ];
+      runner.killBackgroundJob = async (jobId) => {
+        killed.push(jobId);
+        return { ...job, status: "killed" };
+      };
+      return runner;
+    },
+  });
+  const show = () => screen(terminal);
+  await waitFor(() => /Model: test-model \| Mode: agent/.test(show()), show);
+
+  stdin.send("half a thought");
+  await waitFor(() => /│> half a thought/.test(show()), show);
+  stdin.send("\u0003");
+  await waitFor(() => !/half a thought/.test(show()), show);
+  assert.match(show(), /Press Ctrl\+C again/, "clearing also arms exit");
+
+  store.setState({ busy: true });
+  stdin.send("\u001b");
+  await waitFor(() => /Interrupted\. 2 background tasks are still running\./.test(show()), show);
+  assert.equal(cancels, 1, "the turn is cancelled right away");
+  assert.match(show(), /Keep running +npm run dev, tsc --watch/);
+  stdin.send("\u001b[B"); // Down to "Stop them"
+  stdin.send("\r");
+  await waitFor(() => /Stopped 2 of 2 background tasks\./.test(show()), show);
+  assert.deepEqual(killed, ["job-1", "job-2"], "the finished job is left alone");
+
+  store.setState({ busy: false });
+  // /tasks: every job with its status; a running one can be stopped on its own.
+  stdin.send("/tasks");
+  await waitFor(() => /│> \/tasks/.test(show()), show);
+  stdin.send("\r");
+  await waitFor(() => /Background tasks/.test(show()) && /agent: old build|shell: old build/.test(show()), show);
+  assert.match(show(), /shell: tsc --watch +running/);
+  stdin.send("\u001b[B"); // tsc --watch
+  stdin.send("\r");
+  await waitFor(() => /View output/.test(show()) && /Kill this task/.test(show()), show);
+  stdin.send("\u001b[B"); // Stop
+  stdin.send("\r");
+  await waitFor(() => /Stopped shell: tsc --watch\./.test(show()) && /Background tasks/.test(show()), show);
+  assert.deepEqual(killed, ["job-1", "job-2", "job-2"]);
+  stdin.send("\u001b");
+  await waitFor(() => !/Background tasks/.test(show()), show);
+
+  stdin.send("\u0003");
+  stdin.send("\u0003");
+  await run;
+  terminal.dispose();
+});

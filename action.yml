@@ -1,0 +1,100 @@
+name: Nova AI
+description: Run a Nova AI agent request headless (nova-ai -p) and optionally post the answer on the pull request.
+author: DataLab Rotterdam
+branding:
+  icon: cpu
+  color: blue
+
+inputs:
+  prompt:
+    description: What Nova should do, e.g. "Review the changes in this pull request".
+    required: true
+  api-key:
+    description: Nova API key. Pass a secret, e.g. secrets.NOVA_API_KEY.
+    required: true
+  permission-mode:
+    description: read-only (default), accept-edits or bypass-all. See docs/CI.md before choosing anything but read-only.
+    default: read-only
+  model:
+    description: Model id; the account's default when empty.
+    default: ""
+  working-directory:
+    description: Workspace directory.
+    default: .
+  comment:
+    description: "true: post the answer as a comment on the pull request (needs `pull-requests: write`)."
+    default: "false"
+  github-token:
+    description: Token used to post the comment.
+    default: ${{ github.token }}
+  version:
+    description: Version or dist-tag of @datalabrotterdam/nova-ai-cli.
+    default: alpha
+  base-url:
+    description: Nova gateway URL; the default gateway when empty.
+    default: ""
+
+outputs:
+  text:
+    description: Nova's answer.
+    value: ${{ steps.run.outputs.text }}
+  exit-code:
+    description: 0 success, 1 error, 2 cancelled, 3 tool-turn safety limit.
+    value: ${{ steps.run.outputs.exit-code }}
+  result-file:
+    description: Path of the JSON result (nova-ai -p --output-format json).
+    value: ${{ steps.run.outputs.result-file }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 22
+
+    - id: run
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      # Inputs only reach the script as environment variables: a prompt built from a PR title
+      # or body must never be pasted into the shell.
+      env:
+        NOVA_API_KEY: ${{ inputs.api-key }}
+        NOVA_BASE_URL: ${{ inputs.base-url }}
+        NOVA_PROMPT: ${{ inputs.prompt }}
+        NOVA_PERMISSION_MODE: ${{ inputs.permission-mode }}
+        NOVA_MODEL: ${{ inputs.model }}
+        NOVA_VERSION: ${{ inputs.version }}
+      run: |
+        [ -n "$NOVA_BASE_URL" ] || unset NOVA_BASE_URL
+        result="$RUNNER_TEMP/nova-ai-result.json"
+        args=(-p --output-format json --permission-mode "$NOVA_PERMISSION_MODE")
+        [ -n "$NOVA_MODEL" ] && args+=(--model "$NOVA_MODEL")
+        set +e
+        npx -y "@datalabrotterdam/nova-ai-cli@$NOVA_VERSION" "${args[@]}" -- "$NOVA_PROMPT" > "$result"
+        code=$?
+        set -e
+        text=$(jq -r 'if .type == "error" then "Nova AI failed: " + .message else .text | sub("^\\s+"; "") end' "$result" 2>/dev/null || cat "$result")
+        delimiter="nova_$(openssl rand -hex 8)"
+        {
+          echo "exit-code=$code"
+          echo "result-file=$result"
+          echo "text<<$delimiter"
+          echo "$text"
+          echo "$delimiter"
+        } >> "$GITHUB_OUTPUT"
+        echo "$text" >> "$GITHUB_STEP_SUMMARY"
+        echo "$text"
+
+    - if: inputs.comment == 'true' && github.event.pull_request.number
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        PR: ${{ github.event.pull_request.number }}
+        TEXT: ${{ steps.run.outputs.text }}
+      run: printf '%s\n\n<sub>Nova AI</sub>\n' "$TEXT" | gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body-file -
+
+    - if: steps.run.outputs.exit-code != '0'
+      shell: bash
+      run: |
+        echo "::error::nova-ai exited with code ${{ steps.run.outputs.exit-code }}"
+        exit ${{ steps.run.outputs.exit-code }}
