@@ -15,7 +15,8 @@ if (cli.dependencies?.[AGENT] === range) {
   console.log(`${cliPath} already depends on ${AGENT}@${range}`);
 } else {
   cli.dependencies[AGENT] = range;
-  const indent = /^\s+/m.exec(cliText)?.[0] ?? "  ";
+  // [ \t] rather than \s: with CRLF line endings \s+ would also match the "\n".
+  const indent = /^[ \t]+/m.exec(cliText)?.[0] ?? "  ";
   writeFileSync(cliPath, `${JSON.stringify(cli, null, indent)}\n`);
   console.log(`${cliPath} now depends on ${AGENT}@${range}`);
 }
