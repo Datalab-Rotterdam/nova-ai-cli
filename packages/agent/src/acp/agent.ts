@@ -424,7 +424,7 @@ export class NovaAgent implements AgentRuntime {
           type: "terminal",
           id: TERMINAL_AUTH_METHOD_ID,
           name: "Log in in a terminal",
-          description: "Runs `nova-ai login --no-browser`: paste your Nova API key (hidden input).",
+          description: "Runs `login --no-browser` in a terminal: paste your Nova API key (hidden input).",
           args: ["login", "--no-browser"],
         },
       ],
@@ -932,7 +932,7 @@ export class NovaAgent implements AgentRuntime {
     params: acp.AuthenticateRequest,
   ): Promise<acp.AuthenticateResponse> {
     if (params.methodId === TERMINAL_AUTH_METHOD_ID) {
-      // The client ran `nova-ai login --no-browser` for the user; check it worked.
+      // The client ran `<agent> login --no-browser` for the user; check it worked.
       if (!readCredentials()) {
         throw acp.RequestError.authRequired(
           { methodId: params.methodId },
