@@ -1,3 +1,10 @@
+# [@datalabrotterdam/nova-ai-agent-v1.0.1-alpha.1](https://github.com/Datalab-Rotterdam/nova-ai-cli/compare/@datalabrotterdam/nova-ai-agent@1.0.0...@datalabrotterdam/nova-ai-agent@1.0.1-alpha.1) (2026-11-14)
+
+
+### Bug Fixes
+
+* **agent:** make terminal login hints independent of the command name ([192826b](https://github.com/Datalab-Rotterdam/nova-ai-cli/commit/192826b81695dc8699bc8fe32c3f67c4be1e359a))
+
 # @datalabrotterdam/nova-ai-agent-v1.0.0 (2026-11-11)
 
 

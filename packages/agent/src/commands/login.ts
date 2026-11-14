@@ -23,7 +23,7 @@ Get a key at https://platform.nova.datalabrotterdam.nl/dashboard/api-keys`;
 
 /**
  * `nova-ai login`. Also the ACP "terminal" auth method: editors run
- * `nova-ai login --no-browser` in a terminal for the user.
+ * `<agent> login --no-browser` in a terminal for the user.
  */
 export async function runLogin(args: string[], io: LoginIo = defaultIo()): Promise<number> {
   const unknown = args.filter((arg) => arg !== "--no-browser" && arg !== "--help" && arg !== "-h");
@@ -48,7 +48,7 @@ export async function runLogin(args: string[], io: LoginIo = defaultIo()): Promi
     return 0;
   } catch (error) {
     io.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-    io.stderr.write("Tip: run `nova-ai login --no-browser` to enter the key in this terminal.\n");
+    io.stderr.write("Tip: add `--no-browser` to enter the key in this terminal instead.\n");
     return 1;
   }
 }

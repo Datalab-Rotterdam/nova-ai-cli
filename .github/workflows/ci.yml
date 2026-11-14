@@ -311,11 +311,31 @@ jobs:
         working-directory: packages/agent
         run: npx semantic-release ${{ inputs.release_dry_run && '--dry-run' || '' }}
       - name: Point the CLI at the released agent
-        run: node scripts/sync-agent-dependency.mjs
+        run: |
+          node scripts/sync-agent-dependency.mjs
+          npm install --package-lock-only --ignore-scripts --no-audit --no-fund
       - name: Release the CLI
         id: cli
         working-directory: packages/cli
         run: npx semantic-release ${{ inputs.release_dry_run && '--dry-run' || '' }}
+      # An agent-only release bumps the agent without a CLI release commit, so the
+      # CLI's dependency on it (and the lock file) would stay behind. A prerelease
+      # like 1.0.1-alpha.1 does not satisfy ^1.0.0, which breaks `npm ci` on the
+      # next run. Commit whatever the CLI release did not.
+      - name: Commit the CLI's agent dependency
+        if: ${{ !inputs.release_dry_run }}
+        run: |
+          if git diff --quiet -- packages/cli/package.json package-lock.json; then
+            echo "Nothing to commit: the CLI already depends on the released agent."
+            exit 0
+          fi
+          version=$(node -p "require('./packages/agent/package.json').version")
+          git config user.name "semantic-release-bot"
+          git config user.email "semantic-release-bot@martynus.net"
+          git add packages/cli/package.json package-lock.json
+          git commit -m "chore(release): point the CLI at agent ${version} [skip ci]"
+          git pull --rebase --autostash origin "${GITHUB_REF_NAME}"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
 
   # Homebrew and winget are published by hand for now: Actions > Publish packages.
   # To publish automatically again, call .github/workflows/publish-packages.yml here
