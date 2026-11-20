@@ -1094,7 +1094,7 @@ describe("NovaAgent MCP OAuth", () => {
 test("initialize installs the shared Nova skills into the Nova home", async () => {
   new NovaAgent().initialize({ protocolVersion: acp.PROTOCOL_VERSION, clientCapabilities: {} });
   const bundled = () => discoverSkills(process.cwd()).filter((skill) => skill.bundledBy === "Nova AI Skills").map((skill) => skill.name);
-  for (let i = 0; i < 100 && bundled().length < 4; i++) await new Promise((done) => setTimeout(done, 50));
-  assert.deepEqual(bundled(), ["nova-docx", "nova-pdf", "nova-pptx", "nova-xlsx"]);
+  for (let i = 0; i < 100 && bundled().length < 6; i++) await new Promise((done) => setTimeout(done, 50));
+  assert.deepEqual(bundled(), ["nova-docx", "nova-ms-outlook", "nova-ms-teams", "nova-pdf", "nova-pptx", "nova-xlsx"]);
   assert.ok(existsSync(join(novaHomeRoot(), "skills", "nova-pdf", "LICENSE.txt")));
 });
