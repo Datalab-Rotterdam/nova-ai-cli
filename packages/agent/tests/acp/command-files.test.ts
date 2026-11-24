@@ -48,6 +48,10 @@ test("command files are advertised and a /command prompt becomes the file's text
         { name: "compact", description: "Summarize older parts of the conversation to free context space" },
         { name: "git:pr", description: "Open a pull request." },
         { name: "review", description: "Review a file", input: { hint: "<file>" } },
+        // Built-in prompt commands, minus `review`: the command file replaces it.
+        { name: "init", description: "Write a NOVA.md with instructions for working in this codebase" },
+        { name: "pr-comments", description: "Fetch and summarize the review comments of a pull request", input: { hint: "[PR number]" } },
+        { name: "security-review", description: "Review the pending changes on this branch for security problems" },
       ]);
 
       await agent.prompt({ sessionId, prompt: [{ type: "text", text: "/review src/a.ts" }] }, client);
@@ -61,6 +65,11 @@ test("command files are advertised and a /command prompt becomes the file's text
 
       await agent.prompt({ sessionId, prompt: [{ type: "text", text: "/unknown thing" }] }, client);
       assert.ok(JSON.stringify(requests[2]!.body.messages).includes("/unknown thing"));
+
+      // A built-in prompt command keeps what the user typed and adds its instructions in a note.
+      await agent.prompt({ sessionId, prompt: [{ type: "text", text: "/init" }] }, client);
+      const init = JSON.stringify(requests[3]!.body.messages);
+      assert.ok(init.includes("/init\\n\\n<nova-command-note>") && init.includes("write a NOVA.md"));
     },
     models,
   );
@@ -115,7 +124,15 @@ test("skills run as /<skill-name> and MCP prompts as /mcp__<server>__<prompt>", 
 
       const listed = [...updates].reverse().find((u) => u.sessionUpdate === "available_commands_update");
       const names = listed?.sessionUpdate === "available_commands_update" ? listed.availableCommands.map((c) => [c.name, c.input && "hint" in c.input ? c.input.hint : undefined]) : [];
-      assert.deepEqual(names, [["compact", undefined], ["deploy", "[request]"], ["mcp__docs__summarize", "<page> [focus]"]]);
+      assert.deepEqual(names, [
+        ["compact", undefined],
+        ["deploy", "[request]"],
+        ["mcp__docs__summarize", "<page> [focus]"],
+        ["init", undefined],
+        ["review", "[PR number, URL or branch]"],
+        ["pr-comments", "[PR number]"],
+        ["security-review", undefined],
+      ]);
     },
     [{ id: "fake-model", object: "model", created: 0, owned_by: "x", context_window: 100000, capabilities: ["vision"] }],
   );
