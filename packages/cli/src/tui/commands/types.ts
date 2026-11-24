@@ -4,6 +4,7 @@ import type {
   OutputResponse,
 } from "@datalabrotterdam/nova-ai-agent/core/background.js";
 import type { ContextCompactionResult } from "@datalabrotterdam/nova-ai-agent/core/context-compaction.js";
+import type { UsageTotals } from "@datalabrotterdam/nova-ai-agent/core/usage.js";
 
 /** What /compact reports; the summarized history itself stays in the agent. */
 export type CompactionSummary = Pick<
@@ -35,6 +36,12 @@ export type SlashCommandContext = {
   getInteractionModes(): InteractionMode[];
   /** Copies the last answer to the clipboard; returns what happened. */
   copyLastAnswer(): Promise<string>;
+  /** /export: Markdown to `target` (a path), or the clipboard when empty; returns a message. */
+  exportTranscript(target: string): Promise<string>;
+  statusReport(): string;
+  memoryReport(): string;
+  showText(title: string, content: string): void;
+  usageTotals(): UsageTotals | null;
   /** Commands the agent offers that the CLI doesn't have itself (the user's command files). */
   agentCommands(): { name: string; description: string }[];
   setInteractionMode(mode: InteractionMode): void;

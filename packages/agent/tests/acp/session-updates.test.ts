@@ -41,7 +41,7 @@ describe("session updates", () => {
         await until(() => ofKind("config_option_update").length > 0);
         assert.deepEqual(
           (ofKind("available_commands_update")[0]!.availableCommands as Array<{ name: string }>).map((c) => c.name),
-          ["compact"],
+          ["compact", "init", "review", "pr-comments", "security-review"],
         );
         const options = ofKind("config_option_update")[0]!.configOptions as Array<{ id: string }>;
         assert.deepEqual(options.map((option) => option.id), ["permission_mode", "model"]);

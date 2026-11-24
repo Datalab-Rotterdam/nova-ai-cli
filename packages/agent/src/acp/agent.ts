@@ -145,6 +145,36 @@ const AUTH_METHOD_ID = "nova-api-key";
 const ENV_AUTH_METHOD_ID = "nova-api-key-env";
 const TERMINAL_AUTH_METHOD_ID = "nova-login-terminal";
 
+/**
+ * Built-in commands that are a request to the model (as in Claude Code). The
+ * prompt keeps what the user typed; the instructions follow in a
+ * `<nova-command-note>` that clients hide like their own notes.
+ */
+const PROMPT_COMMANDS: Record<string, { description: string; hint?: string; instructions: string }> = {
+  init: {
+    description: "Write a NOVA.md with instructions for working in this codebase",
+    instructions:
+      "Analyze this codebase and write a NOVA.md file in the repository root for future sessions: how to build, lint and test (including running a single test), the high-level architecture that needs several files to understand, and conventions that aren't obvious. Keep it concise and specific to this repository; skip generic advice and don't list every file. If NOVA.md or AGENTS.md already exists, improve that file instead of creating another, and fold in important parts of README.md, .cursorrules, .github/copilot-instructions.md or CLAUDE.md when present.",
+  },
+  review: {
+    description: "Review a pull request or the current changes",
+    hint: "[PR number, URL or branch]",
+    instructions:
+      "Review the code changes: with a PR number or URL use `gh pr view` and `gh pr diff`, with a branch diff it against the default branch, otherwise review the uncommitted and staged changes (`git diff HEAD`). Report correctness bugs, security problems, missing tests and unclear code, most severe first, each with file:line and a concrete fix. Don't change any files.",
+  },
+  "pr-comments": {
+    description: "Fetch and summarize the review comments of a pull request",
+    hint: "[PR number]",
+    instructions:
+      "Use `gh` to fetch all comments on the pull request (the one for the current branch when none is given): `gh pr view --comments` and the review comments via `gh api repos/{owner}/{repo}/pulls/{number}/comments`. List them grouped by file with the author, the quoted line and what is asked, and mark which are resolved. Don't change any files.",
+  },
+  "security-review": {
+    description: "Review the pending changes on this branch for security problems",
+    instructions:
+      "Do a security review of the changes on this branch compared to the default branch (`git diff` against the merge base, plus uncommitted changes). Look for injection, authentication and authorization flaws, secrets in code, unsafe deserialization, path traversal, SSRF and insecure defaults. Report only real, exploitable issues with file:line, severity, an exploit scenario and a fix. Don't change any files.",
+  },
+};
+
 /** Slash commands the agent itself handles in session/prompt. */
 const AVAILABLE_COMMANDS: acp.AvailableCommand[] = [
   {
@@ -233,15 +263,22 @@ function customCommands(session: Session): Map<string, SlashCommand & { name: st
   return commands;
 }
 
-/** The agent's own commands, then the user's command files, skills and MCP prompts. */
+/**
+ * The agent's own commands, then the user's command files, skills and MCP
+ * prompts, then the built-in prompt commands no custom command replaces.
+ */
 function availableCommands(session: Session): acp.AvailableCommand[] {
+  const custom = customCommands(session);
   return [
     ...AVAILABLE_COMMANDS,
-    ...[...customCommands(session).values()].map(({ name, description, hint }) => ({
+    ...[...custom.values()].map(({ name, description, hint }) => ({
       name,
       description,
       ...(hint ? { input: { hint } } : {}),
     })),
+    ...Object.entries(PROMPT_COMMANDS)
+      .filter(([name]) => !custom.has(name))
+      .map(([name, { description, hint }]) => ({ name, description, ...(hint ? { input: { hint } } : {}) })),
   ];
 }
 
@@ -261,7 +298,18 @@ async function expandSlashCommand(
   if (first?.type !== "text") return params;
   const match = /^\/([A-Za-z0-9][\w:-]*)(?:\s+([\s\S]*))?$/.exec(first.text.trim());
   const entry = match ? customCommands(session).get(match[1]!) : undefined;
-  if (!entry) return params;
+  if (!entry) {
+    // A custom command of the same name (above) replaces a built-in prompt command.
+    const builtIn = match && Object.hasOwn(PROMPT_COMMANDS, match[1]!) ? PROMPT_COMMANDS[match[1]!] : undefined;
+    if (!builtIn) return params;
+    return {
+      ...params,
+      prompt: [
+        { type: "text", text: `${first.text}\n\n<nova-command-note>\nThe user ran /${match![1]}. ${builtIn.instructions}\n</nova-command-note>` },
+        ...rest,
+      ],
+    };
+  }
   const args = match![2]?.trim() ?? "";
   const withText = (text: string, extra: acp.ContentBlock[] = []): acp.PromptRequest => ({
     ...params,
@@ -424,7 +472,7 @@ export class NovaAgent implements AgentRuntime {
           type: "terminal",
           id: TERMINAL_AUTH_METHOD_ID,
           name: "Log in in a terminal",
-          description: "Runs `nova-ai login --no-browser`: paste your Nova API key (hidden input).",
+          description: "Runs `login --no-browser` in a terminal: paste your Nova API key (hidden input).",
           args: ["login", "--no-browser"],
         },
       ],
@@ -932,7 +980,7 @@ export class NovaAgent implements AgentRuntime {
     params: acp.AuthenticateRequest,
   ): Promise<acp.AuthenticateResponse> {
     if (params.methodId === TERMINAL_AUTH_METHOD_ID) {
-      // The client ran `nova-ai login --no-browser` for the user; check it worked.
+      // The client ran `<agent> login --no-browser` for the user; check it worked.
       if (!readCredentials()) {
         throw acp.RequestError.authRequired(
           { methodId: params.methodId },

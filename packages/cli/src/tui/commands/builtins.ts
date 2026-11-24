@@ -1,4 +1,6 @@
 import type { SlashCommand } from "./types.js";
+import { stripPromptNote } from "../files/prompt-note.js";
+import { formatUsageTotals } from "../ink/format.js";
 import type {
   BackgroundJobKind,
   BackgroundJobSummary,
@@ -13,7 +15,9 @@ export const builtinCommands: SlashCommand[] = [
     run(ctx) {
       const lines = [...builtinCommands.filter((c) => c.available?.(ctx) ?? true), ...ctx.agentCommands()]
         .map((c) => `/${c.name} — ${c.description}`);
-      ctx.print(lines.join("\n"));
+      ctx.print(
+        `${lines.join("\n")}\n\n!<command> runs a shell command (Nova sees the output) · # <note> saves to memory · @<path> attaches a file or folder · Esc twice rewinds`,
+      );
     },
   },
   {
@@ -48,7 +52,7 @@ export const builtinCommands: SlashCommand[] = [
       }
       const result = await ctx.rewind(turns);
       const labels = result.removedCheckpoints
-        .map((checkpoint) => checkpoint.userText)
+        .map((checkpoint) => stripPromptNote(checkpoint.userText))
         .join(" | ");
       ctx.print(
         `Rewound ${result.removedCheckpoints.length} turn${result.removedCheckpoints.length === 1 ? "" : "s"}${labels ? `: ${labels}` : "."}`,
@@ -266,6 +270,40 @@ export const builtinCommands: SlashCommand[] = [
     },
   },
   {
+    name: "status",
+    description: "Show the version, model, modes, MCP servers and usage of this session",
+    run(ctx) {
+      ctx.print(ctx.statusReport());
+    },
+  },
+  {
+    name: "cost",
+    description: "Show the tokens and estimated cost of this session",
+    run(ctx) {
+      const totals = ctx.usageTotals();
+      ctx.print(totals ? formatUsageTotals(totals) : "No usage recorded in this session yet.");
+    },
+  },
+  {
+    name: "memory",
+    description: "Show Nova's memory and instruction files (start a prompt with # to add a line)",
+    run(ctx) {
+      ctx.showText("Memory", ctx.memoryReport());
+    },
+  },
+  {
+    name: "export",
+    description: "Export the conversation as Markdown (/export [file], clipboard without a file)",
+    async run(ctx, args) {
+      ctx.print(await ctx.exportTranscript(args.trim()));
+    },
+  },
+  alias("permissions", "permission"),
+  alias("context", "usage"),
+  alias("bashes", "tasks"),
+  alias("quit", "exit"),
+  alias("new", "clear"),
+  {
     name: "shell",
     description:
       "Manage background shell jobs (/shell run|ps|output|kill|release)",
@@ -290,6 +328,15 @@ export const builtinCommands: SlashCommand[] = [
     },
   },
 ];
+
+/** Claude Code's name for one of ours, so muscle memory works. */
+function alias(name: string, target: string): SlashCommand {
+  return {
+    name,
+    description: `Alias for /${target}`,
+    run: (ctx, args) => builtinCommands.find((command) => command.name === target)!.run(ctx, args),
+  };
+}
 
 async function runBackgroundCommand(
   ctx: Parameters<SlashCommand["run"]>[0],

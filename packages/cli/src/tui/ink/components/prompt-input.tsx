@@ -37,13 +37,21 @@ export function PromptInput({
     Math.max(0, lines.length - visibleRows),
   );
   const shown = lines.slice(start, start + visibleRows);
+  // `!command` runs in the shell, `# note` goes to memory (see TuiController.submit).
+  const first = lines[0] ?? "";
+  const special = first.startsWith("!")
+    ? { color: palette.code, hint: "! shell command · Enter runs it here; Nova sees the output with your next message" }
+    : /^#[^#]/.test(first) && lines.length === 1
+      ? { color: palette.accent, hint: "# memory · Enter saves this line to project or global memory" }
+      : null;
 
   return (
     <Box flexDirection="column">
+      {special ? <Text color={special.color}>{special.hint}</Text> : null}
       <Box
         flexDirection="column"
         borderStyle="round"
-        borderColor={busy ? palette.warning : palette.primary}
+        borderColor={special?.color ?? (busy ? palette.warning : palette.primary)}
         paddingRight={1}
       >
         {start > 0 ? <Text color={palette.faint}>{`  ↑ ${start} more line${start === 1 ? "" : "s"}`}</Text> : null}

@@ -27,7 +27,8 @@ import { chatContentToText } from "@datalabrotterdam/nova-ai-agent/core/chat-con
 import type { ContextCompactionResult } from "@datalabrotterdam/nova-ai-agent/core/context-compaction.js";
 import type { ContextUsage } from "@datalabrotterdam/nova-ai-agent/core/context-usage.js";
 import { resolveEffort } from "@datalabrotterdam/nova-ai-agent/core/model-capabilities.js";
-import { findWorkspaceFileMentions } from "../files/file-mentions.js";
+import { describeMention, findWorkspaceFileMentions } from "../files/file-mentions.js";
+import { stripPromptNote, withPromptNote } from "../files/prompt-note.js";
 import type { PromptImageAttachment } from "../files/prompt-images.js";
 import {
   expandPromptPastes,
@@ -83,7 +84,7 @@ const RESTORED_TOOL_METADATA: Record<string, RestoredToolMetadata> = {
 /** Rebuilds the live transcript shape from the model-facing stored history. */
 export function restoreSessionMessages(messages: ChatMessage[]): UIMessage[] {
   return replayHistory(messages).flatMap((item): UIMessage[] => {
-    if (item.kind === "user") return [{ id: uid(), role: "user", text: item.text }];
+    if (item.kind === "user") return [{ id: uid(), role: "user", text: stripPromptNote(item.text) }];
     if (item.kind === "agent") {
       return [{ id: uid(), role: "assistant", text: item.text, streaming: false }];
     }
@@ -166,6 +167,8 @@ export class SessionRunner {
   private readonly agent = new NovaAgent();
   private readonly acpClient: TuiAcpClient;
   private readonly connection: InProcessAgent;
+  /** `!` runs not yet sent to the model (see recordShellRun). */
+  private shellRuns: string[] = [];
   private readonly nova: NovaAgentClient;
   private readonly initialized: Promise<unknown>;
   private mcpStatus: McpSessionStatus = {
@@ -1177,25 +1180,27 @@ export class SessionRunner {
     }
   }
 
+  /** A `!command` the user ran; the model sees it with the next prompt. */
+  recordShellRun(context: string): void {
+    this.shellRuns.push(context);
+  }
+
+  /** Mentioned files/folders and buffered `!` runs, in a note the transcript hides. */
   private async injectFileMentions(text: string): Promise<string> {
-    const mentioned = findWorkspaceFileMentions(text, this.cwd);
-    if (mentioned.length === 0) return text;
-
-    const blocks = await Promise.all(
-      mentioned.map(async ({ absolutePath, relativePath }) => {
-        try {
-          const { content } = await this.acpClient.readTextFile({
-            sessionId: this.sessionId,
-            path: absolutePath,
-          });
-          return `\n--- file: ${relativePath} ---\n${content}\n---`;
-        } catch (err) {
-          return `\n[could not read @${relativePath}: ${err instanceof Error ? err.message : "unknown error"}]`;
-        }
-      }),
+    const notes = await Promise.all(
+      findWorkspaceFileMentions(text, this.cwd).map((mention) =>
+        describeMention(mention, async (path) =>
+          (await this.acpClient.readTextFile({ sessionId: this.sessionId, path })).content,
+        ),
+      ),
     );
-
-    return `${text}${blocks.join("")}`;
+    if (this.shellRuns.length) {
+      notes.push(
+        `The user ran these shell commands themselves and saw their output. Use them as context; do not run them again unless asked:\n${this.shellRuns.join("\n\n")}`,
+      );
+      this.shellRuns = [];
+    }
+    return withPromptNote(text, notes);
   }
 }
 

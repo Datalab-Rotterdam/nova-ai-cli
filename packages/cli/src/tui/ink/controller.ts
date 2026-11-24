@@ -1,4 +1,15 @@
 import { standalone } from "@datalabrotterdam/nova-ai-agent/core/standalone.js";
+import { readFileSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
+import { resolve } from "node:path";
+import { applyMemoryChange, memoryPaths } from "@datalabrotterdam/nova-ai-agent/core/memory.js";
+import { cliVersion } from "../../version.js";
+import {
+  listSessionCheckpoints,
+  type SessionCheckpoint,
+} from "@datalabrotterdam/nova-ai-agent/core/sessions.js";
+import { stripPromptNote } from "../files/prompt-note.js";
+import { formatShellResult, runUserShell, shellContext } from "../files/user-shell.js";
 import { howToUpdate } from "../../update-check.js";
 import {
   allCommands,
@@ -43,7 +54,7 @@ import type { BackgroundJobSummary } from "@datalabrotterdam/nova-ai-agent/core/
 import { effortLabel } from "@datalabrotterdam/nova-ai-agent/core/model-capabilities.js";
 import type { KeyPress } from "./editor/prompt-editor.js";
 import { PromptEditor } from "./editor/prompt-editor.js";
-import { formatContextUsage, formatImageSize, formatUsageTotals } from "./format.js";
+import { formatContextUsage, formatImageSize, formatUsageTotals, toolCallSummary } from "./format.js";
 import { bindPromptSubmission } from "./prompt-submission.js";
 import type { Cell, ScreenSelection } from "./screen-selection.js";
 import { parseMouse, wheelRows } from "./terminal-keyboard.js";
@@ -116,6 +127,10 @@ export class TuiController {
   private windowTitleBusy = false;
   private windowTitleFrame = 0;
   private imagePasteActive = false;
+  /** Set while a `!command` runs; Esc aborts it. */
+  private shellAbort: AbortController | null = null;
+  /** When Esc was last pressed on an empty, idle prompt (a second press rewinds). */
+  private lastEscAt = 0;
   private pressedAt: Cell | null = null;
   private dragging = false;
   private stopped = false;
@@ -190,12 +205,27 @@ export class TuiController {
     }
     if (key.escape) {
       if (this.editor.autocomplete) return false;
+      if (this.shellAbort) {
+        this.shellAbort.abort();
+        return true;
+      }
       if (this.store.getState().busy) {
         void this.interrupt();
         return true;
       }
       if (this.scroll > 0) {
         this.scrollTo(0);
+        return true;
+      }
+      if (!this.editor.getText()) {
+        const now = Date.now();
+        if (now - this.lastEscAt < 1_000) {
+          this.lastEscAt = 0;
+          this.openRewindPicker();
+        } else {
+          this.lastEscAt = now;
+          this.store.setState({ statusLine: "Press Esc again to rewind." });
+        }
         return true;
       }
       return false;
@@ -670,6 +700,64 @@ export class TuiController {
       : `Sent the last answer (${size}) to the terminal's clipboard; if nothing was copied, drag over it with the mouse and click to copy.`;
   }
 
+  /** /export: the conversation as Markdown, to a file or the clipboard. */
+  async exportTranscript(target: string): Promise<string> {
+    const lines = this.store.getState().messages.flatMap((message) => {
+      if (message.role === "user" && !message.queued) return [`## You\n\n${message.text}`];
+      if (message.role === "assistant" && !message.thinking && message.text.trim()) return [`## Nova\n\n${message.text.trim()}`];
+      if (message.role === "tool") return [`> ${message.call.name}: ${toolCallSummary(message.call)} (${message.call.status})`];
+      if (message.role === "error") return [`> Error: ${message.text}`];
+      return [];
+    });
+    if (!lines.length) return "Nothing to export yet.";
+    const markdown = `# ${this.runner.title ?? "Nova session"}\n\n${lines.join("\n\n")}\n`;
+    if (target) {
+      const path = resolve(this.runner.cwd, target);
+      await writeFile(path, markdown, "utf8");
+      return `Exported the conversation to ${path}.`;
+    }
+    return (await copyText(markdown, (data) => this.io.write(data)))
+      ? `Copied the conversation (${markdown.length} characters). /export <file> writes it to a file.`
+      : "Sent the conversation to the terminal's clipboard. /export <file> writes it to a file.";
+  }
+
+  /** /status: what this session runs with. */
+  statusReport(): string {
+    const ui = this.store.getState();
+    const mcp = mcpCounts(this.runner);
+    return [
+      `Nova AI CLI ${cliVersion() ?? "(dev)"}`,
+      `Workspace: ${this.runner.cwd}`,
+      `Session: ${this.runner.sessionId}${this.runner.title ? ` · ${this.runner.title}` : ""}`,
+      `Model: ${this.runner.model}${this.effortName() ? ` · thinking ${this.effortName()}` : ""}`,
+      `Mode: ${this.runner.interactionMode} · Permissions: ${ui.permissionMode}`,
+      `MCP: ${mcp.connected}/${mcp.configured} connected${mcp.failed ? `, ${mcp.failed} failed` : ""} · Skills: ${mcp.skills}`,
+      ui.contextUsage ? `Context: ${formatContextUsage(ui.contextUsage)}` : null,
+      ui.usageTotals ? formatUsageTotals(ui.usageTotals) : null,
+    ].filter(Boolean).join("\n");
+  }
+
+  /** /memory: where Nova's memory and instructions live, and what they say. */
+  memoryReport(): string {
+    const paths = memoryPaths(this.runner.cwd);
+    const files = [
+      ["Repository instructions (NOVA.md)", resolve(this.runner.cwd, "NOVA.md")],
+      ["Repository instructions (AGENTS.md)", resolve(this.runner.cwd, "AGENTS.md")],
+      ["Project memory", paths.project.index],
+      ["Global memory", paths.global.index],
+    ] as const;
+    const sections = files.map(([label, path]) => {
+      let body: string;
+      try {
+        body = readFileSync(path, "utf8").trim() || "(empty)";
+      } catch {
+        body = "(not created yet)";
+      }
+      return `${label}\n${path}\n\n${body}`;
+    });
+    return `${sections.join("\n\n────────\n\n")}\n\nEdit these files directly, start a prompt with # to add a line, or run /init to write NOVA.md.`;
+  }
+
   toggleToolDetails(): void {
     this.expandedTools = !this.expandedTools;
     this.store.setState({
@@ -770,6 +858,11 @@ export class TuiController {
     getInteractionMode: () => this.runner.interactionMode,
     getInteractionModes: () => this.runner.modeIds,
     copyLastAnswer: () => this.copyLastAnswer(),
+    exportTranscript: (target) => this.exportTranscript(target),
+    statusReport: () => this.statusReport(),
+    memoryReport: () => this.memoryReport(),
+    showText: (title, content) => this.showText(title, content),
+    usageTotals: () => this.store.getState().usageTotals ?? null,
     agentCommands: () => this.agentCommands(),
     setInteractionMode: (mode) => this.setInteractionMode(mode),
     getPermissionMode: () => this.store.getState().permissionMode,
@@ -838,6 +931,14 @@ export class TuiController {
       inputHistory: [...state.inputHistory, value],
       statusLine: null,
     }));
+    if (value.startsWith("!")) {
+      await this.runShell(value.slice(1).trim(), text);
+      return;
+    }
+    if (/^#[^#\n]/.test(value) && !value.includes("\n")) {
+      this.rememberNote(value.slice(1).trim());
+      return;
+    }
     if (!value.startsWith("/")) {
       await this.runner.submit(value, images, pastes);
       return;
@@ -862,6 +963,81 @@ export class TuiController {
       this.store.setState({ statusLine: `Command /${name} failed.` });
     }
   };
+
+  /** `!command`: runs it here and now; the output goes to the model with the next prompt. */
+  private async runShell(command: string, draft: string): Promise<void> {
+    if (!command) return;
+    if (this.shellAbort || this.store.getState().busy) {
+      this.editor.setText(draft);
+      this.store.setState({
+        statusLine: this.shellAbort
+          ? "A shell command is still running (Esc stops it)."
+          : "Wait for the answer (or press Esc) before running a shell command.",
+      });
+      return;
+    }
+    this.store.setState((state) => ({
+      messages: [...state.messages, { id: `shell-${Date.now()}-${state.messages.length}`, role: "user", text: `!${command}` }],
+      statusLine: `Running ${command} · esc to stop`,
+    }));
+    const abort = new AbortController();
+    this.shellAbort = abort;
+    try {
+      const result = await runUserShell(command, this.runner.cwd, abort.signal);
+      this.appendAssistant(formatShellResult(result));
+      this.runner.recordShellRun(shellContext(result));
+      this.store.setState({ statusLine: "Nova sees this output with your next message." });
+    } finally {
+      this.shellAbort = null;
+    }
+  }
+
+  /** `# note`: saves a one-line memory, in this project or for every project. */
+  private rememberNote(text: string): void {
+    this.showSelection(
+      `Remember "${text.length > 50 ? `${text.slice(0, 49)}…` : text}" in`,
+      [
+        { value: "project", label: "Project memory", description: "Private notes for this workspace (outside the repository)" },
+        { value: "global", label: "Global memory", description: "Your preferences across all projects" },
+      ],
+      "chat",
+      (scope) => {
+        try {
+          const { summary } = applyMemoryChange(this.runner.cwd, scope as "project" | "global", { action: "remember", text });
+          this.store.setState({ statusLine: summary });
+        } catch (error) {
+          this.appendError(errorMessage(error, "Could not save the memory."));
+        }
+      },
+    );
+  }
+
+  /** Esc twice on an empty prompt: pick a turn to rewind to. */
+  private openRewindPicker(): void {
+    let checkpoints: SessionCheckpoint[] = [];
+    try {
+      checkpoints = listSessionCheckpoints(this.runner.sessionId);
+    } catch {
+      // no stored session yet
+    }
+    if (!checkpoints.length) {
+      this.store.setState({ statusLine: "Nothing to rewind yet." });
+      return;
+    }
+    const newestFirst = [...checkpoints].reverse();
+    this.showSelection(
+      "Rewind the conversation to before…",
+      newestFirst.map((checkpoint, index) => ({
+        value: String(index + 1),
+        label: stripPromptNote(checkpoint.userText).replace(/\s+/g, " ").slice(0, 80) || "(empty prompt)",
+        description: `${index + 1} turn${index ? "s" : ""} back · ${new Date(checkpoint.createdAt).toLocaleString()}`,
+      })),
+      "chat",
+      (turns) => {
+        void this.runner.rewind(Number(turns)).catch((error) => this.appendError(errorMessage(error, "Rewind failed.")));
+      },
+    );
+  }
 
   private async pasteClipboardImage(): Promise<void> {
     if (this.imagePasteActive) return;

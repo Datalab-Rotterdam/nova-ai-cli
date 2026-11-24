@@ -412,6 +412,38 @@ test("/update exits the TUI and asks the caller to install and restart", async (
   terminal.dispose();
 });
 
+test("!command runs in the shell and shows its output; the model gets it with the next prompt", async () => {
+  const terminal = new Terminal({ cols: 100, rows: 24, allowProposedApi: true, scrollback: 1_000, convertEol: true });
+  const stdout = new FakeTerminalOutput(terminal);
+  const stdin = new FakeTerminalInput();
+  let runner!: SessionRunner;
+  const run = runInkTui({ apiKey: "test", defaultModel: "test-model" }, process.cwd(), [], {
+    stdin: stdin as unknown as NodeJS.ReadStream,
+    stdout: stdout as unknown as NodeJS.WriteStream,
+    checkForUpdate: async () => null,
+    kittyKeyboard: false,
+    createRunner(created) {
+      runner = new SessionRunner(created, { apiKey: "test", defaultModel: "test-model" }, process.cwd());
+      installFakeAgentQueue(runner);
+      return runner;
+    },
+  });
+  const show = () => screen(terminal);
+  await waitFor(() => /Ask Nova anything/.test(show()), show);
+
+  stdin.send("!echo nova-shell-ok");
+  await waitFor(() => /! shell command/.test(show()), show);
+  stdin.send("\r");
+  await waitFor(() => /Nova sees this output/.test(show()) && /nova-shell-ok/.test(show()), show);
+  const internals = runner as unknown as { injectFileMentions(text: string): Promise<string> };
+  assert.match(await internals.injectFileMentions("next"), /\$ echo nova-shell-ok\nnova-shell-ok/);
+
+  stdin.send("\u0003");
+  stdin.send("\u0003");
+  await run;
+  terminal.dispose();
+});
+
 test("/update without an installable update explains and keeps running", async () => {
   const terminal = new Terminal({ cols: 100, rows: 24, allowProposedApi: true, scrollback: 1_000, convertEol: true });
   const stdout = new FakeTerminalOutput(terminal);
