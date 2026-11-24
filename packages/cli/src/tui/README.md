@@ -92,7 +92,24 @@ built-in clipboard API, macOS uses AppKit, and Linux supports `wl-paste` or
 File mentions resolve directly against the workspace rather than depending on
 the autocomplete index. Slash and backslash separators, `./`, quoted paths,
 and files beyond the completion scan cap are supported; traversal outside the
-workspace is rejected.
+workspace is rejected. A mentioned file's text is attached (cut at 50,000
+characters; binary and >2 MiB files are only named), a mentioned folder sends
+its direct entries; at most 10 mentions per prompt. This context goes in a
+trailing `<nova-cli-note>` that the transcript and resumed sessions hide
+(the desktop app's `<nova-desktop-note>` is hidden too).
+
+A prompt starting with `!` is a shell command: the prompt turns yellow, Enter
+runs it in the workspace (no permission prompt: the user typed it; up to two
+minutes, Esc stops it) and shows the output. The command and the tail of its
+output (8,000 characters) reach the model with the next prompt, like the
+desktop app. A one-line prompt starting with `#` is saved to project or global
+memory (a picker asks which). Esc twice on an empty, idle prompt opens a
+picker to rewind to before an earlier turn.
+
+Commands Claude Code users expect are there as well: `/init` (write NOVA.md),
+`/memory`, `/status`, `/cost`, `/export [file]`, `/review [PR]`,
+`/pr-comments [PR]`, `/security-review`, and the aliases `/permissions`,
+`/context`, `/bashes`, `/quit` and `/new`.
 
 Collapsed read, search, and foreground shell calls render as one activity
 block. Its heading aggregates the work (for example, `Reading 1 file, running

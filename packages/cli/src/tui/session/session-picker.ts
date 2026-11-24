@@ -1,4 +1,5 @@
 import { listStoredSessions, type SessionSummary } from "@datalabrotterdam/nova-ai-agent/core/sessions.js";
+import { stripPromptNote } from "../files/prompt-note.js";
 
 export type SessionPickerItem = {
   value: string;
@@ -63,7 +64,7 @@ export function formatTimeAgo(updatedAt: string, now = Date.now()): string {
 }
 
 export function oneLineTitle(title: string | null): string {
-  return title?.replace(/\s+/g, " ").trim() || "(untitled)";
+  return (title && stripPromptNote(title).replace(/\s+/g, " ").trim()) || "(untitled)";
 }
 
 export function formatDateTime(updatedAt: string): string {

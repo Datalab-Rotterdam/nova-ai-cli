@@ -538,8 +538,12 @@ test("session runner attaches mentioned file contents to the model prompt", asyn
     const prompt = await internals.injectFileMentions(
       "Please inspect @./context.md.",
     );
-    assert.match(prompt, /--- file: context\.md ---/);
-    assert.match(prompt, /important file context/);
+    assert.match(prompt, /The user attached @context\.md \(.+context\.md\):\n<file>\nimportant file context\n<\/file>/);
+    assert.match(prompt, /^Please inspect @\.\/context\.md\.\n\n<nova-cli-note>/);
+    // `!` runs reach the model once, with the next prompt.
+    runner.recordShellRun("$ echo hi\nhi\n(exit code 0)");
+    assert.match(await internals.injectFileMentions("next"), /\$ echo hi\nhi/);
+    assert.equal(await internals.injectFileMentions("after"), "after");
   } finally {
     rmSync(cwd, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }

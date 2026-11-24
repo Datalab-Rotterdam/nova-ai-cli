@@ -27,6 +27,7 @@ import {
   spawnCommand,
   terminateProcessTree,
 } from "@datalabrotterdam/nova-ai-agent/core/process-tree.js";
+import { stripPromptNote } from "../files/prompt-note.js";
 import type { UserInputResponse } from "@datalabrotterdam/nova-ai-agent/core/user-questions.js";
 import { resolveWorkspaceFile } from "@datalabrotterdam/nova-ai-agent/core/tools/workspace-paths.js";
 import type { PromptQueueEntryView } from "@datalabrotterdam/nova-ai-agent/core/prompt-queue.js";
@@ -155,7 +156,7 @@ export class TuiAcpClient {
   }
 
   appendUserMessage(text: string): void {
-    this.appendMessage({ id: uid(), role: "user", text });
+    this.appendMessage({ id: uid(), role: "user", text: stripPromptNote(text) });
   }
 
   /** An MCP server's sign-in page: opened in the browser, and printed in case that fails. */
